@@ -1,26 +1,38 @@
+"""定义入站 Gate 的纯确定性边界。"""
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Literal
+
+ChatScene = Literal["friend", "group"]
+MuteState = Literal["muted", "unmuted"]
 
 
-@dataclass
-class InboundContext:
-    scene: str  # group 或 private 场景。
-    peer_id: str  # group_id 或 user_id。
-    user_id: str
-    text: str
-    is_at_me: bool
-    raw: dict
-    # 后续可以增加 message_id、timestamp、member_role 等字段。
+@dataclass(frozen=True, slots=True)
+class GateContext:
+    """提供 Gate 所需的规范化身份和 MuteTracker 快照。"""
+
+    self_id: str
+    sender_id: str
+    scene: ChatScene
+    chat_key: str
+    member_mute: MuteState = "muted"
+    whole_mute: MuteState = "muted"
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class GateResult:
+    """表示一次无副作用的 Gate 判断结果。"""
+
     allow: bool
-    reason: str = ""
+    reason: str
 
 
 class Gate(ABC):
+    """定义不执行网络或策略副作用的同步 Gate。"""
+
     name: str
 
     @abstractmethod
-    async def check(self, ctx: InboundContext) -> GateResult: ...
+    def check(self, context: GateContext) -> GateResult:
+        """根据已准备的上下文返回稳定的 allow/reject 结果。"""
