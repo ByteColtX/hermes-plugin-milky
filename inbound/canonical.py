@@ -22,6 +22,7 @@ from session.identity import (
     make_dedup_key,
     normalize_chat_key,
 )
+from will.input import MentionKind
 
 JsonObject = Mapping[str, Any]
 _SENSITIVE_KEYS = {
@@ -48,7 +49,7 @@ class CanonicalMessage:
     sender_name: str
     segments: tuple[Segment, ...]
     body: str
-    mention_kind: str
+    mention_kinds: tuple[MentionKind, ...]
     quote_message_id: str | None
     media_resource_references: tuple[MediaResourceReference, ...]
     file_attachment_references: tuple[FileAttachmentReference, ...]
@@ -77,6 +78,21 @@ class CanonicalMessage:
         """返回消息是否带有引用目标。"""
 
         return self.quote_message_id is not None
+
+    @property
+    def mention_kind(self) -> MentionKind:
+        """返回兼容单值调用方的主要 mention 类型。"""
+
+        for kind in ("self", "all", "here"):
+            if kind in self.mention_kinds:
+                return kind  # type: ignore[return-value]
+        return "none"
+
+    @property
+    def mention_signals(self) -> tuple[MentionKind, ...]:
+        """返回 canonical 保留的全部独立 mention 信号。"""
+
+        return self.mention_kinds
 
     @property
     def media_refs(self) -> tuple[MediaResourceReference, ...]:
@@ -180,7 +196,7 @@ def _canonicalize_normalized(
         sender_name=sender_name,
         segments=normalized.segments,
         body=normalized.body,
-        mention_kind=normalized.mention_kind,
+        mention_kinds=normalized.mention_kinds,
         quote_message_id=normalized.reply_message_id,
         media_resource_references=normalized.media_resource_references,
         file_attachment_references=normalized.file_attachment_references,

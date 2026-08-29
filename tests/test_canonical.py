@@ -83,6 +83,8 @@ def test_canonical_record_uses_event_identity_and_stable_group_display_name() ->
     assert result.value.body.startswith("中性文本")
     assert "[图片]" in result.value.body
     assert result.value.mention_kind == "self"
+    assert result.value.mention_kinds == ("self", "all")
+    assert result.value.mention_signals == ("self", "all")
     assert result.value.quote_message_id == "1000"
     assert result.value.media_resource_references[0].resource_id == "fixture-image-resource"
     assert result.value.file_attachment_references[0].file_id == "fixture-file-id"
