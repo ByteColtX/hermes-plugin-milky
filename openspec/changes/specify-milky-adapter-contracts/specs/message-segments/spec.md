@@ -7,7 +7,7 @@
 
 ### Requirement: 支持的 segment 必须保留类型和语义
 
-消息 SHALL 容错识别 Milky v1.3 的 incoming segment：text、mention、mention_all、face、reply、image、record、video、file、forward、market_face、light_app、xml 和 markdown，并保留每种 segment 的 typed 内容与必要 raw 字段。资源段 SHALL 保留 Milky 的 `resource_id`、`temp_url`、`file_id`、`file_name`、`file_size` 等协议字段；`file` 只属于入站消息，不属于 outgoing message segment。
+消息 SHALL 容错识别 Milky v1.3 的 incoming segment：text、mention、mention_all、face、reply、image、record、video、file、forward、market_face、light_app、xml 和 markdown，并保留每种 segment 的 typed 内容与必要 raw 字段。资源段 SHALL 保留 Milky 的 `resource_id`、`temp_url`、`file_id`、`file_name`、`file_size` 等协议字段；`file` 只属于入站消息，不属于 outgoing message segment。除架构明确允许主消息 `message_seq` 缺失并进入 `no_stable_message_id` 降级外，规范化 SHALL 不补造 OpenAPI 必填字段；reply 的 `message_seq`、`sender_id`、`time` 和 `segments` 缺失时 SHALL 保持 malformed 诊断。
 
 #### Scenario: 复合消息
 
@@ -35,7 +35,7 @@
 
 ### Requirement: 提及和回复信号必须可区分
 
-规范化 SHALL 区分 mention self、mention all、mention here 和 none，并保留 reply 目标 ID；是否提及 Bot 和是否引用 Bot SHALL 可独立判断。Milky v1.3 只有 `mention` 和 `mention_all` segment，没有独立的 `mention_here` segment；normalizer MUST NOT 从普通文本或 `mention` 的名称臆造 here 信号，除非未来协议扩展被明确识别。
+规范化 SHALL 区分 mention self、mention all、mention here 和 none，并保留 reply 目标 ID；是否提及 Bot 和是否引用 Bot SHALL 可独立判断。Milky v1.3 只有 `mention` 和 `mention_all` segment，没有独立的 `mention_here` segment；对普通 v1.3 输入，normalizer MUST NOT 从普通文本或 `mention` 的名称臆造 here 信号，只有未来被明确识别的协议扩展才可产生 here 信号。多个提及信号 SHALL 保留为独立信号，不得因使用单一优先值而丢失 all 或 self。
 
 #### Scenario: 提及 Bot 与全体提及
 
@@ -43,11 +43,17 @@
 - **THEN** 结果 SHALL 产生对应的 self、all 或 here mention kind
 - **AND** routing SHALL 能按不同信号选择不同策略
 
-#### Scenario: 引用目标不可补全
+#### Scenario: 引用目标正文尚未补全
 
-- **WHEN** reply segment 只有目标 ID而远端原文尚未查询
+- **WHEN** reply segment 提供协议要求的目标 ID，但远端原文尚未查询
 - **THEN** 结果 SHALL 保留目标 ID
 - **AND** SHALL 不将缺失的原文伪造成正文
+
+#### Scenario: reply 缺少协议必填字段
+
+- **WHEN** reply segment 缺少 `message_seq`、`sender_id`、`time` 或 `segments`
+- **THEN** 该 segment SHALL 保持 malformed 诊断
+- **AND** SHALL 不伪造引用目标或把缺失字段当作普通文本
 
 #### Scenario: reply 已经携带原文
 
@@ -57,7 +63,7 @@
 
 ### Requirement: 媒体只生成延迟资源引用
 
-normalization MUST 不执行网络 I/O 或下载，并 SHALL 只保存 Milky 的 `temp_url`、`resource_id`、`file_id`、`file_name`、`file_size`、名称、MIME/大小提示和原始 segment，供 trigger 阶段使用。`forward_id` 也只能作为延迟引用保存。
+normalization MUST 不执行网络 I/O、文件系统访问、时钟读取或随机抽样，并 SHALL 只保存 Milky 的 `temp_url`、`resource_id`、`file_id`、`file_name`、`file_size`、名称、MIME/大小提示和原始 segment，供 trigger 阶段使用。`forward_id` 也只能作为延迟引用保存。资源引用的 Action 归属为 trigger 阶段：媒体资源使用 `get_resource_temp_url`，文件使用场景对应的文件下载 URL Action，forward 使用 `get_forwarded_messages`，缺失的 reply 原文使用 `get_message`。
 
 #### Scenario: wait 阶段遇到图片
 
@@ -76,6 +82,29 @@ normalization MUST 不执行网络 I/O 或下载，并 SHALL 只保存 Milky 的
 - **WHEN** 媒体缺少可用 URL、file_id 或 file 提示
 - **THEN** 结果 SHALL 保留 raw 并生成可解释的不可用媒体占位
 - **AND** SHALL 不把未知字段转换为普通 Agent 指令
+
+### Requirement: 规范化结果必须提供稳定策略特征
+
+规范化 SHALL 在不重新读取 raw payload 的情况下提供稳定的有序正文和策略特征：至少包括事件类型、场景、时间、正文/策略文本、独立的 self/all/here/none mention 信号、reply 存在性与目标 ID、image 存在性、typed segments、延迟媒体引用和安全诊断。text 与 markdown 内容 SHALL 按原顺序保留；合法的结构化 segment SHALL 使用可解释占位；unknown segment SHALL 不进入正文或关键词内容。reply/forward 的嵌套内容 SHALL 保留为引用数据，不得隐式并入当前消息正文。
+
+#### Scenario: 复合 segment 生成策略特征
+
+- **WHEN** friend 或 group 消息按顺序包含 text、mention、mention_all、reply、image 和 unknown
+- **THEN** 规范化正文 SHALL 保持受支持内容的顺序和可解释占位
+- **AND** 策略特征 SHALL 独立报告 self/all mention、reply 和 image
+- **AND** unknown SHALL 只进入安全诊断，不得进入正文或关键词匹配文本
+
+#### Scenario: 只有结构化内容
+
+- **WHEN** 消息只包含合法 face、reply、image、file、forward、market_face、light_app、xml 或 markdown segment
+- **THEN** 规范化结果 SHALL 保持为可处理的结构化消息
+- **AND** SHALL 不因正文没有普通 text 而丢弃
+
+#### Scenario: v1.3 不推断 mention here
+
+- **WHEN** v1.3 消息只包含普通 text、mention 或 mention_all
+- **THEN** mention 特征 SHALL 只报告 self、all 或 none
+- **AND** SHALL 不从文本内容或 mention 名称生成 here 信号
 
 ### Requirement: 未知内容和空消息必须安全降级
 

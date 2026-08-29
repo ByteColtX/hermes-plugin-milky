@@ -1,6 +1,5 @@
-"""按 chat 隔离的 admission 和 wait buffer。"""
+"""Milky 插件的会话身份和进程内状态边界。"""
 
-from .admission import AdmissionTicket, ChatAdmissionCoordinator
 from .dedup import TtlDeduplicator
 from .identity import (
     CanonicalError,
@@ -12,9 +11,7 @@ from .identity import (
 )
 
 __all__ = [
-    "AdmissionTicket",
     "CanonicalError",
-    "ChatAdmissionCoordinator",
     "ChatKeyError",
     "TempChatError",
     "TtlDeduplicator",

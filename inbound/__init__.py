@@ -11,15 +11,39 @@ from .canonical import (
     make_dedup_key,
     normalize_chat_key,
 )
+from .extractor import (
+    ExtractedSegments,
+    extract_message_features,
+    extract_segment_features,
+    extract_segments,
+)
+from .normalizer import (
+    NormalizationResult,
+    NormalizedMessage,
+    normalize,
+    normalize_event,
+    normalize_incoming_message,
+    normalize_message,
+)
 
 __all__ = [
     "CanonicalError",
     "CanonicalMessage",
     "CanonicalResult",
+    "ExtractedSegments",
     "MediaReference",
+    "NormalizationResult",
+    "NormalizedMessage",
     "build_canonical",
     "canonicalize_event",
     "canonicalize_message",
+    "extract_message_features",
+    "extract_segment_features",
+    "extract_segments",
     "make_dedup_key",
+    "normalize",
     "normalize_chat_key",
+    "normalize_event",
+    "normalize_incoming_message",
+    "normalize_message",
 ]

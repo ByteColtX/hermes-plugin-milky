@@ -23,15 +23,15 @@
 - [x] 4.4 **T04 DTO 与 tolerant parser**：实现 Milky envelope、event、message、friend/group/entity、forwarded-message 和每个已知 segment DTO；使用 `uin`、`data.groups`、`data.member` 和外层 `milky_event` 的真实字段边界；temp 解析后返回 `ignored_temp`，不建立 canonical；保留安全 raw/未知扩展且不得采用 `[unknown]` 文本默认值；验证 T03 全部 fixtures 可确定解析、非法身份分类失败且 parser 无网络 I/O
 - [x] 4.5 **T05 HTTP Action client**：实现统一 POST JSON、Bearer、响应解码、超时、连接关闭、错误分类和最小 data 校验，并覆盖状态同步、消息、资源和上传所需接口；验证 fake transport 覆盖 timeout、非 JSON、HTTP/retcode 错误、缺少 `message_seq` 和不盲目重试
 - [x] 4.6 **T06 SSE `/event` 事件流**：实现 SSE GET、event/data 边界、多行 data、handler 隔离、断线重连、退避、取消和资源释放，不引入 WS echo/pending 模型；验证 fake stream 覆盖 malformed/unknown event、handler 异常、重连、取消和 receive loop 不阻塞
-- [x] 4.7 **T07 canonical、chat key 与 TTL dedup**：实现 `group:`、`dm:` 规范化、temp 忽略、canonical record、无稳定 ID 降级、有界 TTL 去重和 per-chat admission 边界；验证同号隔离、重复帧在资源/Will/Hermes 前停止、同文不同 ID 独立处理及非法目标本地失败
+- [x] 4.7 **T07 canonical、chat key 与 TTL dedup**：实现 `group:`、`dm:` 身份规范化、temp 忽略、canonical 身份外壳、无稳定 ID 降级和有界 TTL 去重；不在此任务重复实现 segment 正文、策略特征或 per-chat admission；验证同号隔离、重复帧在资源/Will/Hermes 前停止、同文不同 ID 独立处理及非法目标本地失败
 
 ## 5. Inbound strategy and state
 
-- [ ] 5.1 **T08 normalizer、extractor 与 WillInput**：实现 text、mention、mention_all、face、reply、image、file、record、video、forward、market_face、light_app、xml、markdown 和未知 segment 的无网络规范化，并生成策略特征和延迟媒体引用；明确 Milky v1.3 没有独立 mention_here，验证 friend/group、temp 忽略、全部 segment、空内容丢弃及 normalizer 无外部副作用
-- [ ] 5.2 **T09 Gate registry 与 per-chat admission**：实现 Self、allowlist、mute 三道门禁的固定顺序、ingress sequence 和同 chat 短暂 admission 串行；验证 Gate 无网络/随机/发送副作用，deny 不增长 buffer 或修改 Will，并验证 admission 不覆盖 Agent 执行
+- [x] 5.1 **T08 normalizer、extractor 与 WillInput**：基于 T04 DTO 实现 14 类官方 incoming segment 的无网络规范化，保留顺序/typed 语义/raw，生成正文、策略特征、`has_reply`/`reply_message_seq`、多值 mention 信号和延迟媒体引用；未知 segment 只进入安全 metadata，v1.3 不推断 `mention_here`，不补造协议缺失字段；验证 friend/group、temp 不进入 normalizer、unknown-only 丢弃、structured-only 保留、媒体/forward/reply 零 Action 调用、全部 segment 矩阵和 normalizer 无网络/文件系统/时钟/随机副作用
+- [ ] 5.2 **T09 Gate registry 与 per-chat admission**：统一拥有 Self、allowlist、mute 三道门禁的固定顺序、ingress sequence 和同 chat 短暂 admission 串行；复用 T07 的身份/dedup 与 T08 的规范化结果，不重复实现 Agent 执行队列；验证 Gate 无网络/随机/发送副作用，deny 不增长 buffer 或修改 Will，并验证 admission 不覆盖 Agent 执行
 - [ ] 5.3 **T10 wait buffer 与 detached trigger batch**：实现默认 20、可配置上限、0 禁用历史、历史 FIFO 溢出、原子 drain、历史/current 分离和交接失败策略；明确 wait buffer 只保存 Will 历史上下文而不是 Agent 执行队列；验证 wait 不调用 Hermes，trigger 不重复消息，buffer 隔离且失败不无条件回填
-- [ ] 5.4 **T11 routing Will engine**：实现 direct、mention、mentionAll、mentionHere、quote、image、poke、group 的 nested routing 和固定优先级；验证多信号优先级、mention 类型独立、poke observe-only 及 routing 无网络副作用
-- [ ] 5.5 **T12 willingness engine**：实现本项目定义的 YesImBot-inspired 默认值、嵌套配置、weighted silence、阈值衰减、marginal/dynamic gain、概率、force、关键词、poke 和提交即 reply cost；验证确定性向量、浮点容差、时钟回拨、ratio 分段、概率 clamp、独立 chat 状态和提交失败不扣费
+- [ ] 5.4 **T11 routing Will engine**：实现 direct、mention、mentionAll、mentionHere、quote、image、poke、group 的 nested routing 和固定优先级；对 v1.3 普通消息仅消费 self/all/none，`mentionHere` 只保留未来明确扩展入口；验证多信号优先级、mention 类型独立、poke observe-only 及 routing 无网络副作用
+- [ ] 5.5 **T12 willingness engine**：实现本项目定义的 YesImBot-inspired 默认值、嵌套配置、weighted silence、阈值衰减、marginal/dynamic gain、概率、force、关键词、poke 和提交即 reply cost；消费 T08 的显式策略特征而不重新解析 raw segment；验证确定性向量、浮点容差、时钟回拨、ratio 分段、概率 clamp、独立 chat 状态和提交失败不扣费
 - [ ] 5.6 **T13 MuteTracker**：实现 login → group list → self member 查询顺序、`shut_up_end_time`、二态 whole/member mute、初始 fail-closed、离群清理、事件更新和有锁冷却刷新；验证初始化前不放行、查询失败保持 muted/unmuted 原状态、`duration=0` 取消、私聊失败不刷新群状态
 
 ## 6. Hermes mapping and outbound
@@ -52,20 +52,20 @@
 依赖关系如下；同一阶段内没有依赖的任务可以并行，但后续任务必须等待其前置任务的代码、测试和证据完成：
 
 ```text
-T01 ──┬── T02 ──┬── T05 ──┬── T06 ──┐
-      └── T03 ──┴── T04 ──┴── T07 ──┼── T08 ──┬── T09 ──┬── T10 ──┐
-                                     │         ├── T11 ──┤         │
-                                     │         └── T12 ──┴───────────┤
-                                     └──────────── T13 ─────────────┤
-                                                                   ▼
-                              T14 ───────────────────────────────► T15
-                              T16 ───────────────────────────────► T18 ─► T19 ─► T20
-                                └──────────────────────────────────► T17（可选）
+T01 --> T02 --> T05 --> T06 --+--> T07 --+
+T03 --> T04 -------------------+          |
+T04 ------------------------------> T08 --+--> T09 --> T10 --+
+T08 --> T11 ----------------------------------------------+  |
+T08 --> T12 ----------------------------------------------+  |
+T02/T05/T06 --> T13 -------------------------------------+  |
+T04/T05/T10 --> T14 --> T15 ------------------------------+--> T18 --> T19 --> T20
+T02/T05/T13 --> T16 --> T18
+T16 --> T17（可选）
 ```
 
 - T01 无依赖；T02 依赖 T01；T03 无依赖；T04 依赖 T03。
-- T05、T06 依赖 T02、T03；T07 依赖 T04、T06；T08 依赖 T04、T07。
-- T09 依赖 T07、T08；T10 依赖 T09；T11、T12 依赖 T08；T13 依赖 T02、T05、T06。
+- T05、T06 依赖 T02、T03；T07 依赖 T04、T06；T08 依赖 T04，可与 T07 并行；T09 依赖 T07、T08。
+- T10 依赖 T09；T11、T12 依赖 T08；T13 依赖 T02、T05、T06。
 - T14 依赖 T04、T05、T10；T15 依赖 T09–T14 的相关任务；T16 依赖 T02、T05、T13。
 - T17 依赖 T16 且为可选；T18 依赖 T05、T06、T13、T15、T16；T19 依赖 T18；T20 依赖 T01–T16、T18、T19。
 - 四个交付阶段依次为：T01–T07 协议基础、T08–T13 入站策略与状态、T14–T16 Hermes 映射与出站、T18–T20 生命周期与发布。T17 不阻塞核心交付。
@@ -83,8 +83,8 @@ T01 ──┬── T02 ──┬── T05 ──┬── T06 ──┐
 | T04 | `milky/models.py`、`milky/parser.py` 和 `tests/test_milky_parser.py`：20 项 T04 测试覆盖 envelope 的 `uin`/`groups`/`member` 层级、14 类 known segment、inline reply、forward 延迟 ID、friend/group/temp、外层 `milky_event`、unknown raw-only、缺失 message ID、非法身份/容器/群号一致性、敏感字段清理和 socket 无网络守护；相关 fixture 测试 28 passed；全套 `uv run pytest` 67 passed、`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check` 通过 | —；T04 仅使用脱敏 fixture，parser 纯内存且未执行 live Milky Action | 反馈分类：协议字段/容器与测试基础设施；冻结 JSON 后 list 变 tuple 的解析边界、只有 reply 目标 ID 和未知非对象 data 的容错均补充回归测试；敏感 unknown raw 过滤以测试固定 | 未实现 T05 HTTP client、T06 SSE consumer 和 T07 canonical/dedup；T03 SSE frame 解析留给 T06，T04 未进行 live API smoke |
 | T05 | `milky/client.py`、`milky/__init__.py` 和 `tests/test_milky_client.py`：14 项 fake transport 测试覆盖 prefixed POST/Bearer/`{}`、`uin`/`groups`/`member` 层级、群/私聊发送、资源/reply/forward、群/私聊上传、稳定 `message_seq`、缺序号、`rejected`/`malformed`/`http_error`/`transport_unknown`、非法目标前置校验、凭证脱敏、关闭释放和不重试；全套 `uv run pytest` 81 passed、`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check` 及 OpenSpec strict validation 通过 | 当前会话无可执行 Milky Action MCP；2026-08-29 使用运行时凭证和脱敏 HTTP fallback 只读调用 `get_login_info`、`get_group_list`，均为 `accepted`（群数仅记录为 243），未保存 live 响应、身份、token 或 URL | 反馈分类：协议字段/路径与权限/安全；首轮失败测试固定统一 POST 和 envelope 分类，随后补充非法 Action 不回显不可信值、超时/连接错误不重试及 transport close 回归；T05 smoke 仅覆盖只读状态 Action，写入/发送/上传未执行 | 资源 Action 的业务 data 由后续 T14 解析；T05 仅提供已确认的通用 envelope 和明确查询方法，不推断未知字段；不包含 SSE、canonical、Will、出站编排或生命周期组装 |
 | T06 | `milky/event_stream.py`、`milky/__init__.py`、`tests/test_milky_event_stream.py` 和新增 SSE fixture：17 项 T06 测试覆盖 prefix/Bearer/GET、标准 event/data 边界、多行 data、注释心跳、malformed/未知外层事件、业务未知事件、handler 隔离、慢 handler 非阻塞、连接异常重连与退避、连接中取消、直接取消 run、幂等关闭、响应/transport 释放与诊断脱敏；相关协议/解析/Action 回归合计 60 项通过；全量 `uv run pytest` 99 passed、`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check` 和 `npx --yes @fission-ai/openspec@1.11.0 validate --changes --strict` 均通过 | 当前会话没有可执行 Milky Action/SSE MCP；已读取当前 v1.3 OpenAPI 文档，文档未列出 `/event` path，未执行 live HTTP fallback 或连接测试 | 反馈分类：协议字段/路径、并发/顺序、权限/安全、测试基础设施；首轮回归发现主动关闭的取消传播、无效空事件 payload 和 SSE 注释心跳边界，均已补最小修复与回归测试；连接中取消和长退避打断已固定不重连并清理资源 | Milky `/event` 实机行为仍需后续在具备明确事件流测试连接时按运行时凭证执行；当前 fake transport 已验证合同，不把 OpenAPI Action 清单或 HTTP 200 视为事件流实机支持；未修改后续任务 |
-| T07 | `inbound/canonical.py`、`session/identity.py`、`session/dedup.py`、`session/admission.py`、`milky/models.py`、`milky/parser.py` 和 `tests/test_canonical.py`：29 项 T07 测试覆盖 chat key 命名空间、非法身份、temp、canonical 身份/显示名/typed segments/媒体引用、无稳定 ID、敏感 raw、TTL 容量/过期/回拨/零容量/并发原子性、重复帧前置停止和 per-chat admission 串行/并行/取消释放；全量 `uv run pytest` 128 passed、`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check` 均通过 | —（T07 只涉及本地 DTO、内存 dedup 和 admission，无外部 Milky Action；无需新增 live smoke） | 反馈分类：协议字段/安全、并发/顺序、测试基础设施；首轮失败测试校正了脱敏群 fixture 的真实合成序号/时间与容量淘汰断言；补充 self_id 一致性、显示名空白回退、时钟回拨、取消和异常释放回归 | `IncomingMessage.self_id` 从已解析 Event 传递至 canonical；T08 仍未实现 normalizer/extractor，T09 仍未实现 Gate registry，未扩展到后续任务 |
-| T08 | — | — | — | — |
+| T07 | `inbound/canonical.py`、`session/identity.py`、`session/dedup.py`、`milky/models.py`、`milky/parser.py` 和 `tests/test_canonical.py`：26 项 T07 测试覆盖 chat key 命名空间、非法身份、temp、canonical 身份/显示名/typed segments/媒体引用、无稳定 ID、敏感 raw、TTL 容量/过期/回拨/零容量/并发原子性和重复帧前置停止；T08 收敛后全量 `uv run pytest` 137 passed、`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check` 均通过 | —（T07 只涉及本地 DTO、内存 dedup，无外部 Milky Action；无需新增 live smoke） | 反馈分类：协议字段/安全、测试基础设施；T08 回归将 canonical 的正文、mention、quote 和媒体引用派生集中到 normalizer/extractor；移除 T07 提前落地的 admission scaffolding，避免 T09 接管时重复实现 | `IncomingMessage.self_id` 从已解析 Event 传递至 canonical；T09 仍需新建 Gate registry 与 per-chat admission，当前未实现不伪装为已交付 |
+| T08 | `inbound/extractor.py`、`inbound/normalizer.py`、`will/input.py`、`inbound/canonical.py` 和 `tests/test_normalizer.py`：12 项 T08 测试覆盖 14 类 segment 顺序/typed 语义、friend/group、temp ignored、unknown-only 丢弃、structured-only、inline/malformed reply、媒体/forward 延迟引用、不完整媒体占位、v1.3 不推断 mention here，以及无网络/文件系统/时钟/随机副作用；全量 `uv run pytest` 137 passed、`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check` 均通过 | —（T08 只消费 T04 typed DTO，不调用 Milky Action；无需新增 live smoke） | 反馈分类：协议字段/安全、测试基础设施、职责边界；reply 缺字段保持 `malformed` 诊断且不伪造目标，媒体只保留安全远端引用；T07 canonical 改为消费 T08 结果，T09 admission 保持未实现 | T09 Gate registry、per-chat admission 和后续 Will 尚未实现；未知/不完整媒体的实际远端补全由 T14 处理，不能将 T08 的占位视为资源解析完成 |
 | T09 | — | — | — | — |
 | T10 | — | — | — | — |
 | T11 | — | — | — | — |

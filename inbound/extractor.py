@@ -1,0 +1,343 @@
+"""从 typed Milky segment 提取正文、策略特征和延迟资源引用。"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any
+
+from milky.models import (
+    FaceSegment,
+    FileSegment,
+    ForwardSegment,
+    ImageSegment,
+    LightAppSegment,
+    MarkdownSegment,
+    MarketFaceSegment,
+    MentionAllSegment,
+    MentionSegment,
+    RecordSegment,
+    ReplySegment,
+    Segment,
+    TextSegment,
+    UnknownSegment,
+    VideoSegment,
+    XmlSegment,
+)
+
+JsonObject = Mapping[str, Any]
+_SENSITIVE_KEYS = {
+    "access_token",
+    "authorization",
+    "cookie",
+    "password",
+    "token",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class MediaReference:
+    """保存 trigger 阶段使用的 Milky 远端资源引用。"""
+
+    kind: str
+    resource_id: str | None = None
+    temp_url: str | None = None
+    file_id: str | None = None
+    file_name: str | None = None
+    file_size: int | None = None
+    file_hash: str | None = None
+    forward_id: str | None = None
+    name: str | None = None
+    mime_type: str | None = None
+    raw: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractedSegments:
+    """表示一次无副作用的 segment 提取结果。"""
+
+    body: str
+    strategy_text: str
+    mention_kinds: tuple[str, ...]
+    has_reply: bool
+    reply_message_seq: int | None
+    has_image: bool
+    media_references: tuple[MediaReference, ...]
+    unknown_segments: tuple[JsonObject, ...]
+    diagnostics: tuple[str, ...] = ()
+    has_supported_content: bool = False
+    metadata: JsonObject = field(default_factory=dict)
+
+
+def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegments:
+    """按原始顺序从 typed segments 生成稳定正文和策略特征。"""
+
+    body_parts: list[str] = []
+    strategy_parts: list[str] = []
+    mention_kinds: list[str] = []
+    media_references: list[MediaReference] = []
+    unknown_segments: list[JsonObject] = []
+    diagnostics: list[str] = []
+    has_reply = False
+    reply_message_seq: int | None = None
+    has_image = False
+    has_supported_content = False
+
+    for segment in segments:
+        if isinstance(segment, TextSegment):
+            if segment.text:
+                has_supported_content = True
+            body_parts.append(segment.text)
+            strategy_parts.append(segment.text)
+            continue
+
+        if isinstance(segment, MarkdownSegment):
+            has_supported_content = True
+            body_parts.append(segment.content)
+            strategy_parts.append(segment.content)
+            continue
+
+        if isinstance(segment, MentionSegment):
+            has_supported_content = True
+            display = _mention_display(segment)
+            body_parts.append(display)
+            strategy_parts.append(display)
+            if segment.user_id == self_id and "self" not in mention_kinds:
+                mention_kinds.append("self")
+            continue
+
+        if isinstance(segment, MentionAllSegment):
+            has_supported_content = True
+            body_parts.append("@全体")
+            strategy_parts.append("@全体")
+            if "all" not in mention_kinds:
+                mention_kinds.append("all")
+            continue
+
+        if isinstance(segment, ReplySegment):
+            has_supported_content = True
+            has_reply = True
+            if _reply_is_complete(segment):
+                body_parts.append("[引用]")
+                if reply_message_seq is None:
+                    reply_message_seq = segment.message_seq
+            else:
+                body_parts.append("[引用不可用]")
+                _append_once(diagnostics, "malformed_reply")
+            continue
+
+        if isinstance(segment, ImageSegment):
+            has_supported_content = True
+            has_image = True
+            available = _has_text(segment.resource_id) or _has_text(segment.temp_url)
+            body_parts.append("[图片]" if available else "[图片不可用]")
+            if not available:
+                _append_once(diagnostics, "incomplete_media_reference")
+            media_references.append(
+                MediaReference(
+                    kind="image",
+                    resource_id=segment.resource_id,
+                    temp_url=segment.temp_url,
+                    name=segment.summary,
+                    mime_type=_extra_text(segment, "mime_type"),
+                    file_size=_extra_nonnegative_int(segment, "file_size"),
+                    raw=_safe_mapping(segment.raw),
+                )
+            )
+            continue
+
+        if isinstance(segment, RecordSegment):
+            has_supported_content = True
+            available = _has_text(segment.resource_id) or _has_text(segment.temp_url)
+            body_parts.append("[语音]" if available else "[语音不可用]")
+            if not available:
+                _append_once(diagnostics, "incomplete_media_reference")
+            media_references.append(
+                MediaReference(
+                    kind="record",
+                    resource_id=segment.resource_id,
+                    temp_url=segment.temp_url,
+                    mime_type=_extra_text(segment, "mime_type"),
+                    file_size=_extra_nonnegative_int(segment, "file_size"),
+                    raw=_safe_mapping(segment.raw),
+                )
+            )
+            continue
+
+        if isinstance(segment, VideoSegment):
+            has_supported_content = True
+            available = _has_text(segment.resource_id) or _has_text(segment.temp_url)
+            body_parts.append("[视频]" if available else "[视频不可用]")
+            if not available:
+                _append_once(diagnostics, "incomplete_media_reference")
+            media_references.append(
+                MediaReference(
+                    kind="video",
+                    resource_id=segment.resource_id,
+                    temp_url=segment.temp_url,
+                    mime_type=_extra_text(segment, "mime_type"),
+                    file_size=_extra_nonnegative_int(segment, "file_size"),
+                    raw=_safe_mapping(segment.raw),
+                )
+            )
+            continue
+
+        if isinstance(segment, FileSegment):
+            has_supported_content = True
+            available = _has_text(segment.file_id) or _has_text(segment.file_name)
+            body_parts.append("[文件]" if available else "[文件不可用]")
+            if not available:
+                _append_once(diagnostics, "incomplete_media_reference")
+            media_references.append(
+                MediaReference(
+                    kind="file",
+                    file_id=segment.file_id,
+                    file_name=segment.file_name,
+                    file_size=segment.file_size,
+                    file_hash=segment.file_hash,
+                    name=segment.file_name,
+                    mime_type=_extra_text(segment, "mime_type"),
+                    raw=_safe_mapping(segment.raw),
+                )
+            )
+            continue
+
+        if isinstance(segment, ForwardSegment):
+            has_supported_content = True
+            available = _has_text(segment.forward_id)
+            body_parts.append("[转发]" if available else "[转发不可用]")
+            if not available:
+                _append_once(diagnostics, "incomplete_media_reference")
+            media_references.append(
+                MediaReference(
+                    kind="forward",
+                    forward_id=segment.forward_id,
+                    raw=_safe_mapping(segment.raw),
+                )
+            )
+            continue
+
+        if isinstance(segment, FaceSegment):
+            has_supported_content = True
+            body_parts.append("[表情]")
+            continue
+
+        if isinstance(segment, MarketFaceSegment):
+            has_supported_content = True
+            body_parts.append("[市场表情]")
+            continue
+
+        if isinstance(segment, LightAppSegment):
+            has_supported_content = True
+            body_parts.append("[小程序]")
+            continue
+
+        if isinstance(segment, XmlSegment):
+            has_supported_content = True
+            body_parts.append("[XML]")
+            continue
+
+        if isinstance(segment, UnknownSegment):
+            unknown_segments.append(_safe_mapping(segment.raw))
+            _append_once(diagnostics, "unknown_segment")
+            continue
+
+        _append_once(diagnostics, "unsupported_segment")
+
+    if not mention_kinds:
+        mention_kinds.append("none")
+    metadata = _safe_mapping(
+        {
+            "unknown_segments": tuple(unknown_segments),
+            "unknown_segment_types": tuple(
+                str(segment.get("type", "")) for segment in unknown_segments
+            ),
+        }
+    )
+    return ExtractedSegments(
+        body="".join(body_parts),
+        strategy_text="".join(strategy_parts),
+        mention_kinds=tuple(mention_kinds),
+        has_reply=has_reply,
+        reply_message_seq=reply_message_seq,
+        has_image=has_image,
+        media_references=tuple(media_references),
+        unknown_segments=tuple(unknown_segments),
+        diagnostics=tuple(diagnostics),
+        has_supported_content=has_supported_content,
+        metadata=metadata,
+    )
+
+
+extract_segment_features = extract_segments
+extract_message_features = extract_segments
+
+
+def _reply_is_complete(segment: ReplySegment) -> bool:
+    """检查 reply 的协议必填字段，而不为缺失字段补默认值。"""
+
+    if (
+        segment.message_seq is None
+        or segment.sender_id is None
+        or segment.time is None
+        or not isinstance(segment.segments, tuple)
+    ):
+        return False
+    data = segment.raw.get("data")
+    return isinstance(data, Mapping) and all(
+        field in data for field in ("message_seq", "sender_id", "time", "segments")
+    )
+
+
+def _mention_display(segment: MentionSegment) -> str:
+    name = segment.name.strip() if isinstance(segment.name, str) else ""
+    return f"@{name or segment.user_id}"
+
+
+def _has_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _extra_text(segment: Segment, field_name: str) -> str | None:
+    value = segment.extras.get(field_name)
+    return value if isinstance(value, str) else None
+
+
+def _extra_nonnegative_int(segment: Segment, field_name: str) -> int | None:
+    value = segment.extras.get(field_name)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _append_once(values: list[str], value: str) -> None:
+    if value not in values:
+        values.append(value)
+
+
+def _safe_mapping(value: Mapping[str, Any]) -> JsonObject:
+    return MappingProxyType(
+        {
+            str(key): _safe_value(item)
+            for key, item in value.items()
+            if str(key).casefold() not in _SENSITIVE_KEYS
+        }
+    )
+
+
+def _safe_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return _safe_mapping(value)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(_safe_value(item) for item in value)
+    return value
+
+
+__all__ = [
+    "ExtractedSegments",
+    "MediaReference",
+    "extract_message_features",
+    "extract_segment_features",
+    "extract_segments",
+]

@@ -136,6 +136,37 @@ member is not muted, and SSE uses an outer `milky_event` field whose JSON payloa
 business `event_type`. These observations are compatibility fixtures, not credentials or live
 data snapshots.
 
+### Normalizer and strategy-feature boundary
+
+T07 owns only protocol-independent identity, the canonical identity shell and TTL dedup. T08
+consumes the T04 typed DTO and is the single owner of segment semantics, ordered body rendering,
+strategy features and deferred resource references. T09 consumes the canonical and normalized
+results for Gate and admission; it must not reparse raw segments. This prevents canonical,
+Will routing and willingness from independently deriving different meanings from the same
+payload.
+
+The observable normalized result preserves the original segment order and exposes body content,
+strategy text, mention signals, reply presence and target sequence, media references and safe
+diagnostics. Text and markdown contribute their declared content; mention contributes a safe
+display form and self/all signals; face, reply, image, record, video, file, forward, market face,
+light app and XML contribute stable explanatory placeholders while retaining typed data. Unknown
+segments contribute only safe raw/diagnostic metadata. Reply and forward nested content are kept
+for later resolution and are not silently merged into the current message's strategy text.
+
+Milky v1.3 has no independent `mention_here` segment. T08 therefore emits only self, all and
+none for ordinary v1.3 input, and never infers here from text or a mention name. A future here
+signal requires an explicitly recognized protocol extension and a separate contract. A reply
+with the schema-required `message_seq` is a quote signal even when its original content has not
+yet been fetched; missing required reply fields remain a malformed protocol case rather than an
+invented target.
+
+T08 performs no Action or other external operation. `resource_id` for image, record and video is
+resolved only later through `get_resource_temp_url`; file references are resolved through the
+scene-specific private/group file download URL Action; `forward_id` uses
+`get_forwarded_messages`; and a missing full reply uses `get_message` with its scene, peer and
+message sequence. T08 stores these references only. Resource failure placeholders and Hermes
+media-helper handling belong to T14.
+
 ### Fixture boundary
 
 T03 fixtures are separated into raw Action JSON responses, raw event JSON payloads, raw SSE frames,

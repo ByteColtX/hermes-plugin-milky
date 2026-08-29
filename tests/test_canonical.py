@@ -1,8 +1,7 @@
-"""验证 T07 canonical、chat key、TTL dedup 和 admission 边界。"""
+"""验证 T07 canonical、chat key 和 TTL dedup 边界。"""
 
 from __future__ import annotations
 
-import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -19,7 +18,6 @@ from inbound.canonical import (
     normalize_chat_key,
 )
 from milky.parser import parse_event, parse_incoming_message
-from session.admission import ChatAdmissionCoordinator
 from session.dedup import TtlDeduplicator
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "protocol"
@@ -287,92 +285,3 @@ def test_duplicate_canonical_is_stopped_before_downstream_side_effects() -> None
         downstream_calls.append("hermes")
 
     assert downstream_calls == ["resource", "will", "hermes"]
-
-
-def test_admission_serializes_same_chat_and_allows_different_chats_in_parallel() -> None:
-    """Admission 只锁同 chat 的短边界，不把不同 chat 串行化。"""
-
-    coordinator = ChatAdmissionCoordinator()
-    events: list[tuple[str, str, int]] = []
-    first_started = asyncio.Event()
-    release_first = asyncio.Event()
-
-    async def scenario() -> None:
-        async def first() -> None:
-            async with coordinator.admit("group:1") as lease:
-                events.append(("first", "entered", lease.ingress_sequence))
-                first_started.set()
-                await release_first.wait()
-                events.append(("first", "exited", lease.ingress_sequence))
-
-        async def second() -> None:
-            await first_started.wait()
-            async with coordinator.admit("group:1") as lease:
-                events.append(("second", "entered", lease.ingress_sequence))
-
-        async def other_chat() -> None:
-            await first_started.wait()
-            async with coordinator.admit("dm:1") as lease:
-                events.append(("other", "entered", lease.ingress_sequence))
-
-        first_task = asyncio.create_task(first())
-        second_task = asyncio.create_task(second())
-        other_task = asyncio.create_task(other_chat())
-        await asyncio.sleep(0)
-        assert ("other", "entered", 3) in events
-        assert not any(item[0] == "second" and item[1] == "entered" for item in events)
-        release_first.set()
-        await asyncio.gather(first_task, second_task, other_task)
-
-    asyncio.run(scenario())
-
-    assert [item[0] for item in events if item[1] == "entered"] == ["first", "other", "second"]
-    assert events[0][2] == 1
-    assert next(item for item in events if item[0] == "second")[2] == 2
-
-
-def test_admission_rejects_noncanonical_chat_key() -> None:
-    """Admission 不接受未规范化或跨协议的目标。"""
-
-    coordinator = ChatAdmissionCoordinator()
-
-    with pytest.raises(CanonicalError):
-        coordinator.admit("private:1")
-
-
-def test_admission_releases_lock_after_exception_and_canceled_waiter() -> None:
-    """异常和取消都不能遗留锁，后续同 chat 必须能够进入。"""
-
-    coordinator = ChatAdmissionCoordinator()
-
-    async def scenario() -> None:
-        first_entered = asyncio.Event()
-        release_first = asyncio.Event()
-
-        async def first() -> None:
-            async with coordinator.admit("group:2"):
-                first_entered.set()
-                await release_first.wait()
-
-        async def canceled_waiter() -> None:
-            async with coordinator.admit("group:2"):
-                raise AssertionError("被取消的 waiter 不应进入")
-
-        first_task = asyncio.create_task(first())
-        await first_entered.wait()
-        waiter = asyncio.create_task(canceled_waiter())
-        await asyncio.sleep(0)
-        waiter.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await waiter
-        release_first.set()
-        await first_task
-
-        with pytest.raises(RuntimeError):
-            async with coordinator.admit("group:2"):
-                raise RuntimeError("测试异常")
-
-        async with coordinator.admit("group:2") as lease:
-            assert lease.chat_key == "group:2"
-
-    asyncio.run(scenario())

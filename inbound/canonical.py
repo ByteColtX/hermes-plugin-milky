@@ -2,28 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from milky.models import (
-    Event,
-    FileSegment,
-    ForwardSegment,
-    ImageSegment,
-    IncomingMessage,
-    MarkdownSegment,
-    MentionAllSegment,
-    MentionSegment,
-    RecordSegment,
-    ReplySegment,
-    Segment,
-    TextSegment,
-    UnknownSegment,
-    VideoSegment,
-)
-from milky.parser import ParseError, parse_event, parse_incoming_message
+from inbound.normalizer import MediaReference, NormalizedMessage, normalize_event, normalize_message
+from milky.models import Event, IncomingMessage, Segment
 from session.identity import (
     CanonicalError,
     make_dedup_key,
@@ -38,20 +23,6 @@ _SENSITIVE_KEYS = {
     "password",
     "token",
 }
-
-
-@dataclass(frozen=True, slots=True)
-class MediaReference:
-    """保存待后续 resolver 使用的协议资源引用。"""
-
-    kind: str
-    resource_id: str | None = None
-    temp_url: str | None = None
-    file_id: str | None = None
-    file_name: str | None = None
-    file_size: int | None = None
-    file_hash: str | None = None
-    forward_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,25 +90,27 @@ def canonicalize_event(
 ) -> CanonicalResult:
     """解析并规范化一个事件，不为 temp 或系统事件建立 canonical。"""
 
-    try:
-        parsed_event = event if isinstance(event, Event) else parse_event(event)
-        if parsed_event.event_type != "message_receive":
-            return CanonicalResult("observe_only", None, "event is not message_receive")
-        parsed = parse_incoming_message(parsed_event)
-    except ParseError as error:
-        return CanonicalResult(error.classification, None, error.reason)
+    normalized_result = normalize_event(event, expected_self_id=expected_self_id)
+    if normalized_result.value is None:
+        return CanonicalResult(
+            normalized_result.classification,
+            None,
+            normalized_result.reason,
+        )
+    if normalized_result.classification != "accepted":
+        return CanonicalResult(
+            normalized_result.classification,
+            None,
+            normalized_result.reason,
+        )
 
-    if parsed.classification == "ignored_temp":
-        return CanonicalResult("ignored_temp", None, parsed.reason)
-    if parsed.value is None:
-        return CanonicalResult("malformed", None, "message parser returned no value")
-
     try:
-        value = canonicalize_message(parsed.value, expected_self_id=expected_self_id)
+        value = _canonicalize_normalized(
+            normalized_result.value,
+            expected_self_id=expected_self_id,
+        )
     except CanonicalError as error:
         return CanonicalResult(error.classification, None, error.reason)
-    if parsed.reason is not None:
-        value = _with_diagnostics(value, (parsed.reason,))
     return CanonicalResult("accepted", value)
 
 
@@ -148,54 +121,78 @@ def canonicalize_message(
 ) -> CanonicalMessage:
     """将已通过 Milky parser 的消息转换为 canonical record。"""
 
-    if not isinstance(message, IncomingMessage):
-        raise CanonicalError("message must be an IncomingMessage")
-    if message.message_scene == "temp":
-        raise CanonicalError("temporary message scene", "ignored_temp")
-    if message.self_id is None:
-        raise CanonicalError("self_id is required")
-    _require_nonnegative_int(message.self_id, "self_id")
-    _require_nonnegative_int(message.peer_id, "peer_id")
-    _require_nonnegative_int(message.sender_id, "sender_id")
-    _require_nonnegative_int(message.time, "time")
-    if message.message_seq is not None:
-        _require_nonnegative_int(message.message_seq, "message_seq")
-    if expected_self_id is not None and message.self_id != expected_self_id:
-        raise CanonicalError("event self_id disagrees with configured self_id")
-    if message.message_scene not in {"friend", "group"}:
-        raise CanonicalError("message scene is not friend or group")
+    normalized_result = normalize_message(message, expected_self_id=expected_self_id)
+    if normalized_result.value is None or normalized_result.classification != "accepted":
+        raise CanonicalError(
+            normalized_result.reason or "message cannot be normalized",
+            normalized_result.classification,
+        )
+    return _canonicalize_normalized(normalized_result.value, expected_self_id=expected_self_id)
 
-    chat_key = normalize_chat_key(message.message_scene, message.peer_id)
+
+def _canonicalize_normalized(
+    normalized: NormalizedMessage,
+    *,
+    expected_self_id: int | None = None,
+) -> CanonicalMessage:
+    """只从 T08 结果构造 canonical 身份外壳。"""
+
+    if expected_self_id is not None and normalized.self_id != expected_self_id:
+        raise CanonicalError("event self_id disagrees with configured self_id")
+    chat_key = normalize_chat_key(normalized.scene, normalized.peer_id)
+    if normalized.scene not in {"friend", "group"}:
+        raise CanonicalError("message scene is not friend or group")
+    if not isinstance(normalized.segments, tuple):
+        raise CanonicalError("segments must be a tuple")
+
+    message = _message_from_normalized(normalized)
     _validate_scene_entities(message)
     sender_name = _sender_name(message)
-    message_id = None if message.message_seq is None else str(message.message_seq)
-    diagnostics = ("no_stable_message_id",) if message_id is None else ()
-    raw = _freeze_safe(message.raw)
+    diagnostics = normalized.diagnostics
     metadata = _freeze_safe(
         {
-            "scene": message.message_scene,
+            **dict(normalized.metadata),
+            "scene": normalized.scene,
             "chat_key": chat_key,
             "diagnostics": diagnostics,
         }
     )
     return CanonicalMessage(
         platform="milky",
-        self_id=message.self_id,
-        scene=message.message_scene,
+        self_id=normalized.self_id,
+        scene=normalized.scene,
         chat_key=chat_key,
-        peer_id=message.peer_id,
-        sender_id=message.sender_id,
-        message_id=message_id,
-        timestamp=message.time,
+        peer_id=normalized.peer_id,
+        sender_id=normalized.sender_id,
+        message_id=normalized.message_id,
+        timestamp=normalized.timestamp,
         sender_name=sender_name,
-        segments=message.segments,
-        body=_body_from_segments(message.segments),
-        mention_kind=_mention_kind(message.segments, message.self_id),
-        quote_message_id=_quote_message_id(message.segments),
-        media_references=_media_references(message.segments),
-        raw=raw,
+        segments=normalized.segments,
+        body=normalized.body,
+        mention_kind=normalized.mention_kind,
+        quote_message_id=normalized.reply_message_id,
+        media_references=normalized.media_references,
+        raw=normalized.raw,
         metadata=metadata,
         diagnostics=diagnostics,
+    )
+
+
+def _message_from_normalized(normalized: NormalizedMessage) -> IncomingMessage:
+    """为 T07 的场景实体校验提供 typed 消息视图。"""
+
+    return IncomingMessage(
+        message_scene=normalized.scene,
+        peer_id=normalized.peer_id,
+        message_seq=None if normalized.message_id is None else int(normalized.message_id),
+        sender_id=normalized.sender_id,
+        time=normalized.timestamp,
+        segments=normalized.segments,
+        friend=normalized.friend,
+        group=normalized.group,
+        group_member=normalized.group_member,
+        raw=normalized.raw,
+        self_id=normalized.self_id,
     )
 
 
@@ -250,122 +247,6 @@ def _non_blank(value: str | None) -> str | None:
     return value or None
 
 
-def _require_nonnegative_int(value: object, field_name: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise CanonicalError(f"{field_name} must be a non-negative integer")
-
-
-def _mention_kind(segments: Sequence[Segment], self_id: int) -> str:
-    if any(
-        isinstance(segment, MentionSegment) and segment.user_id == self_id for segment in segments
-    ):
-        return "self"
-    if any(isinstance(segment, MentionAllSegment) for segment in segments):
-        return "all"
-    return "none"
-
-
-def _quote_message_id(segments: Sequence[Segment]) -> str | None:
-    for segment in segments:
-        if isinstance(segment, ReplySegment) and segment.message_seq is not None:
-            return str(segment.message_seq)
-    return None
-
-
-def _body_from_segments(segments: Sequence[Segment]) -> str:
-    parts: list[str] = []
-    for segment in segments:
-        if isinstance(segment, TextSegment):
-            parts.append(segment.text)
-        elif isinstance(segment, MarkdownSegment):
-            parts.append(segment.content)
-        elif isinstance(segment, MentionSegment):
-            parts.append(f"@{segment.name or segment.user_id}")
-        elif isinstance(segment, MentionAllSegment):
-            parts.append("@全体")
-        elif isinstance(segment, ReplySegment):
-            parts.append("[引用]")
-        elif isinstance(segment, UnknownSegment):
-            continue
-        else:
-            parts.append(_structured_placeholder(segment))
-    return "".join(parts)
-
-
-def _structured_placeholder(segment: Segment) -> str:
-    placeholders = {
-        "face": "[表情]",
-        "image": "[图片]",
-        "record": "[语音]",
-        "video": "[视频]",
-        "file": "[文件]",
-        "forward": "[转发]",
-        "market_face": "[市场表情]",
-        "light_app": "[小程序]",
-        "xml": "[XML]",
-    }
-    return placeholders.get(segment.kind, "")
-
-
-def _media_references(segments: Sequence[Segment]) -> tuple[MediaReference, ...]:
-    references: list[MediaReference] = []
-    for segment in segments:
-        if isinstance(segment, ImageSegment):
-            references.append(
-                MediaReference("image", resource_id=segment.resource_id, temp_url=segment.temp_url)
-            )
-        elif isinstance(segment, RecordSegment):
-            references.append(
-                MediaReference("record", resource_id=segment.resource_id, temp_url=segment.temp_url)
-            )
-        elif isinstance(segment, VideoSegment):
-            references.append(
-                MediaReference("video", resource_id=segment.resource_id, temp_url=segment.temp_url)
-            )
-        elif isinstance(segment, FileSegment):
-            references.append(
-                MediaReference(
-                    "file",
-                    file_id=segment.file_id,
-                    file_name=segment.file_name,
-                    file_size=segment.file_size,
-                    file_hash=segment.file_hash,
-                )
-            )
-        elif isinstance(segment, ForwardSegment):
-            references.append(MediaReference("forward", forward_id=segment.forward_id))
-    return tuple(references)
-
-
-def _with_diagnostics(message: CanonicalMessage, diagnostics: tuple[str, ...]) -> CanonicalMessage:
-    merged = tuple(dict.fromkeys((*message.diagnostics, *diagnostics)))
-    metadata = _freeze_safe(
-        {
-            **dict(message.metadata),
-            "diagnostics": merged,
-        }
-    )
-    return CanonicalMessage(
-        platform=message.platform,
-        self_id=message.self_id,
-        scene=message.scene,
-        chat_key=message.chat_key,
-        peer_id=message.peer_id,
-        sender_id=message.sender_id,
-        message_id=message.message_id,
-        timestamp=message.timestamp,
-        sender_name=message.sender_name,
-        segments=message.segments,
-        body=message.body,
-        mention_kind=message.mention_kind,
-        quote_message_id=message.quote_message_id,
-        media_references=message.media_references,
-        raw=message.raw,
-        metadata=metadata,
-        diagnostics=merged,
-    )
-
-
 def _freeze_safe(value: object) -> Any:
     if isinstance(value, Mapping):
         safe: dict[str, Any] = {}
@@ -375,7 +256,7 @@ def _freeze_safe(value: object) -> Any:
                 continue
             safe[key_text] = _freeze_safe(item)
         return MappingProxyType(safe)
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+    if isinstance(value, (list, tuple)):
         return tuple(_freeze_safe(item) for item in value)
     return value
 
