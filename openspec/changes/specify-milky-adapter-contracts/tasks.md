@@ -17,8 +17,8 @@
 
 ## 4. Protocol foundation
 
-- [ ] 4.1 **T01 包布局与唯一入口**：建立目标 Python 包布局，实现根 `__init__.py::register(ctx)` 的安全外壳，并在根 `tools.py::register_tools(ctx)` 提供 Hermes 工具发现入口；保持导入和注册阶段无网络与长期后台任务；验证入口测试、工具发现、缺失配置错误和包布局检查通过
-- [ ] 4.2 **T02 配置与 manifest**：实现 URL/prefix 派生、Bearer 认证配置、allowlist、嵌套 Will policy、buffer size 和脱敏摘要；验证配置边界、HTTPS、空参数 `{}`、旧 schema 拒绝及 manifest 契约测试通过
+- [x] 4.1 **T01 包布局与唯一入口**：建立目标 Python 包布局，实现根 `__init__.py::register(ctx)` 的安全外壳，并在根 `tools.py::register_tools(ctx)` 提供 Hermes 工具发现入口；保持导入和注册阶段无网络与长期后台任务；验证入口测试、工具发现、缺失配置错误和包布局检查通过
+- [x] 4.2 **T02 配置与 manifest**：实现 URL/prefix 派生、Bearer 认证配置、allowlist、嵌套 Will policy、buffer size 和脱敏摘要；验证配置边界、HTTPS、空参数 `{}`、旧 schema 拒绝及 manifest 契约测试通过
 - [ ] 4.3 **T03 Milky 协议 fixtures**：建立登录、群列表、成员信息、friend/group/temp 消息、全部 segment、系统事件及成功/失败 envelope 的脱敏 fixtures；验证每个 fixture 都有预期 parser 结果并覆盖 malformed、缺字段和协议失败
 - [ ] 4.4 **T04 DTO 与 tolerant parser**：实现 Milky envelope、event、message、friend/group/entity、forwarded-message 和每个已知 segment DTO；temp 解析后返回 `ignored_temp`，不建立 canonical；保留安全 raw/未知扩展；验证 T03 全部 fixtures 可确定解析、非法身份分类失败且 parser 无网络 I/O
 - [ ] 4.5 **T05 HTTP Action client**：实现统一 POST JSON、Bearer、响应解码、超时、连接关闭、错误分类和最小 data 校验，并覆盖状态同步、消息、资源和上传所需接口；验证 fake transport 覆盖 timeout、非 JSON、HTTP/retcode 错误、缺少 `message_seq` 和不盲目重试
@@ -77,8 +77,8 @@ T01 ──┬── T02 ──┬── T05 ──┬── T06 ──┐
 
 | 任务 | 代码/fixture 与自动化证据 | 本地 Milky 证据 | 反馈/回归 | 风险或阻塞 |
 |---|---|---|---|---|
-| T01 | `tests/test_plugin_entry.py`：根 `__init__.py::register(ctx)`、namespaced 加载、工具发现和旧子包入口缺失测试通过；`uv run pytest`（3 passed）、`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check` 通过 | — | 已确认 Hermes directory plugin 使用根目录 `plugin.yaml`、`__init__.py` 和 `tools.py`；配置缺失错误仍由 T02 覆盖，故 T01 暂不勾选 | T01 的入口安全外壳已完成；完整适配器、配置解析和工具业务仍未实现 |
-| T02 | — | — | — | — |
+| T01 | `tests/test_plugin_entry.py`：根 `__init__.py::register(ctx)`、namespaced 加载、工具发现、无网络/长期任务、启动配置边界和八个源码 package 布局测试通过（7 项）；全套 `uv run pytest`（37 passed）、`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check` 通过 | — | 已确认 Hermes directory plugin 使用根目录 `plugin.yaml`、`__init__.py` 和 `tools.py`；配置缺失的具体解析行为由 T02 覆盖 | T01 的入口安全外壳和目标源码 package 布局已完成；完整适配器和工具业务仍未实现 |
+| T02 | `config/__init__.py`、根 `register(ctx)` 与 `tests/test_config.py`：必需配置、URL/prefix、Bearer、allowlist、嵌套 Will 默认/校验、buffer、旧 schema、凭证脱敏和 manifest 工具契约测试通过；`uv run pytest`（37 passed）、`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check`、OpenSpec strict validation 通过 | — | 反馈分类：测试基础设施；T01 旧测试曾断言 manifest 不得有 `provides_tools`，与 T02 delta spec 冲突，已改为验证根入口唯一且工具声明受限；复核后补上根入口启动配置缺失回归 | T02 配置解析尚未接入后续 T18 的完整依赖组装；真实 Milky smoke 留待 T19 |
 | T03 | — | — | — | — |
 | T04 | — | — | — | — |
 | T05 | — | — | — | — |

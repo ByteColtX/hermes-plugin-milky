@@ -25,8 +25,9 @@ adapter.py        # 后续实现的 platform adapter
 本项目不使用 `hermes_plugin_milky/__init__.py`，也不声明 Hermes Python entry point；
 `pyproject.toml` 仅用于 uv 开发环境和质量检查。
 
-当前 manifest 不声明 Agent 工具：`tools.py` 仅保留安全的发现边界，三个 ToolSpec
-将在对应的出站能力实现并完成测试后再加入 manifest。
+当前 manifest 仅声明三个显式 ToolSpec：`milky_profile_like`、`milky_nudge` 和
+`milky_recall_group_message`。工具业务与参数校验仍将在对应的出站能力实现并完成测试后补齐；
+`tools.py` 继续保持安全的发现边界。
 
 ## 配置指南
 
