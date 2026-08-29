@@ -32,6 +32,7 @@ from milky.parser import (
     parse_event,
     parse_forwarded_message,
     parse_incoming_message,
+    parse_incoming_message_data,
 )
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "protocol"
@@ -155,15 +156,43 @@ def test_all_event_fixtures_have_deterministic_boundary_classification() -> None
             assert result.classification in {"accepted", "ignored_temp"}
 
 
-def test_forwarded_message_dto_preserves_nested_segments() -> None:
-    """已展开的转发消息应保留身份、时间、序号和 segment 顺序。"""
+def test_forwarded_message_dto_matches_milky_action_shape() -> None:
+    """get_forwarded_messages 的消息项应保留真实字段和 segment 顺序。"""
 
-    reply = load_fixture("events/message_receive.group.all_segments.json")["data"]["segments"][4]
-    forwarded = parse_forwarded_message(reply["data"])
+    payload = load_fixture("actions/get_forwarded_messages.ok.json")
+    forwarded = parse_forwarded_message(payload["data"]["messages"][0])
 
-    assert forwarded.message_seq == 1000
-    assert forwarded.sender_id == 800000003
+    assert forwarded.message_seq == 1004
+    assert forwarded.sender_name == "合成转发者"
+    assert forwarded.avatar_url == ""
     assert forwarded.segments[0].type == "text"
+
+
+def test_get_message_output_matches_full_incoming_message_shape() -> None:
+    """get_message 的 data.message 应按完整 IncomingMessage 解析。"""
+
+    payload = load_fixture("actions/get_message.ok.json")
+    message = parse_incoming_message_data(payload["data"]["message"])
+
+    assert message.message_scene == "friend"
+    assert message.peer_id == 800000001
+    assert message.message_seq == 1005
+    assert message.friend.nickname == "合成好友"
+    assert message.segments[0].type == "text"
+
+
+def test_get_message_output_does_not_accept_event_or_inline_reply_shape() -> None:
+    """get_message 解析不得把缺场景或 inline reply 当成完整消息。"""
+
+    payload = load_fixture("actions/get_message.ok.json")
+    del payload["data"]["message"]["message_scene"]
+    with pytest.raises(ParseError, match="malformed"):
+        parse_incoming_message_data(payload["data"]["message"])
+
+    inline_reply = load_fixture("events/message_receive.group.all_segments.json")
+    reply_data = inline_reply["data"]["segments"][4]["data"]
+    with pytest.raises(ParseError, match="malformed"):
+        parse_forwarded_message(reply_data)
 
 
 def test_reply_with_only_target_id_remains_unexpanded() -> None:

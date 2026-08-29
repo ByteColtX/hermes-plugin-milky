@@ -13,8 +13,8 @@ from typing import Any, Protocol
 
 from inbound.extractor import extract_segments
 from milky.client import ActionError
-from milky.models import Segment
-from milky.parser import ParseError, parse_forwarded_message
+from milky.models import IncomingMessage, Segment
+from milky.parser import ParseError, parse_forwarded_message, parse_incoming_message_data
 
 UrlToBytes = Callable[[str], Awaitable[bytes]]
 
@@ -29,15 +29,22 @@ class ResourceClient(Protocol):
         """按群号和文件 ID 返回包含 ``data.download_url`` 的 envelope。"""
 
     async def get_private_file_download_url(
-        self, user_id: object, file_id: object, file_hash: object
+        self,
+        user_id: object,
+        file_id: object,
+        file_hash: object,
+        *,
+        is_self_send: object = None,
     ) -> object:
         """按用户号、文件 ID 和文件 hash 返回下载 envelope。"""
 
     async def get_forwarded_messages(self, forward_id: object) -> object:
         """按 forward ID 返回包含 ``data.messages`` 的 envelope。"""
 
-    async def get_message(self, message_seq: object) -> object:
-        """按消息序号返回包含 ``data.message`` 的 envelope。"""
+    async def get_message(
+        self, message_scene: object, peer_id: object, message_seq: object
+    ) -> object:
+        """按场景、会话对象和消息序号返回包含 ``data.message`` 的 envelope。"""
 
 
 class HermesMediaHelpers(Protocol):
@@ -110,11 +117,12 @@ class ResolvedForwardedMessage:
     """保存一条完整转发消息及其中的 Hermes 附件。"""
 
     time: int
-    sender_id: int
     sender_name: str
+    avatar_url: str
     body: str
     segments: tuple[Segment, ...]
-    message_seq: int | None = None
+    message_seq: int
+    sender_id: int | None = None
     hermes_attachment_materializations: tuple[HermesAttachmentMaterialization, ...] = ()
     diagnostics: tuple[ResourceDiagnostic, ...] = ()
 
@@ -477,9 +485,15 @@ class ResourceResolver:
             timestamp = _optional_non_negative_int(reference, "time")
         else:
             try:
-                envelope = await self._client.get_message(message_seq)
+                envelope = await self._client.get_message(scene, peer_id, message_seq)
                 source = _data_mapping(envelope, "message")
-                forwarded = parse_forwarded_message(source)
+                fetched_message = parse_incoming_message_data(source)
+                if (
+                    fetched_message.message_scene != scene
+                    or fetched_message.peer_id != peer_id
+                    or fetched_message.message_seq != message_seq
+                ):
+                    raise ParseError("malformed", "reply message identity disagrees")
             except Exception as error:  # noqa: BLE001 - resolver must downgrade Action failures
                 diagnostic = _diagnostic_from_error(
                     error, "reply", "reply lookup failed", reference_id
@@ -496,10 +510,10 @@ class ResourceResolver:
                     ),
                     (diagnostic,),
                 )
-            segments = forwarded.segments
-            sender_id = forwarded.sender_id
-            sender_name = forwarded.sender_name
-            timestamp = forwarded.time
+            segments = fetched_message.segments
+            sender_id = fetched_message.sender_id
+            sender_name = _incoming_sender_name(fetched_message)
+            timestamp = fetched_message.time
 
         if depth >= self._max_nested_depth:
             diagnostic = _diagnostic(
@@ -582,11 +596,12 @@ class ResourceResolver:
             resolved_messages.append(
                 ResolvedForwardedMessage(
                     time=forwarded.time,
-                    sender_id=forwarded.sender_id,
                     sender_name=forwarded.sender_name,
+                    avatar_url=forwarded.avatar_url,
                     body=content.body,
                     segments=forwarded.segments,
                     message_seq=forwarded.message_seq,
+                    sender_id=None,
                     hermes_attachment_materializations=content.materializations,
                     diagnostics=content.diagnostics,
                 )
@@ -808,6 +823,20 @@ def _materialization_from_cache_result(
 
 def _segments_body(segments: tuple[Segment, ...], self_id: int) -> str:
     return extract_segments(segments, self_id).body
+
+
+def _incoming_sender_name(message: IncomingMessage) -> str:
+    """按 Milky 场景选择完整 reply 的安全显示名。"""
+
+    if message.message_scene == "friend" and message.friend is not None:
+        nickname = message.friend.nickname.strip()
+        if nickname:
+            return nickname
+    if message.message_scene == "group" and message.group_member is not None:
+        for candidate in (message.group_member.card, message.group_member.nickname):
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+    return str(message.sender_id)
 
 
 def _replace_first(body: str, old: str, new: str) -> str:

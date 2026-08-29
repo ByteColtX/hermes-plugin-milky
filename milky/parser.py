@@ -60,6 +60,9 @@ _SENSITIVE_KEYS = {
     "password",
     "token",
 }
+_MIN_QQ_ID = 10001
+_MAX_QQ_ID = 4294967295
+_MAX_SAFE_INTEGER = 9007199254740991
 
 
 class ParseError(ValueError):
@@ -136,9 +139,40 @@ def parse_incoming_message(event: Event | object) -> ParseResult[IncomingMessage
     if scene == "temp":
         return ParseResult("ignored_temp", None, "temporary message scene")
 
-    peer_id = _non_negative_int(data.get("peer_id"), "peer_id")
-    sender_id = _non_negative_int(data.get("sender_id"), "sender_id")
+    value = _parse_incoming_message_data(
+        data,
+        self_id=parsed_event.self_id,
+        require_scene_entities=False,
+    )
+    reason = "no_stable_message_id" if value.message_seq is None else None
+    return ParseResult("accepted", value, reason)
+
+
+def parse_incoming_message_data(payload: object, *, self_id: int | None = None) -> IncomingMessage:
+    """解析 Action 返回的完整 ``data.message``。"""
+
+    source = _mapping(payload, "message")
+    return _parse_incoming_message_data(
+        source,
+        self_id=self_id,
+        require_scene_entities=True,
+    )
+
+
+def _parse_incoming_message_data(
+    data: Mapping[str, Any], *, self_id: int | None, require_scene_entities: bool
+) -> IncomingMessage:
+    """解析消息对象并按需要校验场景实体。"""
+
+    scene = _text(data, "message_scene")
+    if scene not in {"friend", "group", "temp"}:
+        raise ParseError("malformed", "message_scene is unsupported")
+
+    peer_id = _qq_id(data.get("peer_id"), "peer_id")
+    sender_id = _qq_id(data.get("sender_id"), "sender_id")
     message_seq = _optional_present_int(data, "message_seq")
+    if require_scene_entities and message_seq is None:
+        raise ParseError("malformed", "message_seq is missing")
     message_time = _non_negative_int(data.get("time"), "data.time")
     segments = _parse_segments(data.get("segments"), "segments")
 
@@ -146,6 +180,8 @@ def parse_incoming_message(event: Event | object) -> ParseResult[IncomingMessage
     group = _optional_entity(data, "group", _parse_group)
     group_member = _optional_entity(data, "group_member", _parse_group_member)
     if scene == "friend":
+        if require_scene_entities and friend is None:
+            raise ParseError("malformed", "friend is missing")
         if "friend" in data and friend is None:
             raise ParseError("malformed", "friend must be an object")
         if friend is not None and friend.user_id != peer_id:
@@ -153,6 +189,10 @@ def parse_incoming_message(event: Event | object) -> ParseResult[IncomingMessage
         if sender_id != peer_id:
             raise ParseError("malformed", "friend sender_id disagrees with peer_id")
     if scene == "group":
+        if require_scene_entities and group is None:
+            raise ParseError("malformed", "group is missing")
+        if require_scene_entities and group_member is None:
+            raise ParseError("malformed", "group_member is missing")
         if "group" in data and group is None:
             raise ParseError("malformed", "group must be an object")
         if "group_member" in data and group_member is None:
@@ -164,6 +204,8 @@ def parse_incoming_message(event: Event | object) -> ParseResult[IncomingMessage
                 raise ParseError("malformed", "group_member.group_id disagrees with peer_id")
             if group_member.user_id != sender_id:
                 raise ParseError("malformed", "group_member.user_id disagrees with sender_id")
+    if scene == "temp" and "group" in data and data["group"] is not None:
+        raise ParseError("malformed", "temp group must be null")
 
     known = {
         "message_scene",
@@ -186,12 +228,11 @@ def parse_incoming_message(event: Event | object) -> ParseResult[IncomingMessage
         friend=friend,
         group=group,
         group_member=group_member,
-        self_id=parsed_event.self_id,
+        self_id=self_id,
         raw=_freeze_mapping(data),
         extras=_freeze_mapping(_extras(data, known)),
     )
-    reason = "no_stable_message_id" if message_seq is None else None
-    return ParseResult("accepted", value, reason)
+    return value
 
 
 def parse_message(payload: object) -> ParseResult[IncomingMessage]:
@@ -201,17 +242,17 @@ def parse_message(payload: object) -> ParseResult[IncomingMessage]:
 
 
 def parse_forwarded_message(payload: object) -> IncomingForwardedMessage:
-    """解析一条已经展开的转发消息。"""
+    """解析 ``get_forwarded_messages`` 返回的一条消息。"""
 
     source = _mapping(payload, "forwarded message")
     value = IncomingForwardedMessage(
-        time=_non_negative_int(source.get("time"), "forwarded.time"),
-        sender_id=_non_negative_int(source.get("sender_id"), "forwarded.sender_id"),
+        message_seq=_non_negative_int(source.get("message_seq"), "forwarded.message_seq"),
         sender_name=_text(source, "sender_name"),
+        avatar_url=_text(source, "avatar_url"),
+        time=_non_negative_int(source.get("time"), "forwarded.time"),
         segments=_parse_segments(source.get("segments"), "forwarded.segments"),
-        message_seq=_optional_present_int(source, "message_seq"),
         extras=_freeze_mapping(
-            _extras(source, {"time", "sender_id", "sender_name", "segments", "message_seq"})
+            _extras(source, {"message_seq", "sender_name", "avatar_url", "time", "segments"})
         ),
     )
     return value
@@ -240,7 +281,7 @@ def _parse_envelope(payload: object) -> MilkyEnvelope:
 def _parse_login_info(data: Mapping[str, Any] | None) -> LoginInfo:
     source = _required_data(data, "login data")
     return LoginInfo(
-        uin=_non_negative_int(source.get("uin"), "data.uin"),
+        uin=_qq_id(source.get("uin"), "data.uin"),
         nickname=_text(source, "nickname"),
         extras=_freeze_mapping(_extras(source, {"uin", "nickname"})),
     )
@@ -291,7 +332,7 @@ def _parse_segment(value: object) -> SegmentValue:
             kind=kind,
             raw=raw,
             extras=extras,
-            user_id=_non_negative_int(data.get("user_id"), "mention.user_id"),
+            user_id=_qq_id(data.get("user_id"), "mention.user_id"),
             name=_optional_text(data, "name"),
         )
     if kind == "mention_all":
@@ -410,7 +451,7 @@ def _parse_reply(
         raw=raw,
         extras=extras,
         message_seq=_non_negative_int(data.get("message_seq"), "reply.message_seq"),
-        sender_id=_optional_present_non_negative_int(data, "sender_id"),
+        sender_id=_optional_present_qq_id(data, "sender_id"),
         sender_name=_optional_text(data, "sender_name"),
         time=_optional_present_non_negative_int(data, "time"),
         segments=(
@@ -422,7 +463,7 @@ def _parse_reply(
 def _parse_friend(value: object) -> FriendEntity:
     source = _mapping(value, "friend")
     return FriendEntity(
-        user_id=_non_negative_int(source.get("user_id"), "friend.user_id"),
+        user_id=_qq_id(source.get("user_id"), "friend.user_id"),
         nickname=_text(source, "nickname"),
         sex=_optional_text(source, "sex"),
         qid=_optional_text(source, "qid"),
@@ -437,7 +478,7 @@ def _parse_friend(value: object) -> FriendEntity:
 def _parse_group(value: object) -> GroupEntity:
     source = _mapping(value, "group")
     return GroupEntity(
-        group_id=_non_negative_int(source.get("group_id"), "group.group_id"),
+        group_id=_qq_id(source.get("group_id"), "group.group_id"),
         group_name=_optional_text(source, "group_name"),
         member_count=_optional_present_non_negative_int(source, "member_count"),
         max_member_count=_optional_present_non_negative_int(source, "max_member_count"),
@@ -468,8 +509,8 @@ def _parse_group(value: object) -> GroupEntity:
 def _parse_group_member(value: object) -> GroupMemberEntity:
     source = _mapping(value, "group_member")
     return GroupMemberEntity(
-        user_id=_non_negative_int(source.get("user_id"), "group_member.user_id"),
-        group_id=_non_negative_int(source.get("group_id"), "group_member.group_id"),
+        user_id=_qq_id(source.get("user_id"), "group_member.user_id"),
+        group_id=_qq_id(source.get("group_id"), "group_member.group_id"),
         nickname=_text(source, "nickname"),
         card=_optional_text(source, "card"),
         sex=_optional_text(source, "sex"),
@@ -546,9 +587,23 @@ def _optional_text(source: Mapping[str, Any], field_name: str) -> str | None:
 
 
 def _non_negative_int(value: object, field_name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ParseError("malformed", f"{field_name} must be a non-negative integer")
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 0
+        or value > _MAX_SAFE_INTEGER
+    ):
+        raise ParseError("malformed", f"{field_name} must be an integer in protocol range")
     return value
+
+
+def _qq_id(value: object, field_name: str) -> int:
+    """校验 Milky QQ ID 的 OpenAPI 范围。"""
+
+    result = _non_negative_int(value, field_name)
+    if not _MIN_QQ_ID <= result <= _MAX_QQ_ID:
+        raise ParseError("malformed", f"{field_name} is outside QQ ID range")
+    return result
 
 
 def _optional_present_int(source: Mapping[str, Any], field_name: str) -> int | None:
@@ -559,6 +614,12 @@ def _optional_present_int(source: Mapping[str, Any], field_name: str) -> int | N
 
 def _optional_present_non_negative_int(source: Mapping[str, Any], field_name: str) -> int | None:
     return _optional_present_int(source, field_name)
+
+
+def _optional_present_qq_id(source: Mapping[str, Any], field_name: str) -> int | None:
+    if field_name not in source or source[field_name] is None:
+        return None
+    return _qq_id(source[field_name], field_name)
 
 
 def _optional_present_nullable_non_negative_int(

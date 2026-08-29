@@ -3,13 +3,25 @@
   "retcode": 0,
   "data": {
     "message": {
+      "message_scene": "friend",
+      "peer_id": 800000001,
       "time": 1700000007,
-      "sender_id": 800000005,
-      "sender_name": "合成回复者",
+      "sender_id": 800000001,
       "message_seq": 1005,
       "segments": [
         {"type": "text", "data": {"text": "远端回复中的中性内容"}}
-      ]
+      ],
+      "friend": {
+        "user_id": 800000001,
+        "nickname": "合成好友",
+        "sex": "unknown",
+        "qid": "fixture-qid",
+        "remark": "fixture",
+        "category": {
+          "category_id": 1,
+          "category_name": "合成分组"
+        }
+      }
     }
   }
 }

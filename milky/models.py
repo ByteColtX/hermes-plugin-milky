@@ -227,13 +227,13 @@ class GroupMemberEntity:
 
 @dataclass(frozen=True, slots=True)
 class IncomingForwardedMessage:
-    """reply 内嵌或远端展开后的单条转发消息。"""
+    """get_forwarded_messages 返回的单条转发消息。"""
 
-    time: int
-    sender_id: int
+    message_seq: int
     sender_name: str
+    avatar_url: str
+    time: int
     segments: tuple[Segment, ...]
-    message_seq: int | None = None
     extras: JsonObject = field(default_factory=dict)
 
 

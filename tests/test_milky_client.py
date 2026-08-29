@@ -142,7 +142,31 @@ def test_message_resource_and_upload_methods_use_explicit_actions() -> None:
         [
             response(ok({"message_seq": 42})),
             response(ok({"message_seq": 43})),
-            response(ok({"message": []})),
+            response(
+                ok(
+                    {
+                        "message": {
+                            "message_scene": "friend",
+                            "peer_id": 800000001,
+                            "message_seq": 1005,
+                            "sender_id": 800000001,
+                            "time": 1700000007,
+                            "segments": [{"type": "text", "data": {"text": "中性回复"}}],
+                            "friend": {
+                                "user_id": 800000001,
+                                "nickname": "合成好友",
+                                "sex": "unknown",
+                                "qid": "fixture-qid",
+                                "remark": "fixture",
+                                "category": {
+                                    "category_id": 1,
+                                    "category_name": "合成分组",
+                                },
+                            },
+                        }
+                    }
+                )
+            ),
             response(ok({"messages": []})),
             response(ok({"url": "https://media.example/resource"})),
             response(ok({})),
@@ -183,7 +207,7 @@ async def _call_message_resource_uploads(client: MilkyClient) -> tuple[str, str]
     private_result = await client.send_private_message(
         800000001, [{"type": "text", "data": {"text": "你好"}}]
     )
-    await client.get_message(42)
+    await client.get_message("friend", 800000001, 1005)
     await client.get_forwarded_messages("fixture-forward-id")
     await client.get_resource_temp_url("fixture-resource-id")
     await client.upload_group_file(700000001, "https://media.example/file", "fixture.txt")
@@ -219,6 +243,29 @@ def test_file_download_methods_use_scene_specific_actions_and_fields() -> None:
     }
 
 
+def test_private_file_download_accepts_optional_is_self_send() -> None:
+    """私聊文件 Action 应按协议支持可选的自己发送标志。"""
+
+    transport = FakeTransport([response(ok({"download_url": ""}))])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    asyncio.run(
+        client.get_private_file_download_url(
+            800000001,
+            "fixture-private-file",
+            "fixture-hash",
+            is_self_send=True,
+        )
+    )
+
+    assert transport.requests[0]["body"] == {
+        "user_id": 800000001,
+        "file_id": "fixture-private-file",
+        "file_hash": "fixture-hash",
+        "is_self_send": True,
+    }
+
+
 async def _call_file_download_methods(client: MilkyClient) -> None:
     """调用两类文件下载 Action。"""
 
@@ -229,7 +276,11 @@ async def _call_file_download_methods(client: MilkyClient) -> None:
 @pytest.mark.parametrize(
     "method_args",
     [
+        ("get_group_file_download_url", (10000, "fixture-file")),
+        ("get_group_file_download_url", (4294967296, "fixture-file")),
         ("get_group_file_download_url", ("700000001:2", "fixture-file")),
+        ("get_private_file_download_url", (10000, "fixture-file", "fixture-hash")),
+        ("get_private_file_download_url", (4294967296, "fixture-file", "fixture-hash")),
         ("get_private_file_download_url", (800000001, "fixture-file", "")),
     ],
 )
@@ -237,6 +288,52 @@ def test_file_download_parameters_are_validated_before_network(
     method_args: tuple[str, tuple[object, ...]],
 ) -> None:
     """文件 Action 的目标、ID 和 hash 非法时不得访问网络。"""
+
+    method_name, args = method_args
+    transport = FakeTransport([])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(getattr(client, method_name)(*args))
+
+    assert error_info.value.classification == "invalid_input"
+    assert transport.requests == []
+
+
+def test_private_file_download_rejects_invalid_is_self_send_before_network() -> None:
+    """私聊文件的可选标志类型错误时不得访问网络。"""
+
+    transport = FakeTransport([])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(
+            client.get_private_file_download_url(
+                800000001,
+                "fixture-file",
+                "fixture-hash",
+                is_self_send="yes",
+            )
+        )
+
+    assert error_info.value.classification == "invalid_input"
+    assert transport.requests == []
+
+
+@pytest.mark.parametrize(
+    "method_args",
+    [
+        ("get_message", ("unsupported", 800000001, 1005)),
+        ("get_message", ("friend", 10000, 1005)),
+        ("get_message", ("friend", 4294967296, 1005)),
+        ("get_message", ("friend", 800000001, -1)),
+        ("get_message", ("friend", 800000001, 9007199254740992)),
+    ],
+)
+def test_get_message_parameters_are_validated_before_network(
+    method_args: tuple[str, tuple[object, ...]],
+) -> None:
+    """get_message 的 scene、peer 和序号边界应在网络前校验。"""
 
     method_name, args = method_args
     transport = FakeTransport([])

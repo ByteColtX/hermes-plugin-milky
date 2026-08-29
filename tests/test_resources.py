@@ -63,7 +63,12 @@ class FakeResourceClient:
         return self.group_file_response
 
     async def get_private_file_download_url(
-        self, user_id: object, file_id: object, file_hash: object
+        self,
+        user_id: object,
+        file_id: object,
+        file_hash: object,
+        *,
+        is_self_send: object | None = None,
     ) -> object:
         """返回私聊文件的下载 URL。"""
 
@@ -76,10 +81,12 @@ class FakeResourceClient:
         self.calls.append(("get_forwarded_messages", (forward_id,)))
         return self.forward_response
 
-    async def get_message(self, message_seq: object) -> object:
+    async def get_message(
+        self, message_scene: object, peer_id: object, message_seq: object
+    ) -> object:
         """返回完整 reply 内容。"""
 
-        self.calls.append(("get_message", (message_seq,)))
+        self.calls.append(("get_message", (message_scene, peer_id, message_seq)))
         return self.message_response
 
 
@@ -205,6 +212,8 @@ def test_trigger_resolves_media_file_and_forward_with_separate_actions() -> None
     assert [name for name, _ in client.calls].count("get_message") == 0
     assert resolved.replies[0].body == "被引用的中性内容"
     assert resolved.forwards[0].messages[0].body == "转发中的中性内容"
+    assert resolved.forwards[0].messages[0].sender_id is None
+    assert resolved.forwards[0].messages[0].avatar_url == ""
 
 
 def test_inline_reply_does_not_query_get_message() -> None:
@@ -427,6 +436,7 @@ def test_remote_reply_is_fetched_only_when_inline_content_is_incomplete() -> Non
 
     assert resolved.replies[0].body == "远端回复中的中性内容"
     assert [name for name, _ in client.calls] == ["get_message"]
+    assert client.calls[0] == ("get_message", ("friend", 800000001, 1005))
 
 
 def test_failed_remote_reply_retains_target_id_and_placeholder() -> None:
@@ -435,10 +445,12 @@ def test_failed_remote_reply_retains_target_id_and_placeholder() -> None:
     class FailingReplyClient(FakeResourceClient):
         """让 reply 查询失败。"""
 
-        async def get_message(self, message_seq: object) -> object:
+        async def get_message(
+            self, message_scene: object, peer_id: object, message_seq: object
+        ) -> object:
             """返回传输未知分类。"""
 
-            self.calls.append(("get_message", (message_seq,)))
+            self.calls.append(("get_message", (message_scene, peer_id, message_seq)))
             raise ActionError("transport_unknown", "get_message", "unknown")
 
     base_client = make_client()

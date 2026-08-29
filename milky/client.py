@@ -23,6 +23,10 @@ from .parser import ParseError, parse_action_response, parse_envelope
 
 _ACTION_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 _NON_NEGATIVE_INTEGER_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
+_MIN_QQ_ID = 10001
+_MAX_QQ_ID = 4294967295
+_MAX_SAFE_INTEGER = 9007199254740991
+_MISSING = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,8 +214,20 @@ class MilkyClient:
     async def get_group_member_info(self, group_id: object, user_id: object) -> GroupMemberInfo:
         """获取指定群的成员信息并校验两个非负 ID。"""
 
-        group_value = _validate_id(group_id, "group_id", "get_group_member_info")
-        user_value = _validate_id(user_id, "user_id", "get_group_member_info")
+        group_value = _validate_id(
+            group_id,
+            "group_id",
+            "get_group_member_info",
+            minimum=_MIN_QQ_ID,
+            maximum=_MAX_QQ_ID,
+        )
+        user_value = _validate_id(
+            user_id,
+            "user_id",
+            "get_group_member_info",
+            minimum=_MIN_QQ_ID,
+            maximum=_MAX_QQ_ID,
+        )
         envelope = await self.call(
             "get_group_member_info",
             {"group_id": group_value, "user_id": user_value},
@@ -223,7 +239,13 @@ class MilkyClient:
     async def send_group_message(self, group_id: object, message: object) -> SendResult:
         """向群发送 segments，并只接受远端 ``message_seq``。"""
 
-        group_value = _validate_id(group_id, "group_id", "send_group_message")
+        group_value = _validate_id(
+            group_id,
+            "group_id",
+            "send_group_message",
+            minimum=_MIN_QQ_ID,
+            maximum=_MAX_QQ_ID,
+        )
         message_value = _validate_segments(message, "send_group_message")
         envelope = await self.call(
             "send_group_message",
@@ -234,7 +256,13 @@ class MilkyClient:
     async def send_private_message(self, user_id: object, message: object) -> SendResult:
         """向好友发送 segments，并只接受远端 ``message_seq``。"""
 
-        user_value = _validate_id(user_id, "user_id", "send_private_message")
+        user_value = _validate_id(
+            user_id,
+            "user_id",
+            "send_private_message",
+            minimum=_MIN_QQ_ID,
+            maximum=_MAX_QQ_ID,
+        )
         message_value = _validate_segments(message, "send_private_message")
         envelope = await self.call(
             "send_private_message",
@@ -242,11 +270,29 @@ class MilkyClient:
         )
         return _parse_send_result(envelope, "send_private_message")
 
-    async def get_message(self, message_seq: object) -> MilkyEnvelope:
-        """按远端消息序号查询消息。"""
+    async def get_message(
+        self, message_scene: object, peer_id: object, message_seq: object
+    ) -> MilkyEnvelope:
+        """按场景、会话对象和远端消息序号查询完整消息。"""
 
-        sequence = _validate_id(message_seq, "message_seq", "get_message")
-        return await self.call("get_message", {"message_seq": sequence})
+        scene = _validate_message_scene(message_scene, "get_message")
+        peer_value = _validate_id(
+            peer_id,
+            "peer_id",
+            "get_message",
+            minimum=_MIN_QQ_ID,
+            maximum=_MAX_QQ_ID,
+        )
+        sequence = _validate_id(
+            message_seq,
+            "message_seq",
+            "get_message",
+            maximum=_MAX_SAFE_INTEGER,
+        )
+        return await self.call(
+            "get_message",
+            {"message_scene": scene, "peer_id": peer_value, "message_seq": sequence},
+        )
 
     async def get_forwarded_messages(self, forward_id: object) -> MilkyEnvelope:
         """按 forward ID 查询完整转发内容。"""
@@ -270,25 +316,49 @@ class MilkyClient:
         return await self.call(
             "get_group_file_download_url",
             {
-                "group_id": _validate_id(group_id, "group_id", "get_group_file_download_url"),
+                "group_id": _validate_id(
+                    group_id,
+                    "group_id",
+                    "get_group_file_download_url",
+                    minimum=_MIN_QQ_ID,
+                    maximum=_MAX_QQ_ID,
+                ),
                 "file_id": _validate_text(file_id, "file_id", "get_group_file_download_url"),
             },
         )
 
     async def get_private_file_download_url(
-        self, user_id: object, file_id: object, file_hash: object
+        self,
+        user_id: object,
+        file_id: object,
+        file_hash: object,
+        *,
+        is_self_send: object = _MISSING,
     ) -> MilkyEnvelope:
         """按用户号、文件 ID 和 hash 查询私聊文件下载地址。"""
 
+        params: dict[str, Any] = {
+            "user_id": _validate_id(
+                user_id,
+                "user_id",
+                "get_private_file_download_url",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            ),
+            "file_id": _validate_text(file_id, "file_id", "get_private_file_download_url"),
+            "file_hash": _validate_text(file_hash, "file_hash", "get_private_file_download_url"),
+        }
+        if is_self_send is not _MISSING:
+            if is_self_send is not None and not isinstance(is_self_send, bool):
+                raise ActionError(
+                    "invalid_input",
+                    "get_private_file_download_url",
+                    "is_self_send is invalid",
+                )
+            params["is_self_send"] = is_self_send
         return await self.call(
             "get_private_file_download_url",
-            {
-                "user_id": _validate_id(user_id, "user_id", "get_private_file_download_url"),
-                "file_id": _validate_text(file_id, "file_id", "get_private_file_download_url"),
-                "file_hash": _validate_text(
-                    file_hash, "file_hash", "get_private_file_download_url"
-                ),
-            },
+            params,
         )
 
     async def upload_group_file(
@@ -299,7 +369,13 @@ class MilkyClient:
         return await self.call(
             "upload_group_file",
             {
-                "group_id": _validate_id(group_id, "group_id", "upload_group_file"),
+                "group_id": _validate_id(
+                    group_id,
+                    "group_id",
+                    "upload_group_file",
+                    minimum=_MIN_QQ_ID,
+                    maximum=_MAX_QQ_ID,
+                ),
                 "file": _validate_text(file, "file", "upload_group_file"),
                 "name": _validate_text(name, "name", "upload_group_file"),
             },
@@ -313,7 +389,13 @@ class MilkyClient:
         return await self.call(
             "upload_private_file",
             {
-                "user_id": _validate_id(user_id, "user_id", "upload_private_file"),
+                "user_id": _validate_id(
+                    user_id,
+                    "user_id",
+                    "upload_private_file",
+                    minimum=_MIN_QQ_ID,
+                    maximum=_MAX_QQ_ID,
+                ),
                 "file": _validate_text(file, "file", "upload_private_file"),
                 "name": _validate_text(name, "name", "upload_private_file"),
             },
@@ -368,16 +450,33 @@ class MilkyClient:
             raise ActionError("malformed", action, "response data is malformed") from None
 
 
-def _validate_id(value: object, field: str, action: str) -> int:
-    """校验 Milky 非负整数 ID，拒绝 bool 和带额外分隔符的字符串。"""
+def _validate_id(
+    value: object,
+    field: str,
+    action: str,
+    *,
+    minimum: int = 0,
+    maximum: int = _MAX_SAFE_INTEGER,
+) -> int:
+    """校验 Milky 整数参数范围，拒绝 bool 和带额外分隔符的字符串。"""
 
     if isinstance(value, bool):
         raise ActionError("invalid_input", action, f"{field} is invalid")
-    if isinstance(value, int) and value >= 0:
+    if isinstance(value, int) and minimum <= value <= maximum:
         return value
     if isinstance(value, str) and _NON_NEGATIVE_INTEGER_PATTERN.fullmatch(value):
-        return int(value)
+        integer_value = int(value)
+        if minimum <= integer_value <= maximum:
+            return integer_value
     raise ActionError("invalid_input", action, f"{field} is invalid")
+
+
+def _validate_message_scene(value: object, action: str) -> str:
+    """校验 get_message 的 Milky 场景枚举。"""
+
+    if not isinstance(value, str) or value not in {"friend", "group", "temp"}:
+        raise ActionError("invalid_input", action, "message_scene is invalid")
+    return value
 
 
 def _safe_action_name(value: object) -> str:
