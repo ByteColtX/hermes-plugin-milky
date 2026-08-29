@@ -108,20 +108,42 @@ text or an Action parameter implicitly.
 The parser must reject booleans where `int64` is required, negative IDs/counters/timestamps,
 missing required fields, wrong JSON container types, and inconsistent group IDs. Protocol
 `int64` values become validated Python `int` values; internal chat keys are only `group:<id>`
-and `dm:<id>`. `message_scene=temp` is a successful protocol parse followed by an explicit
-`ignored_temp` result, not a malformed message and not a `dm:` fallback.
+and `dm:<id>`. The Milky v1.3 login response uses `data.uin`; group list and member responses
+use `data.groups` and `data.member`. A defensive missing `message_seq` is allowed to reach the
+explicit `no_stable_message_id` canonical downgrade, but it never enters a stable dedup key.
+`message_scene=temp` is a successful protocol parse followed by an explicit `ignored_temp`
+result, not a malformed message and not a `dm:` fallback.
 
 The top-level `Event` contains `event_type`, Unix-second `time`, `self_id`, and an object-valued
 `data`. `IncomingMessage` contains `message_scene`, `peer_id`, `message_seq`, `sender_id`,
 `time`, and ordered `segments`, plus the scene-specific friend/group sender entities when
 provided. `FriendEntity` supplies user identity and nickname; `GroupEntity` supplies group
 identity and counts; `GroupMemberEntity` supplies group/user identity, nickname/card, role and
-mute fields, especially nullable `shut_up_end_time`. Forwarded-message DTOs contain timestamp,
-sender identity/name, and nested ordered segments. Known incoming segment payloads are text,
-mention, mention_all, face, reply, image, record, video, file, forward, market_face, light_app,
-xml, and markdown; known outgoing payloads are text, mention, mention_all, face, reply, image,
-record, video, forward, and light_app. Resource segments retain resource/file identifiers and
-metadata as references only. File is never an outgoing message segment.
+mute fields, especially nullable or omitted `shut_up_end_time`. Forwarded-message DTOs contain
+timestamp, sender identity/name, and nested ordered segments, but an incoming `forward` segment
+initially contains only `forward_id`, title, preview and summary; full messages come from the
+separate `get_forwarded_messages` Action at trigger time. Known incoming segment payloads are
+text, mention, mention_all, face, reply, image, record, video, file, forward, market_face,
+light_app, xml, and markdown. Milky v1.3 has no independent mention-here segment, so that signal
+cannot be inferred from arbitrary text. Resource segments retain `resource_id`/`temp_url` or
+file identifiers and metadata as references only. File is never an outgoing message segment. The
+protocol schema's `[unknown]` default is not adopted: unknown segments remain unknown raw
+extensions and never become text.
+
+The first observed v1.3 test-environment responses also established that `get_group_list` returns
+an object containing `groups`, successful member responses may omit `shut_up_end_time` when the
+member is not muted, and SSE uses an outer `milky_event` field whose JSON payload carries the
+business `event_type`. These observations are compatibility fixtures, not credentials or live
+data snapshots.
+
+### Fixture boundary
+
+T03 fixtures are separated into raw Action JSON responses, raw event JSON payloads, raw SSE frames,
+and sanitized expected classifications. Action fixtures preserve the per-Action data envelope;
+event fixtures use synthetic IDs and neutral content; SSE fixtures test the outer `milky_event`
+wrapper separately from inner `event_type`. No fixture stores live IDs, token material, complete
+live messages, media URLs or local paths. Live observations can only update the expected field
+shape and boundary behavior.
 
 ### Keep the change active until implementation
 

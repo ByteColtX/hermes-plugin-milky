@@ -19,15 +19,15 @@
 
 - [x] 4.1 **T01 包布局与唯一入口**：建立目标 Python 包布局，实现根 `__init__.py::register(ctx)` 的安全外壳，并在根 `tools.py::register_tools(ctx)` 提供 Hermes 工具发现入口；保持导入和注册阶段无网络与长期后台任务；验证入口测试、工具发现、缺失配置错误和包布局检查通过
 - [x] 4.2 **T02 配置与 manifest**：实现 URL/prefix 派生、Bearer 认证配置、allowlist、嵌套 Will policy、buffer size 和脱敏摘要；验证配置边界、HTTPS、空参数 `{}`、旧 schema 拒绝及 manifest 契约测试通过
-- [ ] 4.3 **T03 Milky 协议 fixtures**：建立登录、群列表、成员信息、friend/group/temp 消息、全部 segment、系统事件及成功/失败 envelope 的脱敏 fixtures；验证每个 fixture 都有预期 parser 结果并覆盖 malformed、缺字段和协议失败
-- [ ] 4.4 **T04 DTO 与 tolerant parser**：实现 Milky envelope、event、message、friend/group/entity、forwarded-message 和每个已知 segment DTO；temp 解析后返回 `ignored_temp`，不建立 canonical；保留安全 raw/未知扩展；验证 T03 全部 fixtures 可确定解析、非法身份分类失败且 parser 无网络 I/O
+- [ ] 4.3 **T03 Milky 协议 fixtures**：按 `actions/`、`events/`、`sse/`、`expected/` 分层建立脱敏 fixtures；覆盖 `data.uin`、`data.groups`、`data.member`、friend/group/temp、14 类 incoming segment、`forward_id` 延迟引用、inline reply、系统事件、外层 `milky_event` 及成功/失败 envelope；用合成身份和中性内容验证 accepted、ignored_temp、observe_only、malformed、protocol_rejected、缺字段与未知扩展分类，不把 live 数据快照写入仓库
+- [ ] 4.4 **T04 DTO 与 tolerant parser**：实现 Milky envelope、event、message、friend/group/entity、forwarded-message 和每个已知 segment DTO；使用 `uin`、`data.groups`、`data.member` 和外层 `milky_event` 的真实字段边界；temp 解析后返回 `ignored_temp`，不建立 canonical；保留安全 raw/未知扩展且不得采用 `[unknown]` 文本默认值；验证 T03 全部 fixtures 可确定解析、非法身份分类失败且 parser 无网络 I/O
 - [ ] 4.5 **T05 HTTP Action client**：实现统一 POST JSON、Bearer、响应解码、超时、连接关闭、错误分类和最小 data 校验，并覆盖状态同步、消息、资源和上传所需接口；验证 fake transport 覆盖 timeout、非 JSON、HTTP/retcode 错误、缺少 `message_seq` 和不盲目重试
 - [ ] 4.6 **T06 SSE `/event` 事件流**：实现 SSE GET、event/data 边界、多行 data、handler 隔离、断线重连、退避、取消和资源释放，不引入 WS echo/pending 模型；验证 fake stream 覆盖 malformed/unknown event、handler 异常、重连、取消和 receive loop 不阻塞
 - [ ] 4.7 **T07 canonical、chat key 与 TTL dedup**：实现 `group:`、`dm:` 规范化、temp 忽略、canonical record、无稳定 ID 降级、有界 TTL 去重和 per-chat admission 边界；验证同号隔离、重复帧在资源/Will/Hermes 前停止、同文不同 ID 独立处理及非法目标本地失败
 
 ## 5. Inbound strategy and state
 
-- [ ] 5.1 **T08 normalizer、extractor 与 WillInput**：实现 text、mention、quote、image、file、record、video、forward 和未知 segment 的无网络规范化，并生成策略特征和延迟媒体引用；验证 friend/group、temp 忽略、全部 segment、空内容丢弃及 normalizer 无外部副作用
+- [ ] 5.1 **T08 normalizer、extractor 与 WillInput**：实现 text、mention、mention_all、face、reply、image、file、record、video、forward、market_face、light_app、xml、markdown 和未知 segment 的无网络规范化，并生成策略特征和延迟媒体引用；明确 Milky v1.3 没有独立 mention_here，验证 friend/group、temp 忽略、全部 segment、空内容丢弃及 normalizer 无外部副作用
 - [ ] 5.2 **T09 Gate registry 与 per-chat admission**：实现 Self、allowlist、mute 三道门禁的固定顺序、ingress sequence 和同 chat 短暂 admission 串行；验证 Gate 无网络/随机/发送副作用，deny 不增长 buffer 或修改 Will，并验证 admission 不覆盖 Agent 执行
 - [ ] 5.3 **T10 wait buffer 与 detached trigger batch**：实现默认 20、可配置上限、0 禁用历史、历史 FIFO 溢出、原子 drain、历史/current 分离和交接失败策略；明确 wait buffer 只保存 Will 历史上下文而不是 Agent 执行队列；验证 wait 不调用 Hermes，trigger 不重复消息，buffer 隔离且失败不无条件回填
 - [ ] 5.4 **T11 routing Will engine**：实现 direct、mention、mentionAll、mentionHere、quote、image、poke、group 的 nested routing 和固定优先级；验证多信号优先级、mention 类型独立、poke observe-only 及 routing 无网络副作用
@@ -36,7 +36,7 @@
 
 ## 6. Hermes mapping and outbound
 
-- [ ] 6.1 **T14 媒体与 reply resolver**：仅在 trigger 阶段查询资源/reply，使用 Hermes 公共 media helper，生成失败占位并保留安全诊断；验证 wait 阶段零资源调用、无插件缓存/下载目录/本地路径拼接及 reply 失败降级
+- [ ] 6.1 **T14 媒体与 reply resolver**：仅在 trigger 阶段按需查询资源临时 URL、文件下载引用、forward 完整内容和缺失的 reply 原文，使用 Hermes 公共 media helper，生成失败占位并保留安全诊断；已有 inline reply 内容时不重复查询；验证 wait 阶段零资源调用、无插件缓存/下载目录/本地路径拼接及 reply/forward 失败降级
 - [ ] 6.2 **T15 Hermes MessageEvent 与入站流水线**：编排 message_receive → normalize → dedup → admission → Gate → buffer → Will → drain → detached resolver/mapper → Hermes `handle_message()`，并实现 friend/group、temp 忽略和系统事件边界；验证 fake Hermes 中 transcript、channel_context、资源 helper、handle_message 快速提交、Agent 忙碌不阻塞 admission 且由 `busy_input_mode` 接管，以及提交/异常扣费次数
 - [ ] 6.3 **T16 出站 formatter、sender、文件上传与首批工具**：实现 group/dm 路由、Milky segments、空消息拒绝、长文本分块、文件 upload、SendResult、错误分类，以及名片点赞、戳一戳、撤回群消息三个显式 ToolSpec；验证 group/dm Action、temp/非法目标本地 unsupported、工具参数本地校验、撤回不自动重试、`message_seq` 稳定 ID、文件不进入 message segments 及群失败刷新
 
@@ -79,7 +79,7 @@ T01 ──┬── T02 ──┬── T05 ──┬── T06 ──┐
 |---|---|---|---|---|
 | T01 | `tests/test_plugin_entry.py`：根 `__init__.py::register(ctx)`、namespaced 加载、工具发现、无网络/长期任务、启动配置边界和八个源码 package 布局测试通过（7 项）；全套 `uv run pytest`（37 passed）、`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check` 通过 | — | 已确认 Hermes directory plugin 使用根目录 `plugin.yaml`、`__init__.py` 和 `tools.py`；配置缺失的具体解析行为由 T02 覆盖 | T01 的入口安全外壳和目标源码 package 布局已完成；完整适配器和工具业务仍未实现 |
 | T02 | `config/__init__.py`、根 `register(ctx)` 与 `tests/test_config.py`：必需配置、URL/prefix、Bearer、allowlist、嵌套 Will 默认/校验、buffer、旧 schema、凭证脱敏和 manifest 工具契约测试通过；`uv run pytest`（37 passed）、`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check`、OpenSpec strict validation 通过 | — | 反馈分类：测试基础设施；T01 旧测试曾断言 manifest 不得有 `provides_tools`，与 T02 delta spec 冲突，已改为验证根入口唯一且工具声明受限；复核后补上根入口启动配置缺失回归 | T02 配置解析尚未接入后续 T18 的完整依赖组装；真实 Milky smoke 留待 T19 |
-| T03 | — | — | — | — |
+| T03 | 尚未建立 fixture 文件；fixture 约定已补充到 `design.md` 和本任务说明 | 只读验证 `get_login_info`、`get_group_list`、`get_group_member_info` 成功；观察到 `data.uin`、`data.groups`、`data.member`，成员未禁言时可省略 `shut_up_end_time`；SSE 外层为 `milky_event`，业务 payload 为 `message_receive`；群历史/事件观察到 `text`、`mention`、`reply`、`image`、`forward` | 反馈分类：协议字段/路径与真实环境差异；OpenAPI 的 `IncomingSegment` `[unknown]` 默认与项目安全契约冲突，已明确未知 segment 不得转文本；forward/reply 的延迟边界已补充 | T03 仍未完成；真实响应仅用于确认字段形状，未保存 live ID、正文、URL 或凭证；其余 segment 使用 v1.3 OpenAPI 脱敏 fixture，不能声称已在该环境实测 |
 | T04 | — | — | — | — |
 | T05 | — | — | — | — |
 | T06 | — | — | — | — |

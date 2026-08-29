@@ -7,13 +7,19 @@
 
 ### Requirement: 事件流使用正确的 SSE 端点
 
-事件消费者 MUST 通过同一 scheme、host、port 和 path prefix 的 GET `/event` 建立 SSE 连接，并使用 Bearer 认证；事件流 SHALL NOT 追加 `/api` 或重复 `/event`。
+事件消费者 MUST 通过同一 scheme、host、port 和 path prefix 的 GET `/event` 建立 SSE 连接，并使用 Bearer 认证；事件流 SHALL NOT 追加 `/api` 或重复 `/event`。Milky v1.3 的 SSE 外层事件名通常为 `milky_event`，业务事件类型 SHALL 以 JSON data 内的 `event_type` 为准。
 
 #### Scenario: 建立带 prefix 的 SSE 连接
 
 - **WHEN** base URL 为 `https://host.example/milky/`
 - **THEN** 事件消费者 SHALL GET `https://host.example/milky/event`
 - **AND** SHALL 包含 Bearer 认证
+
+#### Scenario: milky_event 外层包装
+
+- **WHEN** SSE 帧的外层字段为 `event: milky_event` 且 data JSON 的 `event_type` 为 `message_receive`
+- **THEN** 消费者 SHALL 解析 data 内的事件类型并交给对应事件 parser
+- **AND** SHALL 不把固定的外层 `milky_event` 当成业务事件类型或依赖 OneBot echo
 
 #### Scenario: Action 响应与事件流分离
 

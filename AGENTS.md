@@ -40,6 +40,10 @@
 - 项目规则放在本文件；个人跨仓库默认值由用户级 `~/.codex/AGENTS.md` 和 `~/.codex/config.toml` 提供。项目级 `.codex/config.toml` 只有在项目被信任时才生效，不得把个人路径、凭证或机器专属配置提交进仓库。
 - `MILKY_ACCESS_TOKEN`、MCP token 和其他秘密只从运行时环境或安全凭证存储注入；不得写入 `AGENTS.md`、架构文档、fixture、日志、快照、异常或提交。
 - MCP、浏览器和本地 Milky 服务是可选的外部能力；实现必须先能用 fake transport 和 fixture 验证，不能把当前会话中可用的 MCP 当作 CI 或其他开发者必有的依赖。
+- Milky 接口调试必须优先使用当前会话实际暴露的 Milky MCP 连接和测试环境；执行前先读取当前版本的 Milky OpenAPI MCP 文档，接口路径、HTTP 方法、请求参数、响应 envelope 和字段只能以 OpenAPI、MCP 返回或测试环境真实响应为依据。不得使用 OneBot、`mcp__snowluma__*` 或其他相邻协议的接口/字段推断 Milky 行为，也不得凭名称猜测未确认的 Action。
+- 当前会话没有可执行的 Milky Action MCP 时，必须明确记录该能力缺失；仅可在必要时使用只读 HTTP fallback 核对测试环境，并对请求、响应和命令输出脱敏。写入、发送、撤回、修改状态、上传文件以及会影响测试环境的 Action 必须先取得明确确认；不能把 OpenAPI 文档清单当成测试环境已经支持，也不能把 HTTP 200 当成协议成功。
+- 调试发现的字段差异、可省略字段、空值、未知 segment、版本差异和错误 envelope 必须记录为可复现的协议证据，并在未确认前标记为 `unknown`、`malformed`、`unsupported` 或 `blocked`；不得补默认值、静默改名、跨层级取值或把未知内容伪装成已支持字段。只有经过脱敏的字段形状和边界分类可以进入 fixture/spec，不得提交 live snapshot。
+- Milky 调试使用运行时环境变量或安全凭证注入 `MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN`；不得把 token、`Authorization`、真实 QQ/群 ID、完整敏感正文、媒体 URL/本地路径或原始 live 响应写入仓库、日志、异常、fixture、快照、OpenSpec artifact 或回复。真实环境结论必须同时注明使用的 MCP/fallback、Action、参数边界、响应分类和时间；无法确认的接口保持未实现或 `unsupported`。
 - 每次工作开始时报告实际读取的指令/设计来源、当前任务范围和验证计划；结束时报告改动文件、命令结果、未解决风险和下一步任务。
 
 配置依据参见 OpenAI 官方文档：[AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)、[Config basics](https://learn.chatgpt.com/docs/config-file/config-basic)、[Environment variables](https://learn.chatgpt.com/docs/config-file/environment-variables)、[MCP](https://learn.chatgpt.com/docs/extend/mcp) 和 [Prompting Codex](https://learn.chatgpt.com/docs/prompting)。

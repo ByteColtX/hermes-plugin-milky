@@ -46,7 +46,7 @@ Action 调用 MUST 区分连接或超时、非 JSON、HTTP 状态错误、协议
 
 ### Requirement: Action 数据满足最小结构才算成功
 
-调用方 MUST 校验当前 Action 所需的最小 `data` 结构，并允许安全保留未知字段而不将未知字段解释为已支持能力。
+调用方 MUST 校验当前 Action 所需的最小 `data` 结构，并允许安全保留未知字段而不将未知字段解释为已支持能力。Milky v1.3 的成功 data 是按 Action 定义的对象：登录信息使用 `data.uin`/`data.nickname`，群列表使用 `data.groups`，成员查询使用 `data.member`，而不是把这些 data 对象当作数组或直接 ID。
 
 #### Scenario: 发送成功返回远端序号
 
@@ -59,6 +59,12 @@ Action 调用 MUST 区分连接或超时、非 JSON、HTTP 状态错误、协议
 - **WHEN** 服务返回成功 envelope 但缺少 `data.message_seq`
 - **THEN** 调用 SHALL 返回 `malformed` 错误
 - **AND** SHALL NOT 报告假成功或生成本地消息 ID
+
+#### Scenario: 状态同步 data 层级
+
+- **WHEN** `get_login_info`、`get_group_list` 或 `get_group_member_info` 返回成功 envelope
+- **THEN** 调用方 SHALL 分别从 `data.uin`、`data.groups` 和 `data.member` 读取最小结果
+- **AND** SHALL 将缺失、错误容器类型或错误字段层级分类为 `malformed`
 
 ### Requirement: 外部参数在请求前校验
 

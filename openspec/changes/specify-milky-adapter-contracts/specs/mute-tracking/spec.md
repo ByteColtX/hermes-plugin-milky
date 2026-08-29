@@ -21,6 +21,12 @@
 - **THEN** member mute SHALL 表示查询成功且当前为 unmuted
 - **AND** SHALL NOT 读取或推断为其他协议字段
 
+#### Scenario: 成员字段被服务端省略
+
+- **WHEN** 成功的 `get_group_member_info` 响应省略 `member.shut_up_end_time`
+- **THEN** tracker SHALL 将该次成员查询视为成功且当前 member mute 为 unmuted
+- **AND** SHALL 不因字段省略把成功响应退化为永久 muted；只有请求失败或响应结构损坏时才保持既有 fail-closed 状态
+
 ### Requirement: 状态模型只有 muted 和 unmuted
 
 每个群 MUST 维护 member mute、whole mute、观测时间和刷新时间；每个 mute 字段只能是 muted 或 unmuted，初始值 MUST 为 muted。
