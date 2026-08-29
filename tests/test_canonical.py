@@ -84,7 +84,9 @@ def test_canonical_record_uses_event_identity_and_stable_group_display_name() ->
     assert "[图片]" in result.value.body
     assert result.value.mention_kind == "self"
     assert result.value.quote_message_id == "1000"
-    assert result.value.media_references[0].resource_id == "fixture-image-resource"
+    assert result.value.media_resource_references[0].resource_id == "fixture-image-resource"
+    assert result.value.file_attachment_references[0].file_id == "fixture-file-id"
+    assert result.value.forward_references[0].forward_id == "fixture-forward-id"
     assert result.value.dedup_key == "milky:900000001:group:700000001:1002"
 
 

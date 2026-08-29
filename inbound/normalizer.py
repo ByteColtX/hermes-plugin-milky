@@ -19,7 +19,14 @@ from milky.parser import ParseError, parse_event, parse_incoming_message
 from session.identity import CanonicalError, normalize_chat_key
 from will.input import MentionKind, WillInput
 
-from .extractor import ExtractedSegments, MediaReference, extract_segments
+from .extractor import (
+    ExtractedSegments,
+    FileAttachmentReference,
+    ForwardReference,
+    MediaResourceReference,
+    ReplyReference,
+    extract_segments,
+)
 
 JsonObject = Mapping[str, Any]
 _SENSITIVE_KEYS = {
@@ -51,7 +58,10 @@ class NormalizedMessage:
     has_reply: bool
     reply_message_seq: int | None
     has_image: bool
-    media_references: tuple[MediaReference, ...]
+    media_resource_references: tuple[MediaResourceReference, ...]
+    file_attachment_references: tuple[FileAttachmentReference, ...]
+    forward_references: tuple[ForwardReference, ...]
+    reply_references: tuple[ReplyReference, ...]
     raw: JsonObject
     metadata: JsonObject
     diagnostics: tuple[str, ...]
@@ -91,10 +101,10 @@ class NormalizedMessage:
         return None if self.reply_message_seq is None else str(self.reply_message_seq)
 
     @property
-    def media_refs(self) -> tuple[MediaReference, ...]:
-        """返回待 trigger 阶段补全的资源引用。"""
+    def media_refs(self) -> tuple[MediaResourceReference, ...]:
+        """返回待 trigger 阶段补全的媒体资源引用兼容名称。"""
 
-        return self.media_references
+        return self.media_resource_references
 
     @property
     def unknown_segments(self) -> tuple[JsonObject, ...]:
@@ -188,7 +198,10 @@ def normalize_message(
         has_reply=extracted.has_reply,
         reply_message_seq=extracted.reply_message_seq,
         has_image=extracted.has_image,
-        media_references=extracted.media_references,
+        media_resource_references=extracted.media_resource_references,
+        file_attachment_references=extracted.file_attachment_references,
+        forward_references=extracted.forward_references,
+        reply_references=extracted.reply_references,
         raw=_safe_mapping(message.raw),
         metadata=metadata,
         diagnostics=tuple(diagnostics),
@@ -283,9 +296,12 @@ def _safe_value(value: Any) -> Any:
 
 __all__ = [
     "ExtractedSegments",
-    "MediaReference",
+    "FileAttachmentReference",
+    "ForwardReference",
+    "MediaResourceReference",
     "NormalizationResult",
     "NormalizedMessage",
+    "ReplyReference",
     "normalize",
     "normalize_event",
     "normalize_incoming_message",

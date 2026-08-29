@@ -37,19 +37,51 @@ _SENSITIVE_KEYS = {
 
 
 @dataclass(frozen=True, slots=True)
-class MediaReference:
-    """保存 trigger 阶段使用的 Milky 远端资源引用。"""
+class MediaResourceReference:
+    """保存 image、record 或 video 的 Milky 远端资源引用。"""
 
     kind: str
     resource_id: str | None = None
     temp_url: str | None = None
+    name: str | None = None
+    mime_type: str | None = None
+    file_size: int | None = None
+    raw: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class FileAttachmentReference:
+    """保存入站 file segment 的远端附件引用。"""
+
     file_id: str | None = None
     file_name: str | None = None
     file_size: int | None = None
     file_hash: str | None = None
-    forward_id: str | None = None
-    name: str | None = None
     mime_type: str | None = None
+    raw: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ForwardReference:
+    """保存尚未展开的 forward 引用及其预览元数据。"""
+
+    forward_id: str | None = None
+    title: str | None = None
+    preview: tuple[str, ...] = ()
+    summary: str | None = None
+    raw: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ReplyReference:
+    """保存 reply 目标及可选的内嵌原文。"""
+
+    message_seq: int | None = None
+    sender_id: int | None = None
+    sender_name: str | None = None
+    time: int | None = None
+    segments: tuple[Segment, ...] = ()
+    complete: bool = False
     raw: JsonObject = field(default_factory=dict)
 
 
@@ -63,7 +95,10 @@ class ExtractedSegments:
     has_reply: bool
     reply_message_seq: int | None
     has_image: bool
-    media_references: tuple[MediaReference, ...]
+    media_resource_references: tuple[MediaResourceReference, ...]
+    file_attachment_references: tuple[FileAttachmentReference, ...]
+    forward_references: tuple[ForwardReference, ...]
+    reply_references: tuple[ReplyReference, ...]
     unknown_segments: tuple[JsonObject, ...]
     diagnostics: tuple[str, ...] = ()
     has_supported_content: bool = False
@@ -76,7 +111,10 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
     body_parts: list[str] = []
     strategy_parts: list[str] = []
     mention_kinds: list[str] = []
-    media_references: list[MediaReference] = []
+    media_resource_references: list[MediaResourceReference] = []
+    file_attachment_references: list[FileAttachmentReference] = []
+    forward_references: list[ForwardReference] = []
+    reply_references: list[ReplyReference] = []
     unknown_segments: list[JsonObject] = []
     diagnostics: list[str] = []
     has_reply = False
@@ -118,7 +156,19 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
         if isinstance(segment, ReplySegment):
             has_supported_content = True
             has_reply = True
-            if _reply_is_complete(segment):
+            complete = _reply_is_complete(segment)
+            reply_references.append(
+                ReplyReference(
+                    message_seq=segment.message_seq,
+                    sender_id=segment.sender_id,
+                    sender_name=segment.sender_name,
+                    time=segment.time,
+                    segments=segment.segments,
+                    complete=complete,
+                    raw=_safe_mapping(segment.raw),
+                )
+            )
+            if complete:
                 body_parts.append("[引用]")
                 if reply_message_seq is None:
                     reply_message_seq = segment.message_seq
@@ -134,8 +184,8 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
             body_parts.append("[图片]" if available else "[图片不可用]")
             if not available:
                 _append_once(diagnostics, "incomplete_media_reference")
-            media_references.append(
-                MediaReference(
+            media_resource_references.append(
+                MediaResourceReference(
                     kind="image",
                     resource_id=segment.resource_id,
                     temp_url=segment.temp_url,
@@ -153,8 +203,8 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
             body_parts.append("[语音]" if available else "[语音不可用]")
             if not available:
                 _append_once(diagnostics, "incomplete_media_reference")
-            media_references.append(
-                MediaReference(
+            media_resource_references.append(
+                MediaResourceReference(
                     kind="record",
                     resource_id=segment.resource_id,
                     temp_url=segment.temp_url,
@@ -171,8 +221,8 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
             body_parts.append("[视频]" if available else "[视频不可用]")
             if not available:
                 _append_once(diagnostics, "incomplete_media_reference")
-            media_references.append(
-                MediaReference(
+            media_resource_references.append(
+                MediaResourceReference(
                     kind="video",
                     resource_id=segment.resource_id,
                     temp_url=segment.temp_url,
@@ -189,14 +239,12 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
             body_parts.append("[文件]" if available else "[文件不可用]")
             if not available:
                 _append_once(diagnostics, "incomplete_media_reference")
-            media_references.append(
-                MediaReference(
-                    kind="file",
+            file_attachment_references.append(
+                FileAttachmentReference(
                     file_id=segment.file_id,
                     file_name=segment.file_name,
                     file_size=segment.file_size,
                     file_hash=segment.file_hash,
-                    name=segment.file_name,
                     mime_type=_extra_text(segment, "mime_type"),
                     raw=_safe_mapping(segment.raw),
                 )
@@ -209,10 +257,12 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
             body_parts.append("[转发]" if available else "[转发不可用]")
             if not available:
                 _append_once(diagnostics, "incomplete_media_reference")
-            media_references.append(
-                MediaReference(
-                    kind="forward",
+            forward_references.append(
+                ForwardReference(
                     forward_id=segment.forward_id,
+                    title=segment.title,
+                    preview=segment.preview,
+                    summary=segment.summary,
                     raw=_safe_mapping(segment.raw),
                 )
             )
@@ -262,7 +312,10 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
         has_reply=has_reply,
         reply_message_seq=reply_message_seq,
         has_image=has_image,
-        media_references=tuple(media_references),
+        media_resource_references=tuple(media_resource_references),
+        file_attachment_references=tuple(file_attachment_references),
+        forward_references=tuple(forward_references),
+        reply_references=tuple(reply_references),
         unknown_segments=tuple(unknown_segments),
         diagnostics=tuple(diagnostics),
         has_supported_content=has_supported_content,
@@ -336,7 +389,10 @@ def _safe_value(value: Any) -> Any:
 
 __all__ = [
     "ExtractedSegments",
-    "MediaReference",
+    "FileAttachmentReference",
+    "ForwardReference",
+    "MediaResourceReference",
+    "ReplyReference",
     "extract_message_features",
     "extract_segment_features",
     "extract_segments",

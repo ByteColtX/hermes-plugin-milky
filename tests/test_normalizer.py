@@ -57,13 +57,18 @@ def test_normalizer_preserves_all_known_segments_and_strategy_features() -> None
     assert normalized.has_reply is True
     assert normalized.reply_message_seq == 1000
     assert normalized.has_image is True
-    assert [reference.kind for reference in normalized.media_references] == [
+    assert [reference.kind for reference in normalized.media_resource_references] == [
         "image",
         "record",
         "video",
-        "file",
-        "forward",
     ]
+    assert [reference.file_id for reference in normalized.file_attachment_references] == [
+        "fixture-file-id"
+    ]
+    assert [reference.forward_id for reference in normalized.forward_references] == [
+        "fixture-forward-id"
+    ]
+    assert normalized.reply_references[0].message_seq == 1000
     assert normalized.will_input.text == normalized.strategy_text
     assert normalized.will_input.chat_key == "group:700000001"
     assert normalized.will_input.channel == "group:700000001"
@@ -184,13 +189,14 @@ def test_media_and_forward_only_store_references() -> None:
     result = normalize_event(load_fixture("events/message_receive.group.all_segments.json"))
 
     assert result.value is not None
-    image, record, video, file, forward = result.value.media_references
+    image, record, video = result.value.media_resource_references
     assert image.resource_id == "fixture-image-resource"
     assert record.resource_id == "fixture-record-resource"
     assert video.resource_id == "fixture-video-resource"
+    file = result.value.file_attachment_references[0]
     assert file.file_id == "fixture-file-id"
     assert file.file_name == "fixture.txt"
-    assert forward.forward_id == "fixture-forward-id"
+    assert result.value.forward_references[0].forward_id == "fixture-forward-id"
 
 
 def test_incomplete_media_gets_explanatory_placeholder() -> None:

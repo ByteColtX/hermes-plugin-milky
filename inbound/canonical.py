@@ -7,7 +7,15 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from inbound.normalizer import MediaReference, NormalizedMessage, normalize_event, normalize_message
+from inbound.normalizer import (
+    FileAttachmentReference,
+    ForwardReference,
+    MediaResourceReference,
+    NormalizedMessage,
+    ReplyReference,
+    normalize_event,
+    normalize_message,
+)
 from milky.models import Event, IncomingMessage, Segment
 from session.identity import (
     CanonicalError,
@@ -42,7 +50,10 @@ class CanonicalMessage:
     body: str
     mention_kind: str
     quote_message_id: str | None
-    media_references: tuple[MediaReference, ...]
+    media_resource_references: tuple[MediaResourceReference, ...]
+    file_attachment_references: tuple[FileAttachmentReference, ...]
+    forward_references: tuple[ForwardReference, ...]
+    reply_references: tuple[ReplyReference, ...]
     raw: JsonObject
     metadata: JsonObject
     diagnostics: tuple[str, ...] = ()
@@ -68,10 +79,10 @@ class CanonicalMessage:
         return self.quote_message_id is not None
 
     @property
-    def media_refs(self) -> tuple[MediaReference, ...]:
-        """返回待补全媒体引用的兼容名称。"""
+    def media_refs(self) -> tuple[MediaResourceReference, ...]:
+        """返回待补全媒体资源引用的兼容名称。"""
 
-        return self.media_references
+        return self.media_resource_references
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +182,10 @@ def _canonicalize_normalized(
         body=normalized.body,
         mention_kind=normalized.mention_kind,
         quote_message_id=normalized.reply_message_id,
-        media_references=normalized.media_references,
+        media_resource_references=normalized.media_resource_references,
+        file_attachment_references=normalized.file_attachment_references,
+        forward_references=normalized.forward_references,
+        reply_references=normalized.reply_references,
         raw=normalized.raw,
         metadata=metadata,
         diagnostics=diagnostics,
@@ -265,7 +279,10 @@ __all__ = [
     "CanonicalError",
     "CanonicalMessage",
     "CanonicalResult",
-    "MediaReference",
+    "FileAttachmentReference",
+    "ForwardReference",
+    "MediaResourceReference",
+    "ReplyReference",
     "build_canonical",
     "canonicalize_event",
     "canonicalize_message",
