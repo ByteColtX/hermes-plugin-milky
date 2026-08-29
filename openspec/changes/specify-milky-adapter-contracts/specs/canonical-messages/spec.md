@@ -38,7 +38,7 @@ Hermes 映射都基于同一份可审计的 canonical message，而不是各自�
 
 ### Requirement: canonical record 包含完整稳定身份
 
-每条可处理消息 MUST 提供 `platform`、`self_id`、`scene`、`chat_key`、`peer_id`、`sender_id`、字符串形式的 `message_id`、Unix 秒时间戳、typed segments、正文、mention/quote 信号、媒体引用、raw 和安全 metadata。`self_id` SHALL 来自事件的 `self_id` 并与启动时 `get_login_info.data.uin` 的身份一致；Milky `message_seq` 是 canonical `message_id` 的来源。
+每条可处理消息 MUST 提供 `platform`、`self_id`、`scene`、`chat_key`、`peer_id`、`sender_id`、字符串形式的 `message_id`、Unix 秒时间戳、typed segments、正文、mention/quote 信号、分类后的 `media_resource_references`、`file_attachment_references`、forward/reply references、raw 和安全 metadata。`self_id` SHALL 来自事件的 `self_id` 并与启动时 `get_login_info.data.uin` 的身份一致；Milky `message_seq` 是 canonical `message_id` 的来源。
 
 #### Scenario: 时间和序号规范化
 
@@ -100,7 +100,7 @@ MUST 按 `friend.nickname` → `sender_id` 的顺序选择。空字符串和只�
 
 - **WHEN** 同一 self、chat 和 message ID 的事件因重连再次到达 TTL 窗口
 - **THEN** 第二帧 SHALL 被判定为重复并停止
-- **AND** SHALL 不再次下载资源、改变 Will 或创建 Hermes turn
+- **AND** SHALL 不再次查询或 materialize 附件、改变 Will 或创建 Hermes turn
 
 #### Scenario: 相同正文不同序号
 

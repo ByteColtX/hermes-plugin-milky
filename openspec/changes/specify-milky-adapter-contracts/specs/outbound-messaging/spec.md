@@ -1,7 +1,9 @@
 ## Purpose
 
 定义 Hermes 出站内容到 Milky 目标和 segment 的安全映射，覆盖 group、dm 以及临时目标的明确拒绝、
-长文本、结构化媒体、文件上传与稳定 SendResult，确保目标错误不会误投递或假成功。
+长文本、结构化媒体资源、独立文件上传与稳定 SendResult，确保目标错误不会误投递或假成功。
+本文件中的 `file_upload` 仅表示出站上传；它不等同于入站 `file_attachment_references`，
+也不等同于 `media_resource_references`。
 
 ## ADDED Requirements
 
@@ -29,7 +31,7 @@
 
 ### Requirement: 文本和结构化内容由统一格式转换
 
-出站文本、mention、mention_all、face、reply、image、record、video、forward 和 light_app MUST 按 Milky segment schema 生成；空白消息 MUST 在网络访问前拒绝。
+出站文本、mention、mention_all、face、reply、image、record、video、forward 和 light_app MUST 按 Milky segment schema 生成；出站 file 不属于 message segment，必须走独立 `file_upload`；空白消息 MUST 在网络访问前拒绝。
 
 #### Scenario: 结构化消息
 
@@ -65,7 +67,7 @@
 
 #### Scenario: 本地路径不可共享
 
-- **WHEN** 文件输入是当前主机的本地路径
+- **WHEN** `file_upload` 输入是当前主机的本地路径
 - **THEN** 系统 SHALL 按已确认的上传契约处理或安全拒绝
 - **AND** SHALL 不假设 Milky 进程可直接读取该路径
 
@@ -81,7 +83,7 @@
 
 #### Scenario: 群发送失败
 
-- **WHEN** 群文本、媒体或文件发送失败
+- **WHEN** 群文本、媒体资源或 `file_upload` 发送失败
 - **THEN** SendResult SHALL 返回原始安全错误类别
 - **AND** MAY 通知 MuteTracker 刷新对应群，但 SHALL 不把所有错误都伪装成禁言
 

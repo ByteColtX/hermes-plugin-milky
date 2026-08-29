@@ -66,7 +66,7 @@ payload names.
 This is deliberately a rendering compatibility decision, not a protocol migration: Milky
 continues to use `dm:` instead of OneBot `private:`. Temporary sessions are recognized at the
 protocol boundary and dropped with `ignored_temp`; they do not get a canonical key, buffer,
-Will decision, Hermes turn, or outbound route. All media resolution remains deferred until
+Will decision, Hermes turn, or outbound route. All attachment resolution remains deferred until
 trigger as required by the Milky architecture.
 
 ### Plugin admission and Hermes-owned busy scheduling
@@ -125,10 +125,15 @@ initially contains only `forward_id`, title, preview and summary; full messages 
 separate `get_forwarded_messages` Action at trigger time. Known incoming segment payloads are
 text, mention, mention_all, face, reply, image, record, video, file, forward, market_face,
 light_app, xml, and markdown. Milky v1.3 has no independent mention-here segment, so that signal
-cannot be inferred from arbitrary text. Resource segments retain `resource_id`/`temp_url` or
-file identifiers and metadata as references only. File is never an outgoing message segment. The
-protocol schema's `[unknown]` default is not adopted: unknown segments remain unknown raw
-extensions and never become text.
+cannot be inferred from arbitrary text. `image`, `record`, and `video` only produce
+`media_resource_references`, retaining `resource_id`, optional `temp_url`, and safe MIME/size
+hints. Inbound `file` only produces `file_attachment_references`, retaining `file_id`,
+`file_name`, `file_size`, optional `file_hash`, and the raw segment; it is not a Milky
+`media_resource` and is not resolved through `get_resource_temp_url`. A file may be materialized
+as `kind="document"` at the Hermes boundary, but that does not change its inbound type. An
+outbound file is a separate `file_upload` and never a message segment. The protocol schema's
+`[unknown]` default is not adopted: unknown segments remain unknown raw extensions and never
+become text.
 
 The first observed v1.3 test-environment responses also established that `get_group_list` returns
 an object containing `groups`, successful member responses may omit `shut_up_end_time` when the
@@ -140,18 +145,19 @@ data snapshots.
 
 T07 owns only protocol-independent identity, the canonical identity shell and TTL dedup. T08
 consumes the T04 typed DTO and is the single owner of segment semantics, ordered body rendering,
-strategy features and deferred resource references. T09 consumes the canonical and normalized
+strategy features and categorized deferred references. T09 consumes the canonical and normalized
 results for Gate and admission; it must not reparse raw segments. This prevents canonical,
 Will routing and willingness from independently deriving different meanings from the same
 payload.
 
 The observable normalized result preserves the original segment order and exposes body content,
-strategy text, mention signals, reply presence and target sequence, media references and safe
-diagnostics. Text and markdown contribute their declared content; mention contributes a safe
-display form and self/all signals; face, reply, image, record, video, file, forward, market face,
-light app and XML contribute stable explanatory placeholders while retaining typed data. Unknown
-segments contribute only safe raw/diagnostic metadata. Reply and forward nested content are kept
-for later resolution and are not silently merged into the current message's strategy text.
+strategy text, mention signals, reply presence and target sequence, the separately typed
+`media_resource_references` and `file_attachment_references`, and safe diagnostics. Text and
+markdown contribute their declared content; mention contributes a safe display form and self/all
+signals; face, reply, image, record, video, file, forward, market face, light app and XML
+contribute stable explanatory placeholders while retaining typed data. Unknown segments contribute
+only safe raw/diagnostic metadata. Reply and forward nested content are kept for later resolution
+and are not silently merged into the current message's strategy text.
 
 Milky v1.3 has no independent `mention_here` segment. T08 therefore emits only self, all and
 none for ordinary v1.3 input, and never infers here from text or a mention name. A future here
@@ -161,11 +167,50 @@ yet been fetched; missing required reply fields remain a malformed protocol case
 invented target.
 
 T08 performs no Action or other external operation. `resource_id` for image, record and video is
-resolved only later through `get_resource_temp_url`; file references are resolved through the
-scene-specific private/group file download URL Action; `forward_id` uses
-`get_forwarded_messages`; and a missing full reply uses `get_message` with its scene, peer and
-message sequence. T08 stores these references only. Resource failure placeholders and Hermes
-media-helper handling belong to T14.
+resolved only later through the confirmed `get_resource_temp_url` Action. A `file_id` is not
+passed to that Action: group files use the confirmed `get_group_file_download_url` Action with
+`group_id` and `file_id`; private files use the confirmed `get_private_file_download_url` Action
+with `user_id`, `file_id`, and the required `file_hash`. These Actions return a `download_url`,
+but that URL is still not a local path. `forward_id` uses `get_forwarded_messages`; a missing
+full reply uses `get_message` with its scene, peer and message sequence. T08 stores only the
+categorized references. Resource failure placeholders and Hermes attachment materialization
+belong to T14.
+
+### Milky reference taxonomy and Hermes materialization boundary
+
+The adapter uses different names for protocol references and materialized local attachments:
+
+| Layer | Name | Contents and ownership |
+|---|---|---|
+| Milky normalization | `media_resource_references` | `image`/`record`/`video`; `resource_id`, optional `temp_url`, safe MIME/size hints |
+| Milky normalization | `file_attachment_references` | inbound `file`; `file_id`, name, size, optional hash, raw segment; not a `media_resource` |
+| Milky normalization | `forward_references` / `reply_references` | IDs and inline/target metadata; not downloadable attachments yet |
+| Hermes handoff | `hermes_attachment_materializations` | successful local path plus MIME/kind; `kind` may be `image`, `audio`, `video`, or `document` |
+| Hermes `MessageEvent` | `media_urls` / `media_types` | existing Hermes fields containing only materialized local paths and their MIME types |
+
+The inspected Hermes public surface does not expose one generic remote-reference-to-attachment
+function. `cache_image_from_url()` and `cache_audio_from_url()` are async URL helpers: they
+perform the download and return a local path, so T14 must await them. The corresponding bytes
+cache helpers, including `cache_video_from_bytes()` and `cache_document_from_bytes()`, are
+synchronous and only cache bytes already supplied; they do not await or fetch a URL.
+`cache_media_bytes()` in `gateway.platforms.base` is the generic bytes materializer: it classifies
+an attachment and returns `CachedMedia(path, media_type, kind, display_name)`, routing a ZIP or
+other non-image/video/audio payload to `kind="document"` via `cache_document_from_bytes()`.
+It is a cache/materialization primitive, not a document parser or URL downloader. A second
+same-named helper in `gateway/platforms/media_cache.py` has a different signature and return
+shape, so it is not a license to guess a broader adapter contract. The resolver therefore MUST
+use a confirmed helper/seam for the specific kind, MUST await every async materialization before
+constructing `MessageEvent`, and MUST leave the attachment unsupported if a safe URL-to-bytes
+seam is absent. It MUST NOT create a plugin cache, issue an unconfirmed direct download, or
+invent a generic `await_resource()` API.
+
+Hermes `run.py` treats a materialized non-image/non-audio/non-video path as a document attachment:
+it emits a path-pointing context note and tells the Agent to extract the content with its tools.
+The common materializer does not itself parse a ZIP, PDF, DOCX, or spreadsheet into text.
+
+`handle_message()` is a separate boundary: it accepts an already materialized `MessageEvent`,
+spawns Hermes background processing and returns after submission. T14 awaits resource
+materialization; T15 does not await the later Agent turn.
 
 ### Fixture boundary
 

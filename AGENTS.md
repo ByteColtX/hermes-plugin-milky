@@ -159,4 +159,7 @@
 
 - 提交消息遵循 Conventional Commits，subject/body 全部使用中文。
 - 使用标准 type：`feat`、`fix`、`refactor`、`perf`、`docs`、`test`、`chore`、`ci`、`build`、`style`、`revert`；scope 可选但建议使用。
-- subject 使用祈使语气、全小写、无句号且不超过 72 个字符。body 说明修改动机而非重复修改内容；适用时在 footer 引用 issue 或 breaking change。
+- subject 使用祈使语气、全小写、无句号且不超过 72 个字符；subject 与 body 之间必须保留一个空行。
+- 每个提交必须包含正文，不得只提交 subject。body 必须使用项目符号逐项说明变更背景、修改动机、关键影响和未解决风险；不得只罗列文件名或机械重复 subject。
+- body 的每一项必须以 `- ` 开头；较长项目必须手动换行，续行使用缩进并保持可读，不得把多项内容挤成一行。
+- body 说明修改动机而非重复修改内容；适用时在 footer 引用 issue 或 breaking change。提交前必须检查最终提交消息确实包含正文和项目符号。
