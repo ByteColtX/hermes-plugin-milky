@@ -1,0 +1,401 @@
+"""Milky HTTP Action 客户端。
+
+本模块只负责 HTTP 传输、通用 envelope 和 Action 的最小协议校验，不负责事件排序、
+Gate、Will 或 Hermes 业务。默认 transport 使用 Python 标准库，测试可以注入 fake
+transport 而不建立真实连接。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Protocol, Self
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+from config import MilkyConfig
+
+from .models import GroupList, GroupMemberInfo, LoginInfo, MilkyEnvelope
+from .parser import ParseError, parse_action_response, parse_envelope
+
+_ACTION_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
+_NON_NEGATIVE_INTEGER_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
+
+
+@dataclass(frozen=True, slots=True)
+class TransportResponse:
+    """保存已读取且已与底层连接分离的 HTTP 响应。"""
+
+    status_code: int
+    body: bytes
+    headers: Mapping[str, str]
+
+
+class HttpTransport(Protocol):
+    """定义可注入的异步 HTTP transport。"""
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes,
+        timeout: float,
+    ) -> TransportResponse:
+        """执行一次已经编码好的 HTTP 请求。"""
+
+    async def close(self) -> None:
+        """释放 transport 资源。"""
+
+
+class UrllibTransport:
+    """使用标准库执行请求，并在返回前关闭 HTTP 响应。"""
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes,
+        timeout: float,
+    ) -> TransportResponse:
+        """在线程池中执行阻塞的标准库 HTTP 请求。"""
+
+        return await asyncio.to_thread(self._request_sync, method, url, headers, body, timeout)
+
+    @staticmethod
+    def _request_sync(
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes,
+        timeout: float,
+    ) -> TransportResponse:
+        """执行同步请求并读取完整响应体。"""
+
+        request = Request(url, data=body, headers=headers, method=method)
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                response_body = response.read()
+                return TransportResponse(response.status, response_body, dict(response.headers))
+        except HTTPError as error:
+            # HTTP 状态本身已经足以分类；不读取或回显错误 body，避免泄露敏感内容。
+            error.close()
+            return TransportResponse(error.code, b"", {})
+
+    async def close(self) -> None:
+        """标准库 transport 没有需要长期持有的连接池。"""
+
+
+class ActionError(Exception):
+    """表示 Action 输入、传输、HTTP 或协议结果不可用。"""
+
+    def __init__(self, classification: str, action: str, reason: str) -> None:
+        self.classification = classification
+        self.action = action
+        self.reason = reason
+        super().__init__(f"{classification}: {action}: {reason}")
+
+
+# 供调用方按更具体的名称导入，同时保持唯一的错误语义。
+MilkyActionError = ActionError
+
+
+@dataclass(frozen=True, slots=True)
+class SendResult:
+    """保存 Milky send Action 返回的稳定远端消息序号。"""
+
+    message_id: str
+
+
+class MilkyClient:
+    """调用 Milky HTTP Action 的最小客户端。"""
+
+    def __init__(
+        self,
+        config: MilkyConfig,
+        transport: HttpTransport | None = None,
+        *,
+        timeout: float = 10.0,
+    ) -> None:
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+            raise ValueError("timeout must be a positive number")
+        self._config = config
+        self._transport = transport or UrllibTransport()
+        self._timeout = float(timeout)
+        self._closed = False
+
+    async def call(
+        self,
+        action: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> MilkyEnvelope:
+        """发送一次 Action 并返回已校验的成功 envelope。"""
+
+        if self._closed:
+            raise ActionError("transport_unknown", _safe_action_name(action), "client is closed")
+        if not isinstance(action, str) or _ACTION_PATTERN.fullmatch(action) is None:
+            raise ActionError("invalid_input", "<invalid>", "invalid action name")
+        if params is None:
+            request_params: Mapping[str, Any] = {}
+        elif isinstance(params, Mapping):
+            request_params = params
+        else:
+            raise ActionError("invalid_input", action, "parameters must be an object")
+        try:
+            body = json.dumps(
+                dict(request_params), ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            raise ActionError(
+                "invalid_input", action, "parameters are not JSON serializable"
+            ) from None
+
+        try:
+            response = await self._transport.request(
+                "POST",
+                self._config.action_url(action),
+                {**self._config.auth_headers, "Content-Type": "application/json"},
+                body,
+                self._timeout,
+            )
+        except asyncio.CancelledError:
+            raise
+        except (TimeoutError, OSError, URLError):
+            raise ActionError("transport_unknown", action, "request outcome is unknown") from None
+
+        if not isinstance(response, TransportResponse):
+            raise ActionError("malformed", action, "transport returned an invalid response")
+        if not 200 <= response.status_code < 300:
+            raise ActionError("http_error", action, f"HTTP status {response.status_code}")
+        payload = self._decode_json(response.body, action)
+        try:
+            envelope = parse_envelope(payload)
+        except ParseError:
+            raise ActionError("malformed", action, "response envelope is malformed") from None
+        if envelope.status != "ok" or envelope.retcode != 0:
+            raise ActionError("rejected", action, "Milky Action envelope rejected")
+        if not isinstance(envelope.data, Mapping):
+            raise ActionError("malformed", action, "response data is malformed")
+        return envelope
+
+    async def action(
+        self,
+        action: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> MilkyEnvelope:
+        """以兼容名称调用通用 Action。"""
+
+        return await self.call(action, params)
+
+    async def get_login_info(self) -> LoginInfo:
+        """获取登录身份并校验 ``data.uin``。"""
+
+        envelope = await self.call("get_login_info")
+        result = self._parse_typed(envelope, "get_login_info")
+        assert isinstance(result, LoginInfo)
+        return result
+
+    async def get_group_list(self) -> GroupList:
+        """获取群列表并校验 ``data.groups``。"""
+
+        envelope = await self.call("get_group_list")
+        result = self._parse_typed(envelope, "get_group_list")
+        assert isinstance(result, GroupList)
+        return result
+
+    async def get_group_member_info(self, group_id: object, user_id: object) -> GroupMemberInfo:
+        """获取指定群的成员信息并校验两个非负 ID。"""
+
+        group_value = _validate_id(group_id, "group_id", "get_group_member_info")
+        user_value = _validate_id(user_id, "user_id", "get_group_member_info")
+        envelope = await self.call(
+            "get_group_member_info",
+            {"group_id": group_value, "user_id": user_value},
+        )
+        result = self._parse_typed(envelope, "get_group_member_info")
+        assert isinstance(result, GroupMemberInfo)
+        return result
+
+    async def send_group_message(self, group_id: object, message: object) -> SendResult:
+        """向群发送 segments，并只接受远端 ``message_seq``。"""
+
+        group_value = _validate_id(group_id, "group_id", "send_group_message")
+        message_value = _validate_segments(message, "send_group_message")
+        envelope = await self.call(
+            "send_group_message",
+            {"group_id": group_value, "message": message_value},
+        )
+        return _parse_send_result(envelope, "send_group_message")
+
+    async def send_private_message(self, user_id: object, message: object) -> SendResult:
+        """向好友发送 segments，并只接受远端 ``message_seq``。"""
+
+        user_value = _validate_id(user_id, "user_id", "send_private_message")
+        message_value = _validate_segments(message, "send_private_message")
+        envelope = await self.call(
+            "send_private_message",
+            {"user_id": user_value, "message": message_value},
+        )
+        return _parse_send_result(envelope, "send_private_message")
+
+    async def get_message(self, message_seq: object) -> MilkyEnvelope:
+        """按远端消息序号查询消息。"""
+
+        sequence = _validate_id(message_seq, "message_seq", "get_message")
+        return await self.call("get_message", {"message_seq": sequence})
+
+    async def get_forwarded_messages(self, forward_id: object) -> MilkyEnvelope:
+        """按 forward ID 查询完整转发内容。"""
+
+        return await self.call(
+            "get_forwarded_messages",
+            {"forward_id": _validate_text(forward_id, "forward_id", "get_forwarded_messages")},
+        )
+
+    async def get_resource_temp_url(self, resource_id: object) -> MilkyEnvelope:
+        """按资源 ID 查询临时引用地址。"""
+
+        return await self.call(
+            "get_resource_temp_url",
+            {"resource_id": _validate_text(resource_id, "resource_id", "get_resource_temp_url")},
+        )
+
+    async def upload_group_file(
+        self, group_id: object, file: object, name: object
+    ) -> MilkyEnvelope:
+        """向群上传文件引用。"""
+
+        return await self.call(
+            "upload_group_file",
+            {
+                "group_id": _validate_id(group_id, "group_id", "upload_group_file"),
+                "file": _validate_text(file, "file", "upload_group_file"),
+                "name": _validate_text(name, "name", "upload_group_file"),
+            },
+        )
+
+    async def upload_private_file(
+        self, user_id: object, file: object, name: object
+    ) -> MilkyEnvelope:
+        """向好友上传文件引用。"""
+
+        return await self.call(
+            "upload_private_file",
+            {
+                "user_id": _validate_id(user_id, "user_id", "upload_private_file"),
+                "file": _validate_text(file, "file", "upload_private_file"),
+                "name": _validate_text(name, "name", "upload_private_file"),
+            },
+        )
+
+    async def close(self) -> None:
+        """释放底层 transport，重复关闭保持安全。"""
+
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await self._transport.close()
+        except (TimeoutError, OSError):
+            raise ActionError("transport_unknown", "<client>", "transport close failed") from None
+
+    async def __aenter__(self) -> Self:
+        """支持用异步上下文管理器自动释放 transport。"""
+
+        return self
+
+    async def __aexit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        """离开异步上下文时关闭 transport。"""
+
+        await self.close()
+
+    @staticmethod
+    def _decode_json(body: object, action: str) -> object:
+        """解码 JSON 响应，不把原始内容放入异常。"""
+
+        if not isinstance(body, (bytes, bytearray, str)):
+            raise ActionError("malformed", action, "response body is not JSON text")
+        try:
+            if isinstance(body, (bytes, bytearray)):
+                body = bytes(body).decode("utf-8")
+            return json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ActionError("malformed", action, "response is not valid JSON") from None
+
+    @staticmethod
+    def _parse_typed(envelope: MilkyEnvelope, action: str) -> object:
+        """使用 T04 parser 校验已成功 envelope 的 Action 专属 data。"""
+
+        payload = {
+            "status": envelope.status,
+            "retcode": envelope.retcode,
+            "data": envelope.data,
+        }
+        try:
+            return parse_action_response(payload, action).value
+        except ParseError:
+            raise ActionError("malformed", action, "response data is malformed") from None
+
+
+def _validate_id(value: object, field: str, action: str) -> int:
+    """校验 Milky 非负整数 ID，拒绝 bool 和带额外分隔符的字符串。"""
+
+    if isinstance(value, bool):
+        raise ActionError("invalid_input", action, f"{field} is invalid")
+    if isinstance(value, int) and value >= 0:
+        return value
+    if isinstance(value, str) and _NON_NEGATIVE_INTEGER_PATTERN.fullmatch(value):
+        return int(value)
+    raise ActionError("invalid_input", action, f"{field} is invalid")
+
+
+def _safe_action_name(value: object) -> str:
+    """只在诊断中保留协议允许的 Action 名称。"""
+
+    if isinstance(value, str) and _ACTION_PATTERN.fullmatch(value):
+        return value
+    return "<invalid>"
+
+
+def _validate_text(value: object, field: str, action: str) -> str:
+    """校验非空文本参数且不在错误中回显参数值。"""
+
+    if not isinstance(value, str) or not value.strip():
+        raise ActionError("invalid_input", action, f"{field} is invalid")
+    return value.strip()
+
+
+def _validate_segments(value: object, action: str) -> list[Mapping[str, Any]]:
+    """校验 message 为有序 segment 对象列表。"""
+
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+        raise ActionError("invalid_input", action, "message must be an array")
+    if any(not isinstance(segment, Mapping) for segment in value):
+        raise ActionError("invalid_input", action, "message segments must be objects")
+    return [dict(segment) for segment in value]
+
+
+def _parse_send_result(envelope: MilkyEnvelope, action: str) -> SendResult:
+    """校验发送成功的最小 data.message_seq 结构。"""
+
+    if not isinstance(envelope.data, Mapping):
+        raise ActionError("malformed", action, "response data is malformed")
+    sequence = envelope.data.get("message_seq")
+    if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 0:
+        raise ActionError("malformed", action, "response is missing message_seq")
+    return SendResult(str(sequence))
+
+
+__all__ = [
+    "ActionError",
+    "HttpTransport",
+    "MilkyActionError",
+    "MilkyClient",
+    "SendResult",
+    "TransportResponse",
+    "UrllibTransport",
+]
