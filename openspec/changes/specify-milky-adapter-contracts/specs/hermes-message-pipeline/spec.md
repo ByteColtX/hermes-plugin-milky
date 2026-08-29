@@ -24,7 +24,7 @@ MessageEvent，同时严格区分历史上下文、当前正文、系统观察�
 
 ### Requirement: pipeline 顺序不可越过门禁和去重
 
-普通消息 MUST 按 message_receive → tolerant parse/normalize → canonical/dedup → per-chat admission → Gate → wait buffer → Will → drain → per-chat ordered handoff（资源补全与 mapper）→ Hermes `handle_message()` 的顺序处理。ordered handoff MUST 按 ingress sequence 提交同 chat 的 trigger，且 MUST NOT 等待 Agent turn 执行；提交正常返回后立即释放。Agent 忙碌、follow-up、interrupt 和 Hermes 单槽 pending 行为 MUST 由 Hermes Gateway 处理。
+普通消息 MUST 按 message_receive → tolerant parse/normalize → canonical/dedup → per-chat admission → Gate → wait buffer → Will → drain → detached trigger 的资源补全与 mapper → Hermes `handle_message()` 的顺序处理。插件 MUST NOT 为同 chat 的 Agent turn 建立 ordered handoff 或其他执行队列，也 MUST NOT 等待 Agent turn 执行；`handle_message()` 提交正常返回后 detached 处理即可结束。Agent 忙碌时的 `queue`、`steer`、`interrupt`、follow-up 和 pending/FIFO 行为 MUST 由 Hermes Gateway 根据 `busy_input_mode` 处理。
 
 #### Scenario: 重复消息
 
@@ -36,6 +36,12 @@ MessageEvent，同时严格区分历史上下文、当前正文、系统观察�
 
 - **WHEN** Self、allowlist 或 mute gate 拒绝消息
 - **THEN** 消息 SHALL 不进入 wait buffer、Will、资源补全或 Hermes
+
+#### Scenario: Hermes 忙碌策略接管后续消息
+
+- **WHEN** 一个 trigger 已调用 Hermes `handle_message()` 且 Agent 尚未完成，后续消息通过插件 admission
+- **THEN** 插件 SHALL 不等待前一个 Agent turn 或创建插件侧 Agent 执行队列
+- **AND** 后续 MessageEvent SHALL 交给 Hermes Gateway 按 `busy_input_mode` 的 queue、steer 或 interrupt 语义处理
 
 ### Requirement: 历史上下文和当前正文不得重复
 

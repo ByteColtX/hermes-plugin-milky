@@ -39,13 +39,13 @@
 
 ### Requirement: 事件 handler 不阻塞 receive loop
 
-事件消费者 MUST 将每个合法事件交给独立的可观察处理任务或等价的非阻塞边界；单个 handler 的慢处理或异常 SHALL 不终止后续帧读取。
+事件消费者 MUST 将每个合法事件交给独立的可观察处理任务或等价的非阻塞边界；单个 handler 的慢处理或异常 SHALL 不终止后续帧读取，也 SHALL NOT 要求插件为慢 handler 建立 Agent 执行队列。
 
 #### Scenario: handler 慢于下一帧
 
 - **WHEN** 当前事件的资源补全或 Hermes turn 尚未完成而下一帧已到达
-- **THEN** receive loop SHALL 能继续收帧并按事件顺序交付
-- **AND** SHALL 不因等待当前 handler 而停止读取
+- **THEN** receive loop SHALL 能继续收帧并独立分发后续事件
+- **AND** SHALL 不因等待当前 handler 或 Agent turn 而停止读取；后续 busy 行为 SHALL 由 Hermes 处理
 
 #### Scenario: handler 抛出异常
 

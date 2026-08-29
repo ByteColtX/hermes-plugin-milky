@@ -69,33 +69,33 @@ protocol boundary and dropped with `ignored_temp`; they do not get a canonical k
 Will decision, Hermes turn, or outbound route. All media resolution remains deferred until
 trigger as required by the Milky architecture.
 
-### Plugin admission, ordered handoff, and Hermes turn scheduling
+### Plugin admission and Hermes-owned busy scheduling
 
-Hermes does not expose a general multi-item FIFO Agent queue for platform adapters. Its
-base adapter has a per-session busy guard and a single pending-message slot; follow-ups may
-be merged or replaced according to message type and busy policy. The plugin MUST NOT treat
-that slot as a strict FIFO queue, and MUST NOT implement a second queue for Agent execution.
+Hermes exposes busy-input scheduling for platform adapters through the Gateway's
+`display.busy_input_mode` setting. `queue` keeps follow-ups for later turns, `steer` injects
+eligible text into the active run, and `interrupt` redirects or interrupts the active run;
+the Gateway also owns its pending/FIFO and media-merge behavior. The adapter's
+`handle_message()` returns after handing work to Hermes, so the plugin MUST NOT implement a
+second Agent queue or wait for an Agent turn to finish.
 
-The plugin uses two short-lived per-chat coordination boundaries:
+The plugin uses one short-lived per-chat coordination boundary plus detached processing:
 
 1. The SSE consumer parses and canonicalizes the event, performs atomic deduplication and
    assigns an ingress sequence.
 2. The chat admission coordinator serializes canonical/Gate/wait-buffer/Will state and the
    atomic drain that creates a detached trigger batch in ingress order.
-3. Detached trigger batches enter a bounded ordered handoff per chat. Resource resolution,
-   mapping and `handle_message()` submission occur in sequence order; this prevents a slow
-   first media fetch from letting a later trigger reach Hermes first. Different chats remain
-   parallel, and the handoff never waits for the Agent turn itself.
+3. After the batch is detached, resource resolution, mapping and the single
+   `handle_message()` submission run without holding the admission boundary. Different chats
+   and successive trigger handlers may proceed independently; busy input behavior is then
+   decided by Hermes according to `busy_input_mode`.
 4. If resolution or mapping fails, retry the same detached batch or record an unrecoverable
    failure; never append it back unconditionally.
-5. The handoff boundary is released immediately after `handle_message()` returns normally.
-   Hermes owns active-session guard, busy handling, pending follow-up, interrupt and its
-   own single-slot/merge behavior.
+5. The detached handler ends after `handle_message()` returns normally. Hermes owns the
+   active-session guard, busy handling, pending/FIFO follow-up, interrupt and steer behavior.
 
-This means plugin state remains ordered without making an Agent stall block the SSE receive
-loop or cause an unbounded plugin-side queue. A later message may be admitted while Hermes is
-busy; its fate is determined by the public Hermes adapter contract, not by a copied session
-runtime.
+This keeps plugin state atomic without making an Agent stall block the SSE receive loop or
+creating a plugin-side Agent queue. A later message may be admitted while Hermes is busy; its
+fate is determined by the public Hermes adapter contract, not by a copied session runtime.
 
 ### Milky DTO boundary
 

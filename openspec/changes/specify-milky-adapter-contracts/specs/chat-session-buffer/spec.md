@@ -7,15 +7,21 @@
 
 ## ADDED Requirements
 
-### Requirement: 每个 chat 使用独立 admission 和 ordered handoff
+### Requirement: 每个 chat 使用独立 admission 且不维护 Agent 队列
 
-canonical、Gate、wait buffer、Will 和 trigger batch 交接 MUST 在同一 chat 的短暂 admission 串行边界中按 ingress sequence 完成。trigger batch 后续 MUST 进入同 chat 的有界 ordered handoff，按相同顺序完成资源补全、mapper 和 Hermes `handle_message()` 提交；不同 chat MAY 并行处理。该边界 MUST NOT 包含 Agent turn 执行。
+canonical、Gate、wait buffer、Will 和 trigger batch 的交接 MUST 在同一 chat 的短暂 admission 串行边界中按 ingress sequence 完成。trigger batch 脱离该边界后，资源补全、mapper 和 Hermes `handle_message()` 提交 MUST NOT 等待同 chat 的 Agent turn 执行，且插件 MUST NOT 为 Agent turn 维护 ordered handoff、pending 或其他执行队列。不同 chat MAY 并行处理；Hermes Gateway 的 `busy_input_mode` MUST 决定 Agent 忙碌时的 queue、steer、interrupt 和 follow-up 行为。
 
 #### Scenario: 同 chat 并发消息
 
 - **WHEN** 同一 chat 的两条消息并发到达
 - **THEN** 它们 SHALL 按该 chat 的到达顺序完成 canonical、Gate、buffer 和 Will 处理
 - **AND** SHALL 不产生交叉的 trigger drain
+
+#### Scenario: Agent 忙碌时不建立插件执行队列
+
+- **WHEN** 一个 trigger 已交给 Hermes 且 Agent 仍在执行，随后同一 chat 又产生 trigger
+- **THEN** 插件 SHALL 释放 admission 并继续处理后续消息，不等待前一个 Agent turn
+- **AND** 后续消息 SHALL 交给 Hermes 的 `busy_input_mode` 处理，而不是写入插件侧 Agent 队列
 
 #### Scenario: 不同 chat 并行
 
@@ -40,14 +46,14 @@ canonical、Gate、wait buffer、Will 和 trigger batch 交接 MUST 在同一 ch
 
 ### Requirement: trigger 先原子 drain 再交接 detached batch
 
-trigger MUST 在同 chat admission 边界中原子清空历史 wait buffer，并将历史构建为 detached batch；当前 trigger 消息 SHALL 只作为本次正文，不得重复放入 channel_context。交接给 Hermes 后必须立即释放该边界。
+trigger MUST 在同 chat admission 边界中原子清空历史 wait buffer，并将历史构建为 detached batch；当前 trigger 消息 SHALL 只作为本次正文，不得重复放入 channel_context。batch 转交给后续资源补全处理后，admission 边界 MUST 立即释放，不得以 Agent 执行完成作为释放条件。
 
 #### Scenario: 历史与当前消息交接
 
 - **WHEN** buffer 中有两条历史消息且当前消息触发
 - **THEN** 两条历史消息 SHALL 只进入一次 channel_context
 - **AND** 当前消息 SHALL 只作为本次 MessageEvent 正文
-- **AND** buffer SHALL 在交接开始前被清空
+- **AND** buffer SHALL 在 detached batch 交接开始前被清空
 
 #### Scenario: detached 交接失败
 
@@ -108,4 +114,4 @@ Will 返回 wait 的消息 MUST 只保存在插件拥有的有界 buffer 中，�
 
 - **WHEN** 当前 trigger 交给 Hermes 后 Agent 仍在执行
 - **THEN** 插件 SHALL 释放该 chat 的 admission 边界
-- **AND** 后续消息 SHALL 由 Hermes 的 busy/follow-up/interrupt 及单槽 pending 语义处理，而不是在插件中等待 Agent 完成或复制 Agent 队列
+- **AND** 后续消息 SHALL 由 Hermes 的 `busy_input_mode`、busy/follow-up、pending/FIFO、interrupt 或 steer 语义处理，而不是在插件中等待 Agent 完成或复制 Agent 队列

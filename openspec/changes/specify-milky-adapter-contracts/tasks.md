@@ -29,7 +29,7 @@
 
 - [ ] 5.1 **T08 normalizer、extractor 与 WillInput**：实现 text、mention、quote、image、file、record、video、forward 和未知 segment 的无网络规范化，并生成策略特征和延迟媒体引用；验证 friend/group、temp 忽略、全部 segment、空内容丢弃及 normalizer 无外部副作用
 - [ ] 5.2 **T09 Gate registry 与 per-chat admission**：实现 Self、allowlist、mute 三道门禁的固定顺序、ingress sequence 和同 chat 短暂 admission 串行；验证 Gate 无网络/随机/发送副作用，deny 不增长 buffer 或修改 Will，并验证 admission 不覆盖 Agent 执行
-- [ ] 5.3 **T10 wait buffer 与 detached trigger batch**：实现默认 20、可配置上限、0 禁用历史、历史 FIFO 溢出、原子 drain、历史/current 分离和交接失败策略；验证 wait 不调用 Hermes，trigger 不重复消息，buffer 隔离且失败不无条件回填
+- [ ] 5.3 **T10 wait buffer 与 detached trigger batch**：实现默认 20、可配置上限、0 禁用历史、历史 FIFO 溢出、原子 drain、历史/current 分离和交接失败策略；明确 wait buffer 只保存 Will 历史上下文而不是 Agent 执行队列；验证 wait 不调用 Hermes，trigger 不重复消息，buffer 隔离且失败不无条件回填
 - [ ] 5.4 **T11 routing Will engine**：实现 direct、mention、mentionAll、mentionHere、quote、image、poke、group 的 nested routing 和固定优先级；验证多信号优先级、mention 类型独立、poke observe-only 及 routing 无网络副作用
 - [ ] 5.5 **T12 willingness engine**：实现本项目定义的 YesImBot-inspired 默认值、嵌套配置、weighted silence、阈值衰减、marginal/dynamic gain、概率、force、关键词、poke 和提交即 reply cost；验证确定性向量、浮点容差、时钟回拨、ratio 分段、概率 clamp、独立 chat 状态和提交失败不扣费
 - [ ] 5.6 **T13 MuteTracker**：实现 login → group list → self member 查询顺序、`shut_up_end_time`、二态 whole/member mute、初始 fail-closed、离群清理、事件更新和有锁冷却刷新；验证初始化前不放行、查询失败保持 muted/unmuted 原状态、`duration=0` 取消、私聊失败不刷新群状态
@@ -37,7 +37,7 @@
 ## 6. Hermes mapping and outbound
 
 - [ ] 6.1 **T14 媒体与 reply resolver**：仅在 trigger 阶段查询资源/reply，使用 Hermes 公共 media helper，生成失败占位并保留安全诊断；验证 wait 阶段零资源调用、无插件缓存/下载目录/本地路径拼接及 reply 失败降级
-- [ ] 6.2 **T15 Hermes MessageEvent 与入站流水线**：编排 message_receive → normalize → dedup → admission → Gate → buffer → Will → drain → per-chat ordered handoff → resolver/mapper → Hermes `handle_message()`，并实现 friend/group、temp 忽略和系统事件边界；验证 fake Hermes 中提交顺序、transcript、channel_context、资源 helper、Agent 忙碌不阻塞 admission 和提交/异常扣费次数
+- [ ] 6.2 **T15 Hermes MessageEvent 与入站流水线**：编排 message_receive → normalize → dedup → admission → Gate → buffer → Will → drain → detached resolver/mapper → Hermes `handle_message()`，并实现 friend/group、temp 忽略和系统事件边界；验证 fake Hermes 中 transcript、channel_context、资源 helper、handle_message 快速提交、Agent 忙碌不阻塞 admission 且由 `busy_input_mode` 接管，以及提交/异常扣费次数
 - [ ] 6.3 **T16 出站 formatter、sender、文件上传与首批工具**：实现 group/dm 路由、Milky segments、空消息拒绝、长文本分块、文件 upload、SendResult、错误分类，以及名片点赞、戳一戳、撤回群消息三个显式 ToolSpec；验证 group/dm Action、temp/非法目标本地 unsupported、工具参数本地校验、撤回不自动重试、`message_seq` 稳定 ID、文件不进入 message segments 及群失败刷新
 
 ## 7. Lifecycle and release
