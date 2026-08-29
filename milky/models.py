@@ -263,6 +263,7 @@ class IncomingMessage:
     group_member: GroupMemberEntity | None = None
     raw: JsonObject = field(default_factory=dict)
     extras: JsonObject = field(default_factory=dict)
+    self_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

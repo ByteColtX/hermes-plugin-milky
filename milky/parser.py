@@ -186,6 +186,7 @@ def parse_incoming_message(event: Event | object) -> ParseResult[IncomingMessage
         friend=friend,
         group=group,
         group_member=group_member,
+        self_id=parsed_event.self_id,
         raw=_freeze_mapping(data),
         extras=_freeze_mapping(_extras(data, known)),
     )

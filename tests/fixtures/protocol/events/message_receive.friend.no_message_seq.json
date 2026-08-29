@@ -1,0 +1,23 @@
+{
+  "event_type": "message_receive",
+  "time": 1700000011,
+  "self_id": 900000001,
+  "data": {
+    "message_scene": "friend",
+    "peer_id": 800000001,
+    "sender_id": 800000001,
+    "time": 1700000011,
+    "segments": [
+      {
+        "type": "text",
+        "data": {
+          "text": "缺少稳定序号的合成消息"
+        }
+      }
+    ],
+    "friend": {
+      "user_id": 800000001,
+      "nickname": "合成好友"
+    }
+  }
+}
