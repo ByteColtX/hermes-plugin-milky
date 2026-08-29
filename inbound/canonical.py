@@ -22,7 +22,7 @@ from session.identity import (
     make_dedup_key,
     normalize_chat_key,
 )
-from will.input import MentionKind
+from will.input import MentionKind, WillInput
 
 JsonObject = Mapping[str, Any]
 _SENSITIVE_KEYS = {
@@ -58,6 +58,7 @@ class CanonicalMessage:
     raw: JsonObject
     metadata: JsonObject
     diagnostics: tuple[str, ...] = ()
+    will_input: WillInput | None = None
 
     @property
     def time(self) -> int:
@@ -205,6 +206,7 @@ def _canonicalize_normalized(
         raw=normalized.raw,
         metadata=metadata,
         diagnostics=diagnostics,
+        will_input=normalized.will_input,
     )
 
 
