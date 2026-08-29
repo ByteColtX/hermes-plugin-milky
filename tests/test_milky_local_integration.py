@@ -20,6 +20,7 @@ from outbound.sender import OutboundSendResult
 _TOKEN = "integration-test-token"
 _SELF_ID = 900000001
 _GROUP_IDS = (700000001, 700000002)
+_FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "protocol"
 
 
 class _MilkyFixtureState:
@@ -29,6 +30,8 @@ class _MilkyFixtureState:
         self.lock = threading.Lock()
         self.requests: list[dict[str, Any]] = []
         self.event_connections = 0
+        self.event_payload: dict[str, Any] | None = None
+        self.event_chunked = False
         self.fail_group_message = False
         self.fail_private_message = False
 
@@ -140,7 +143,7 @@ class _MilkyFixtureHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"status": "failed", "retcode": 404, "data": {}})
             return
         connection = self.state.next_event_connection()
-        payload = {
+        payload = self.state.event_payload or {
             "event_type": "bot_offline",
             "time": 1700000000 + connection,
             "self_id": _SELF_ID,
@@ -156,10 +159,17 @@ class _MilkyFixtureHandler(BaseHTTPRequestHandler):
         ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Content-Length", str(len(body)))
+        if self.state.event_chunked:
+            self.send_header("Transfer-Encoding", "chunked")
+        else:
+            self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(body)
+        if self.state.event_chunked:
+            chunk = f"{len(body):X}\r\n".encode() + body + b"\r\n0\r\n\r\n"
+            self.wfile.write(chunk)
+        else:
+            self.wfile.write(body)
         self.wfile.flush()
         self.close_connection = True
 
@@ -215,6 +225,86 @@ def _config(server: _MilkyFixtureServer):
             "MILKY_ALLOWED_CHATS": "group:700000001,dm:800000001",
         }
     )
+
+
+class _RecordingPipeline:
+    """记录 adapter 事件流交给 pipeline 的事件类型。"""
+
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    def start(self) -> None:
+        """提供 adapter 生命周期所需的启动接口。"""
+
+    async def handle_event(self, event: object) -> None:
+        """记录一个已通过 SSE 解码的事件。"""
+
+        self.events.append(event)
+
+    async def close(self) -> None:
+        """提供 adapter 生命周期所需的关闭接口。"""
+
+
+def test_local_sse_delivers_message_receive_to_adapter_pipeline() -> None:
+    """有效 message_receive 应从真实 urllib SSE 进入 adapter pipeline。"""
+
+    event_payload = json.loads(
+        (_FIXTURE_ROOT / "events/message_receive.friend.json").read_text(encoding="utf-8")
+    )
+    with _MilkyFixtureServer() as server:
+        server.state.event_payload = event_payload
+        pipeline = _RecordingPipeline()
+        client = MilkyClient(_config(server), timeout=2)
+        adapter = MilkyAdapter(
+            SimpleNamespace(),
+            milky_config=_config(server),
+            client=client,
+            pipeline=pipeline,
+        )
+
+        async def scenario() -> None:
+            assert await adapter.connect() is True
+            for _ in range(200):
+                if pipeline.events:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(pipeline.events) == 1
+            assert pipeline.events[0].event_type == "message_receive"
+            await adapter.disconnect()
+
+        asyncio.run(scenario())
+
+
+def test_local_chunked_sse_delivers_message_receive_to_adapter_pipeline() -> None:
+    """chunked 长连接 SSE 也应把 message_receive 交给 adapter pipeline。"""
+
+    event_payload = json.loads(
+        (_FIXTURE_ROOT / "events/message_receive.friend.json").read_text(encoding="utf-8")
+    )
+    with _MilkyFixtureServer() as server:
+        server.state.event_payload = event_payload
+        server.state.event_chunked = True
+        pipeline = _RecordingPipeline()
+        config = _config(server)
+        client = MilkyClient(config, timeout=2)
+        adapter = MilkyAdapter(
+            SimpleNamespace(),
+            milky_config=config,
+            client=client,
+            pipeline=pipeline,
+        )
+
+        async def scenario() -> None:
+            assert await adapter.connect() is True
+            for _ in range(200):
+                if pipeline.events:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(pipeline.events) == 1
+            assert pipeline.events[0].event_type == "message_receive"
+            await adapter.disconnect()
+
+        asyncio.run(scenario())
 
 
 def test_local_http_lifecycle_outbound_refresh_and_upload(tmp_path: Path) -> None:

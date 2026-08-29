@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 import socket
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -160,3 +162,38 @@ def test_directory_plugin_uses_root_entry_only() -> None:
     assert (PROJECT_ROOT / "tools.py").is_file()
     assert "provides_tools:" in manifest
     assert not (PROJECT_ROOT / "hermes_plugin_milky" / "__init__.py").exists()
+
+
+def test_namespaced_directory_entry_bootstraps_internal_imports(tmp_path: Path) -> None:
+    """Hermes namespaced 加载目录插件时应能解析插件自己的顶层模块。"""
+
+    script = """
+import importlib.util
+import sys
+
+project_root = sys.argv[1]
+module_name = "hermes_plugins.hermes_plugin_milky_isolated"
+spec = importlib.util.spec_from_file_location(
+    module_name,
+    project_root + "/__init__.py",
+    submodule_search_locations=[project_root],
+)
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+sys.modules[module_name] = module
+spec.loader.exec_module(module)
+module.register(object())
+"""
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    environment["MILKY_BASE_URL"] = "https://localhost:5500/milky"
+    environment["MILKY_ACCESS_TOKEN"] = "test-token"
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(PROJECT_ROOT)],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
