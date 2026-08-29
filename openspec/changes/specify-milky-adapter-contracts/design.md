@@ -208,6 +208,25 @@ Hermes `run.py` treats a materialized non-image/non-audio/non-video path as a do
 it emits a path-pointing context note and tells the Agent to extract the content with its tools.
 The common materializer does not itself parse a ZIP, PDF, DOCX, or spreadsheet into text.
 
+### Temporary base64 upload compatibility seam
+
+The confirmed Milky upload contract still uses the JSON fields `file_uri` and `file_name`.
+The generic `upload_group_file()` and `upload_private_file()` methods therefore continue to
+accept an explicit URI and do not silently fetch or rewrite arbitrary `http(s)://` values. For
+the current local-file path entry point, `upload_group_file_from_path()` and
+`upload_private_file_from_path()` read the selected regular file off the event loop, encode its
+bytes as the confirmed `base64://` URI form, and reuse the same upload Action validation and
+`data.file_id` response check.
+
+This is a temporary operational compromise. The LAN HTTP test proved that a reachable
+`http(s)://` source works, but the Hermes Dashboard cannot currently bind on the LAN without a
+configured authentication provider, and a loopback source is not reliably reachable from the
+Milky process. Base64 removes that deployment reachability and authentication dependency for a
+small, explicitly selected local file, at the cost of reading the whole file into memory and
+inflating the request body before JSON encoding; sufficiently large files can exhaust memory or
+hit connection, proxy, or timeout limits. The client keeps the existing no-blind-retry behavior,
+and this seam must be revisited before using it as the general outbound file path.
+
 `handle_message()` is a separate boundary: it accepts an already materialized `MessageEvent`,
 spawns Hermes background processing and returns after submission. T14 awaits resource
 materialization; T15 does not await the later Agent turn.

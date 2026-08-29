@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -365,6 +366,74 @@ def test_group_file_upload_rejects_invalid_parent_folder_id_before_network() -> 
 
     assert error_info.value.classification == "invalid_input"
     assert transport.requests == []
+
+
+def test_group_file_upload_from_path_uses_base64_uri(tmp_path) -> None:
+    """本地文件上传入口应把文件内容编码为协议支持的 base64 URI。"""
+
+    file_path = tmp_path / "fixture.bin"
+    file_path.write_bytes(b"fixture-bytes\x00")
+    transport = FakeTransport([response(ok({"file_id": "fixture-upload"}))])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    asyncio.run(
+        client.upload_group_file_from_path(
+            700000001,
+            file_path,
+            "fixture.bin",
+            parent_folder_id="fixture-folder",
+        )
+    )
+
+    assert transport.requests[0]["body"] == {
+        "group_id": 700000001,
+        "parent_folder_id": "fixture-folder",
+        "file_uri": "base64://" + base64.b64encode(b"fixture-bytes\x00").decode("ascii"),
+        "file_name": "fixture.bin",
+    }
+
+
+def test_private_file_upload_from_path_uses_base64_uri(tmp_path) -> None:
+    """私聊本地文件上传入口也应复用相同的 base64 URI 约定。"""
+
+    file_path = tmp_path / "fixture.txt"
+    file_path.write_text("fixture", encoding="utf-8")
+    transport = FakeTransport([response(ok({"file_id": "fixture-upload"}))])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    asyncio.run(client.upload_private_file_from_path(800000001, file_path, "fixture.txt"))
+
+    assert transport.requests[0]["body"] == {
+        "user_id": 800000001,
+        "file_uri": "base64://" + base64.b64encode(b"fixture").decode("ascii"),
+        "file_name": "fixture.txt",
+    }
+
+
+@pytest.mark.parametrize("path_kind", ["missing", "directory", "invalid"])
+def test_file_upload_from_path_rejects_unreadable_path_before_network(
+    tmp_path, path_kind: str
+) -> None:
+    """本地文件不可读时应在 HTTP 边界前失败且不泄露路径。"""
+
+    if path_kind == "missing":
+        file_path = tmp_path / "missing.bin"
+    elif path_kind == "directory":
+        file_path = tmp_path / "directory"
+        file_path.mkdir()
+    else:
+        file_path = object()
+
+    transport = FakeTransport([])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(client.upload_group_file_from_path(700000001, file_path, "fixture.bin"))
+
+    assert error_info.value.classification == "invalid_input"
+    assert transport.requests == []
+    if path_kind != "invalid":
+        assert str(file_path) not in str(error_info.value)
 
 
 def test_private_file_download_rejects_invalid_is_self_send_before_network() -> None:

@@ -8,10 +8,12 @@ transport 而不建立真实连接。
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol, Self
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -389,6 +391,24 @@ class MilkyClient:
         envelope = await self.call("upload_group_file", params)
         return _parse_upload_result(envelope, "upload_group_file")
 
+    async def upload_group_file_from_path(
+        self,
+        group_id: object,
+        file_path: object,
+        file_name: object,
+        *,
+        parent_folder_id: object = _MISSING,
+    ) -> MilkyEnvelope:
+        """读取本地文件并以 base64 URI 上传到群。"""
+
+        file_uri = await asyncio.to_thread(
+            _local_file_as_base64_uri, file_path, "upload_group_file"
+        )
+        kwargs: dict[str, object] = {}
+        if parent_folder_id is not _MISSING:
+            kwargs["parent_folder_id"] = parent_folder_id
+        return await self.upload_group_file(group_id, file_uri, file_name, **kwargs)
+
     async def upload_private_file(
         self, user_id: object, file_uri: object, file_name: object
     ) -> MilkyEnvelope:
@@ -409,6 +429,16 @@ class MilkyClient:
             },
         )
         return _parse_upload_result(envelope, "upload_private_file")
+
+    async def upload_private_file_from_path(
+        self, user_id: object, file_path: object, file_name: object
+    ) -> MilkyEnvelope:
+        """读取本地文件并以 base64 URI 上传到私聊。"""
+
+        file_uri = await asyncio.to_thread(
+            _local_file_as_base64_uri, file_path, "upload_private_file"
+        )
+        return await self.upload_private_file(user_id, file_uri, file_name)
 
     async def close(self) -> None:
         """释放底层 transport，重复关闭保持安全。"""
@@ -541,6 +571,24 @@ def _parse_upload_result(envelope: MilkyEnvelope, action: str) -> MilkyEnvelope:
     if not isinstance(envelope.data, Mapping) or not isinstance(envelope.data.get("file_id"), str):
         raise ActionError("malformed", action, "response is missing file_id")
     return envelope
+
+
+def _local_file_as_base64_uri(file_path: object, action: str) -> str:
+    """将可读普通文件编码为 Milky 支持的 base64 URI。"""
+
+    try:
+        path = Path(file_path).expanduser()
+    except (OSError, TypeError, ValueError):
+        raise ActionError("invalid_input", action, "file path is invalid") from None
+    try:
+        if not path.is_file():
+            raise ActionError("invalid_input", action, "file path is unavailable")
+        data = path.read_bytes()
+    except ActionError:
+        raise
+    except (OSError, ValueError):
+        raise ActionError("invalid_input", action, "file path is unavailable") from None
+    return "base64://" + base64.b64encode(data).decode("ascii")
 
 
 __all__ = [
