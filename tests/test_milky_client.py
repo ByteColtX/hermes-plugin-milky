@@ -169,8 +169,8 @@ def test_message_resource_and_upload_methods_use_explicit_actions() -> None:
             ),
             response(ok({"messages": []})),
             response(ok({"url": "https://media.example/resource"})),
-            response(ok({})),
-            response(ok({})),
+            response(ok({"file_id": "fixture-group-upload"})),
+            response(ok({"file_id": "fixture-private-upload"})),
         ]
     )
     client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
@@ -193,8 +193,13 @@ def test_message_resource_and_upload_methods_use_explicit_actions() -> None:
     }
     assert transport.requests[-2]["body"] == {
         "group_id": 700000001,
-        "file": "https://media.example/file",
-        "name": "fixture.txt",
+        "file_uri": "https://media.example/file",
+        "file_name": "fixture.txt",
+    }
+    assert transport.requests[-1]["body"] == {
+        "user_id": 800000001,
+        "file_uri": "https://media.example/file",
+        "file_name": "fixture.txt",
     }
 
 
@@ -295,6 +300,68 @@ def test_file_download_parameters_are_validated_before_network(
 
     with pytest.raises(ActionError) as error_info:
         asyncio.run(getattr(client, method_name)(*args))
+
+    assert error_info.value.classification == "invalid_input"
+    assert transport.requests == []
+
+
+def test_group_file_upload_accepts_optional_parent_folder_id() -> None:
+    """群文件上传应按协议发送可选的目标文件夹字段。"""
+
+    transport = FakeTransport([response(ok({"file_id": "fixture-upload"}))])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    asyncio.run(
+        client.upload_group_file(
+            700000001,
+            "base64://fixture",
+            "fixture.txt",
+            parent_folder_id="fixture-folder",
+        )
+    )
+
+    assert transport.requests[0]["body"] == {
+        "group_id": 700000001,
+        "parent_folder_id": "fixture-folder",
+        "file_uri": "base64://fixture",
+        "file_name": "fixture.txt",
+    }
+
+
+def test_upload_response_requires_file_id() -> None:
+    """上传成功 envelope 缺少协议要求的 file_id 时必须判为 malformed。"""
+
+    transport = FakeTransport([response(ok({}))])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(
+            client.upload_private_file(
+                800000001,
+                "base64://fixture",
+                "fixture.txt",
+            )
+        )
+
+    assert error_info.value.classification == "malformed"
+    assert len(transport.requests) == 1
+
+
+def test_group_file_upload_rejects_invalid_parent_folder_id_before_network() -> None:
+    """群文件上传的可选文件夹字段类型错误时不得访问网络。"""
+
+    transport = FakeTransport([])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(
+            client.upload_group_file(
+                700000001,
+                "base64://fixture",
+                "fixture.txt",
+                parent_folder_id=1,
+            )
+        )
 
     assert error_info.value.classification == "invalid_input"
     assert transport.requests == []

@@ -362,31 +362,39 @@ class MilkyClient:
         )
 
     async def upload_group_file(
-        self, group_id: object, file: object, name: object
+        self,
+        group_id: object,
+        file_uri: object,
+        file_name: object,
+        *,
+        parent_folder_id: object = _MISSING,
     ) -> MilkyEnvelope:
-        """向群上传文件引用。"""
+        """按 Milky 文件 URI 向群上传文件。"""
 
-        return await self.call(
-            "upload_group_file",
-            {
-                "group_id": _validate_id(
-                    group_id,
-                    "group_id",
-                    "upload_group_file",
-                    minimum=_MIN_QQ_ID,
-                    maximum=_MAX_QQ_ID,
-                ),
-                "file": _validate_text(file, "file", "upload_group_file"),
-                "name": _validate_text(name, "name", "upload_group_file"),
-            },
-        )
+        params: dict[str, Any] = {
+            "group_id": _validate_id(
+                group_id,
+                "group_id",
+                "upload_group_file",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            ),
+            "file_uri": _validate_text(file_uri, "file_uri", "upload_group_file"),
+            "file_name": _validate_text(file_name, "file_name", "upload_group_file"),
+        }
+        if parent_folder_id is not _MISSING:
+            params["parent_folder_id"] = _validate_nullable_text(
+                parent_folder_id, "parent_folder_id", "upload_group_file"
+            )
+        envelope = await self.call("upload_group_file", params)
+        return _parse_upload_result(envelope, "upload_group_file")
 
     async def upload_private_file(
-        self, user_id: object, file: object, name: object
+        self, user_id: object, file_uri: object, file_name: object
     ) -> MilkyEnvelope:
-        """向好友上传文件引用。"""
+        """按 Milky 文件 URI 向好友上传文件。"""
 
-        return await self.call(
+        envelope = await self.call(
             "upload_private_file",
             {
                 "user_id": _validate_id(
@@ -396,10 +404,11 @@ class MilkyClient:
                     minimum=_MIN_QQ_ID,
                     maximum=_MAX_QQ_ID,
                 ),
-                "file": _validate_text(file, "file", "upload_private_file"),
-                "name": _validate_text(name, "name", "upload_private_file"),
+                "file_uri": _validate_text(file_uri, "file_uri", "upload_private_file"),
+                "file_name": _validate_text(file_name, "file_name", "upload_private_file"),
             },
         )
+        return _parse_upload_result(envelope, "upload_private_file")
 
     async def close(self) -> None:
         """释放底层 transport，重复关闭保持安全。"""
@@ -479,6 +488,16 @@ def _validate_message_scene(value: object, action: str) -> str:
     return value
 
 
+def _validate_nullable_text(value: object, field: str, action: str) -> str | None:
+    """校验可选且可为空的 Milky 字符串参数。"""
+
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ActionError("invalid_input", action, f"{field} is invalid")
+    return value
+
+
 def _safe_action_name(value: object) -> str:
     """只在诊断中保留协议允许的 Action 名称。"""
 
@@ -514,6 +533,14 @@ def _parse_send_result(envelope: MilkyEnvelope, action: str) -> SendResult:
     if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 0:
         raise ActionError("malformed", action, "response is missing message_seq")
     return SendResult(str(sequence))
+
+
+def _parse_upload_result(envelope: MilkyEnvelope, action: str) -> MilkyEnvelope:
+    """校验上传成功的最小 data.file_id 结构。"""
+
+    if not isinstance(envelope.data, Mapping) or not isinstance(envelope.data.get("file_id"), str):
+        raise ActionError("malformed", action, "response is missing file_id")
+    return envelope
 
 
 __all__ = [
