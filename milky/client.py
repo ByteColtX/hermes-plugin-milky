@@ -272,6 +272,90 @@ class MilkyClient:
         )
         return _parse_send_result(envelope, "send_private_message")
 
+    async def send_profile_like(self, user_id: object, count: object = _MISSING) -> MilkyEnvelope:
+        """向好友发送名片点赞，并校验 Action 的对象响应。"""
+
+        params: dict[str, Any] = {
+            "user_id": _validate_id(
+                user_id,
+                "user_id",
+                "send_profile_like",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            )
+        }
+        if count is not _MISSING:
+            params["count"] = (
+                None
+                if count is None
+                else _validate_id(
+                    count,
+                    "count",
+                    "send_profile_like",
+                    maximum=_MAX_SAFE_INTEGER,
+                )
+            )
+        return await self.call("send_profile_like", params)
+
+    async def send_friend_nudge(self, user_id: object, is_self: object = _MISSING) -> MilkyEnvelope:
+        """向好友发送戳一戳，并校验可选的 ``is_self``。"""
+
+        params: dict[str, Any] = {
+            "user_id": _validate_id(
+                user_id,
+                "user_id",
+                "send_friend_nudge",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            )
+        }
+        if is_self is not _MISSING:
+            if is_self is not None and not isinstance(is_self, bool):
+                raise ActionError("invalid_input", "send_friend_nudge", "is_self is invalid")
+            params["is_self"] = is_self
+        return await self.call("send_friend_nudge", params)
+
+    async def send_group_nudge(self, group_id: object, user_id: object) -> MilkyEnvelope:
+        """向群成员发送戳一戳。"""
+
+        params = {
+            "group_id": _validate_id(
+                group_id,
+                "group_id",
+                "send_group_nudge",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            ),
+            "user_id": _validate_id(
+                user_id,
+                "user_id",
+                "send_group_nudge",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            ),
+        }
+        return await self.call("send_group_nudge", params)
+
+    async def recall_group_message(self, group_id: object, message_seq: object) -> MilkyEnvelope:
+        """撤回群消息；调用方负责决定是否再次尝试。"""
+
+        params = {
+            "group_id": _validate_id(
+                group_id,
+                "group_id",
+                "recall_group_message",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            ),
+            "message_seq": _validate_id(
+                message_seq,
+                "message_seq",
+                "recall_group_message",
+                maximum=_MAX_SAFE_INTEGER,
+            ),
+        }
+        return await self.call("recall_group_message", params)
+
     async def get_message(
         self, message_scene: object, peer_id: object, message_seq: object
     ) -> MilkyEnvelope:

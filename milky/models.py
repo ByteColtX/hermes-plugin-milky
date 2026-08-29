@@ -241,10 +241,10 @@ class IncomingForwardedMessage:
 class OutgoingForwardedMessage:
     """出站转发消息的协议 DTO，不包含文件 message segment。"""
 
-    time: int
-    sender_id: int
+    user_id: int
     sender_name: str
     segments: tuple[JsonObject, ...]
+    time: int | None = None
     extras: JsonObject = field(default_factory=dict)
 
 

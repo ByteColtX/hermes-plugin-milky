@@ -6,13 +6,14 @@ from typing import Any
 
 
 def register_tools(ctx: Any) -> None:
-    """为 Hermes 保留显式 ToolSpec 注册入口。
+    """注册三个明确的 Milky ToolSpec，不在注册阶段创建网络连接。"""
 
-    三个 Milky ToolSpec 及其参数校验属于后续出站任务；当前只保持注册阶段
-    可安全导入且没有网络或长期后台任务。
-    """
+    try:
+        from outbound.tools import register_tools as register_outbound_tools
+    except ImportError:
+        from .outbound.tools import register_tools as register_outbound_tools
 
-    del ctx
+    register_outbound_tools(ctx)
 
 
 __all__ = ["register_tools"]

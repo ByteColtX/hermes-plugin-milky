@@ -221,6 +221,79 @@ async def _call_message_resource_uploads(client: MilkyClient) -> tuple[str, str]
     return group_result.message_id, private_result.message_id
 
 
+def test_explicit_outbound_action_methods_use_openapi_fields() -> None:
+    """显式出站 Action 方法应只发送 OpenAPI 已确认的字段。"""
+
+    transport = FakeTransport(
+        [
+            response(ok({})),
+            response(ok({})),
+            response(ok({})),
+            response(ok({})),
+        ]
+    )
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    async def call_actions() -> None:
+        """按协议顺序执行四个显式 Action。"""
+
+        await client.send_profile_like(800000001, 2)
+        await client.send_friend_nudge(800000001, True)
+        await client.send_group_nudge(700000001, 900000001)
+        await client.recall_group_message(700000001, 123)
+
+    asyncio.run(call_actions())
+
+    assert [request["url"].rsplit("/", 1)[-1] for request in transport.requests] == [
+        "send_profile_like",
+        "send_friend_nudge",
+        "send_group_nudge",
+        "recall_group_message",
+    ]
+    assert [request["body"] for request in transport.requests] == [
+        {"user_id": 800000001, "count": 2},
+        {"user_id": 800000001, "is_self": True},
+        {"group_id": 700000001, "user_id": 900000001},
+        {"group_id": 700000001, "message_seq": 123},
+    ]
+
+
+def test_profile_like_accepts_explicit_nullable_count() -> None:
+    """名片点赞显式传入 null 时应保留该 OpenAPI 可空字段。"""
+
+    transport = FakeTransport([response(ok({}))])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    asyncio.run(client.send_profile_like(800000001, None))
+
+    assert transport.requests[0]["body"] == {"user_id": 800000001, "count": None}
+
+
+@pytest.mark.parametrize(
+    ("method_name", "args"),
+    [
+        ("send_profile_like", (1,)),
+        ("send_profile_like", (800000001, True)),
+        ("send_friend_nudge", (800000001, "yes")),
+        ("send_group_nudge", (700000001, 1)),
+        ("recall_group_message", (700000001, -1)),
+    ],
+)
+def test_explicit_outbound_action_parameters_fail_before_network(
+    method_name: str, args: tuple[object, ...]
+) -> None:
+    """显式工具使用的 Action 参数错误时不得进入 HTTP。"""
+
+    transport = FakeTransport([])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(getattr(client, method_name)(*args))
+
+    assert error_info.value.classification == "invalid_input"
+    assert transport.requests == []
+
+
 def test_file_download_methods_use_scene_specific_actions_and_fields() -> None:
     """入站 group/private file 必须使用各自确认的下载 Action。"""
 
