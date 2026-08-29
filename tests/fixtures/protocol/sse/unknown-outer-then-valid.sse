@@ -1,0 +1,5 @@
+event: future_event_extension
+data: {"event_type":"message_receive","time":1700000080,"self_id":900000001,"data":{"message_scene":"friend","peer_id":800000001,"message_seq":1002,"sender_id":800000001,"time":1700000080,"segments":[{"type":"text","data":{"text":"后续消息"}}]}}
+
+event: milky_event
+data: {"event_type":"bot_offline","time":1700000081,"self_id":900000001,"data":{"reason":"合成观察"}}
