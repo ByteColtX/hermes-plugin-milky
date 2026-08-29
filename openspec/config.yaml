@@ -1,0 +1,40 @@
+schema: spec-driven
+
+context: |
+  项目是 Python 3.13+ 的 Hermes Milky QQ 平台适配器，使用 uv 管理环境。
+  ARCHITECTURE.md 是协议、所有权和行为契约的项目基线；当前 OpenSpec change 的
+  proposal、specs、design 和 tasks 是本次工作的事实来源。当前仓库仍是新建骨架，不能把目标架构描述成已实现功能。
+  OpenSpec 规范必须描述可观察行为，而不是类名、函数名、库选择或逐行实现方案。
+  Milky v1.3 使用 HTTP POST Action 和 SSE GET /event；friend/group/temp 必须保持独立
+  的 dm:/group: chat key；temp 消息在协议解析后直接记录 ignored_temp，不创建 chat key。
+  Gate 是确定性的硬性门禁，Will 是独立的发言决策。
+  媒体下载、缓存、SSRF、权限和本地路径由 Hermes 公共 helper 所有；插件不得接管。
+  token、Authorization header、个人 QQ、真实媒体路径和敏感正文不得进入规范、fixture、
+  日志、异常、快照或提交。新增实现必须先有 fixture/契约，再有测试和 uv 质量门禁。
+  代码与文档遵循 Google Python Style Guide，提交消息遵循中文 Conventional Commits。
+
+rules:
+  proposal:
+    - 必须明确当前骨架未实现目标能力，不得把规划写成已交付行为。
+    - Capabilities 必须与 specs/<capability-path>/spec.md 一一对应，并说明非目标。
+  specs:
+    - 一个 capability 只使用一个 spec.md；每个 requirement 必须是可观察的 SHALL 或 MUST 行为。
+    - 每个 requirement 至少包含一个严格使用四级标题 `#### Scenario:` 的 WHEN/THEN 场景。
+    - 优先覆盖错误、未知、边界、重连、隐私和降级行为；不得把实现步骤写进 spec。
+    - 遵守 ARCHITECTURE.md 的 Gate/Will、Hermes 媒体所有权、temp 忽略和安全边界。
+  design:
+    - 说明规范之间的边界、依赖方向、未实现状态和未来归档条件。
+    - 不因协议或 Hermes API 未确认而猜测行为；保留 unsupported 或待实机反馈边界。
+  tasks:
+    - 每项任务使用可追踪的 `- [ ] X.Y` 或 `- [x] X.Y` 格式，并写出验证方式。
+
+operations:
+  apply:
+    guidance:
+      - 先读取 ARCHITECTURE.md，再读取本次 change 的全部 artifacts，尤其是 tasks.md。
+      - 按任务闭环执行：契约或 fixture、实现、测试、ruff/build/diff 检查，必要时再做本地 Milky smoke。
+      - 仅在 Hermes handle_message 提交成功后更新 reply cost；不为未知远端结果盲目重试。
+  archive:
+    guidance:
+      - 只有对应运行时能力已实现并有自动化证据后，才将 delta 同步到 openspec/specs/。
+      - 当前骨架的目标规范保持在 active change 中，不得通过归档制造“已实现”的错觉。

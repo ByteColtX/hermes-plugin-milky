@@ -1,0 +1,43 @@
+[project]
+name = "hermes-plugin-milky"
+version = "0.1.0"
+description = "Hermes 的 Milky QQ 平台适配器"
+readme = "README.md"
+authors = [
+    { name = "ByteColtX", email = "umk@live.com" }
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.15",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Hermes 通过仓库根目录的 plugin.yaml 和 __init__.py 加载 directory plugin，
+# 不将本项目作为可安装的 Python package 发布。
+packages = []
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["."]
+
+[tool.ruff.lint]
+extend-select = ["I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["N999"]
+
+[tool.ruff.format]
+line-ending = "lf"
+
+[tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers"]
+testpaths = ["tests"]
