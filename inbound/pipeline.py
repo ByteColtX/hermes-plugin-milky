@@ -75,6 +75,24 @@ class InboundPipeline:
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._diagnostics: deque[str] = deque(maxlen=128)
         self._reply_costs = 0
+        self._accepting = True
+
+    def start(self) -> None:
+        """重新开放事件进入 pipeline 的边界。"""
+
+        self._accepting = True
+
+    async def close(self) -> None:
+        """停止接收事件并取消尚未完成的 detached 交接任务。"""
+
+        self._accepting = False
+        tasks = tuple(self._background_tasks)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
     @property
     def diagnostics(self) -> tuple[str, ...]:
@@ -101,6 +119,8 @@ class InboundPipeline:
     async def handle_event(self, event: Event | object) -> PipelineResult:
         """处理一帧事件；trigger 的资源和 Hermes 交接以 detached task 执行。"""
 
+        if not self._accepting:
+            return PipelineResult("stopped", reason="inbound pipeline is stopped")
         try:
             parsed_event = event if isinstance(event, Event) else parse_event(event)
         except ParseError as error:

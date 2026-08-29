@@ -1,0 +1,303 @@
+"""验证 Milky adapter 的生命周期和根注册组装。"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib.util
+import socket
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from adapter import MilkyAdapter
+from config import load_config
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+class FakeClient:
+    """记录生命周期关闭，不执行任何网络请求。"""
+
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    async def close(self) -> None:
+        """记录关闭调用。"""
+
+        self.close_calls += 1
+
+
+class FakeMuteTracker:
+    """模拟登录和禁言状态初始同步。"""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.initialized = False
+        self.self_id: int | None = None
+        self.initialize_calls = 0
+
+    async def initialize(self) -> bool:
+        """完成或拒绝初始状态同步。"""
+
+        self.initialize_calls += 1
+        if self.fail:
+            raise RuntimeError("fake state sync failed")
+        self.initialized = True
+        self.self_id = 900000001
+        return True
+
+
+class FakeEventStream:
+    """模拟持续运行、可取消的 SSE 事件流。"""
+
+    def __init__(self) -> None:
+        self.run_calls = 0
+        self.close_calls = 0
+        self.started = asyncio.Event()
+        self.stopped = asyncio.Event()
+
+    async def run(self, handler: object) -> None:
+        """保存 handler 并等待生命周期停止。"""
+
+        assert callable(handler)
+        self.run_calls += 1
+        self.started.set()
+        await self.stopped.wait()
+
+    async def close(self) -> None:
+        """停止模拟事件流。"""
+
+        self.close_calls += 1
+        self.stopped.set()
+
+
+class FakePipeline:
+    """记录启动和 detached 任务清理。"""
+
+    def __init__(self) -> None:
+        self.start_calls = 0
+        self.close_calls = 0
+
+    def start(self) -> None:
+        """允许接收普通事件。"""
+
+        self.start_calls += 1
+
+    async def close(self) -> None:
+        """取消 pipeline 内部任务。"""
+
+        self.close_calls += 1
+
+    async def handle_event(self, event: object) -> object:
+        """提供事件流所需的异步 handler。"""
+
+        return event
+
+
+class FakeSender:
+    """验证停止后 adapter 不再进入出站 sender。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def send(self, *args: object, **kwargs: object) -> object:
+        """记录发送调用。"""
+
+        del args, kwargs
+        self.calls += 1
+        return SimpleNamespace(success=True, message_id="1")
+
+
+def make_config() -> object:
+    """创建不含真实凭证的测试配置。"""
+
+    return load_config(
+        {
+            "MILKY_BASE_URL": "https://localhost:5500/milky",
+            "MILKY_ACCESS_TOKEN": "test-token",
+        }
+    )
+
+
+def make_adapter(
+    *,
+    tracker: FakeMuteTracker | None = None,
+    stream: FakeEventStream | None = None,
+    pipeline: FakePipeline | None = None,
+    sender: FakeSender | None = None,
+    client: FakeClient | None = None,
+) -> tuple[MilkyAdapter, FakeMuteTracker, FakeEventStream, FakePipeline, FakeSender, FakeClient]:
+    """创建只使用 fake 依赖的 adapter。"""
+
+    resolved_tracker = tracker or FakeMuteTracker()
+    resolved_stream = stream or FakeEventStream()
+    resolved_pipeline = pipeline or FakePipeline()
+    resolved_sender = sender or FakeSender()
+    resolved_client = client or FakeClient()
+    adapter = MilkyAdapter(
+        SimpleNamespace(),
+        milky_config=make_config(),
+        client=resolved_client,
+        event_stream=resolved_stream,
+        mute_tracker=resolved_tracker,
+        pipeline=resolved_pipeline,
+        outbound_sender=resolved_sender,
+    )
+    return (
+        adapter,
+        resolved_tracker,
+        resolved_stream,
+        resolved_pipeline,
+        resolved_sender,
+        resolved_client,
+    )
+
+
+def test_connect_syncs_state_before_starting_event_stream() -> None:
+    """初次连接必须先完成状态同步，再启动 SSE 消费。"""
+
+    async def scenario() -> None:
+        adapter, tracker, stream, pipeline, _, _ = make_adapter()
+
+        assert await adapter.connect() is True
+        await stream.started.wait()
+
+        assert tracker.initialize_calls == 1
+        assert pipeline.start_calls == 1
+        assert stream.run_calls == 1
+        assert adapter.ready is True
+        assert adapter.self_id == 900000001
+
+        await adapter.disconnect()
+
+    asyncio.run(scenario())
+
+
+def test_reconnect_does_not_rescan_mute_state_or_duplicate_stream() -> None:
+    """同一 adapter 的重连只恢复事件流，不重新扫描禁言状态。"""
+
+    async def scenario() -> None:
+        adapter, tracker, stream, pipeline, _, _ = make_adapter()
+
+        assert await adapter.connect() is True
+        await stream.started.wait()
+        assert await adapter.connect(is_reconnect=True) is True
+
+        assert tracker.initialize_calls == 1
+        assert pipeline.start_calls == 1
+        assert stream.run_calls == 1
+
+        await adapter.disconnect()
+
+    asyncio.run(scenario())
+
+
+def test_initial_sync_failure_keeps_message_entry_not_ready() -> None:
+    """初始同步失败时不得启动 SSE 或开放消息入口。"""
+
+    async def scenario() -> None:
+        tracker = FakeMuteTracker(fail=True)
+        adapter, _, stream, pipeline, _, _ = make_adapter(tracker=tracker)
+
+        assert await adapter.connect() is False
+        assert adapter.ready is False
+        assert stream.run_calls == 0
+        assert pipeline.start_calls == 0
+
+        await adapter.disconnect()
+
+    asyncio.run(scenario())
+
+
+def test_disconnect_is_idempotent_and_closes_all_owned_resources() -> None:
+    """重复停止不得继续消费、发送或重复释放生命周期资源。"""
+
+    async def scenario() -> None:
+        adapter, _, stream, pipeline, sender, client = make_adapter()
+        assert await adapter.connect() is True
+        await stream.started.wait()
+
+        await adapter.disconnect()
+        await adapter.disconnect()
+        result = await adapter.send("dm:800000001", "停止后不发送")
+
+        assert stream.close_calls == 1
+        assert pipeline.close_calls == 1
+        assert client.close_calls == 1
+        assert sender.calls == 0
+        assert result.success is False
+        assert adapter.ready is False
+
+    asyncio.run(scenario())
+
+
+def _load_root_entry() -> object:
+    """按 Hermes namespaced directory plugin 方式加载根入口。"""
+
+    module_name = "hermes_plugins.hermes_plugin_milky_lifecycle_test"
+    spec = importlib.util.spec_from_file_location(
+        module_name,
+        PROJECT_ROOT / "__init__.py",
+        submodule_search_locations=[str(PROJECT_ROOT)],
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class FakePluginContext:
+    """记录根入口注册的平台和工具。"""
+
+    def __init__(self) -> None:
+        self.platforms: list[dict[str, object]] = []
+        self.tools: list[dict[str, object]] = []
+
+    def register_platform(self, **kwargs: object) -> None:
+        """保存平台注册参数。"""
+
+        self.platforms.append(kwargs)
+
+    def register_tool(self, **kwargs: object) -> None:
+        """保存显式工具注册参数。"""
+
+        self.tools.append(kwargs)
+
+
+def test_root_register_assembles_platform_without_network_or_background_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """根入口只组装工厂，不在注册阶段创建连接或任务。"""
+
+    monkeypatch.setenv("MILKY_BASE_URL", "https://localhost:5500/milky")
+    monkeypatch.setenv("MILKY_ACCESS_TOKEN", "test-token")
+
+    def fail_network(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("注册阶段不应访问网络")
+
+    def fail_task(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("注册阶段不应创建后台任务")
+
+    monkeypatch.setattr(socket, "socket", fail_network)
+    monkeypatch.setattr(asyncio, "create_task", fail_task)
+    entry = _load_root_entry()
+    context = FakePluginContext()
+
+    try:
+        entry.register(context)  # type: ignore[attr-defined]
+        assert len(context.platforms) == 1
+        registration = context.platforms[0]
+        assert registration["name"] == "milky"
+        assert registration["adapter_factory"]
+        assert len(context.tools) == 3
+        adapter = registration["adapter_factory"](SimpleNamespace())
+        assert adapter.__class__.__name__ == "MilkyAdapter"
+    finally:
+        for name in list(sys.modules):
+            if name == entry.__name__ or name.startswith(f"{entry.__name__}."):
+                sys.modules.pop(name, None)
