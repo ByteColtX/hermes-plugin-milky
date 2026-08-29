@@ -1,0 +1,12 @@
+{
+  "event_type": "group_join_request",
+  "time": 1700000063,
+  "self_id": 900000001,
+  "data": {
+    "group_id": 700000001,
+    "notification_seq": 2001,
+    "is_filtered": false,
+    "initiator_id": 800000005,
+    "comment": "合成入群请求"
+  }
+}

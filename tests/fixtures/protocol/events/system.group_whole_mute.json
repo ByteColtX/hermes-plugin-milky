@@ -1,0 +1,10 @@
+{
+  "event_type": "group_whole_mute",
+  "time": 1700000068,
+  "self_id": 900000001,
+  "data": {
+    "group_id": 700000001,
+    "operator_id": 800000002,
+    "is_mute": true
+  }
+}

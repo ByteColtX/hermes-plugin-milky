@@ -1,0 +1,11 @@
+{
+  "event_type": "friend_request",
+  "time": 1700000062,
+  "self_id": 900000001,
+  "data": {
+    "initiator_id": 800000005,
+    "initiator_uid": "fixture-uid",
+    "comment": "合成请求",
+    "via": "fixture"
+  }
+}

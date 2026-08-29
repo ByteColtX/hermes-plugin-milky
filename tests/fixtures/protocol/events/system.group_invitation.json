@@ -1,0 +1,11 @@
+{
+  "event_type": "group_invitation",
+  "time": 1700000064,
+  "self_id": 900000001,
+  "data": {
+    "group_id": 700000001,
+    "invitation_seq": 2002,
+    "initiator_id": 800000005,
+    "source_group_id": null
+  }
+}

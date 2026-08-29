@@ -1,0 +1,117 @@
+{
+  "event_type": "message_receive",
+  "time": 1700000020,
+  "self_id": 900000001,
+  "data": {
+    "message_scene": "group",
+    "peer_id": 700000001,
+    "message_seq": 1002,
+    "sender_id": 800000002,
+    "time": 1700000020,
+    "segments": [
+      {"type": "text", "data": {"text": "中性文本"}},
+      {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+      {"type": "mention_all", "data": {}},
+      {"type": "face", "data": {"face_id": "fixture-face", "is_large": false}},
+      {
+        "type": "reply",
+        "data": {
+          "message_seq": 1000,
+          "sender_id": 800000003,
+          "sender_name": "合成回复者",
+          "time": 1700000005,
+          "segments": [{"type": "text", "data": {"text": "被引用的中性内容"}}]
+        }
+      },
+      {
+        "type": "image",
+        "data": {
+          "resource_id": "fixture-image-resource",
+          "temp_url": "",
+          "width": 32,
+          "height": 32,
+          "summary": "[合成图片]",
+          "sub_type": "normal"
+        }
+      },
+      {
+        "type": "record",
+        "data": {"resource_id": "fixture-record-resource", "temp_url": "", "duration": 1}
+      },
+      {
+        "type": "video",
+        "data": {
+          "resource_id": "fixture-video-resource",
+          "temp_url": "",
+          "width": 64,
+          "height": 64,
+          "duration": 2
+        }
+      },
+      {
+        "type": "file",
+        "data": {
+          "file_id": "fixture-file-id",
+          "file_name": "fixture.txt",
+          "file_size": 12,
+          "file_hash": null
+        }
+      },
+      {
+        "type": "forward",
+        "data": {
+          "forward_id": "fixture-forward-id",
+          "title": "合成转发",
+          "preview": ["预览内容"],
+          "summary": "一条中性转发摘要"
+        }
+      },
+      {
+        "type": "market_face",
+        "data": {
+          "emoji_package_id": 1,
+          "emoji_id": "fixture-emoji-id",
+          "key": "fixture-emoji-key",
+          "summary": "[合成市场表情]",
+          "url": ""
+        }
+      },
+      {
+        "type": "light_app",
+        "data": {"app_name": "合成小程序", "json_payload": "{}"}
+      },
+      {
+        "type": "xml",
+        "data": {"service_id": 1, "xml_payload": "<fixture/>"}
+      },
+      {
+        "type": "markdown",
+        "data": {"content": "### 中性内容"}
+      }
+    ],
+    "group": {
+      "group_id": 700000001,
+      "group_name": "合成群组",
+      "member_count": 3,
+      "max_member_count": 100,
+      "remark": "fixture",
+      "created_time": 1700000000,
+      "description": "中性测试群",
+      "question": "",
+      "announcement": ""
+    },
+    "group_member": {
+      "user_id": 800000002,
+      "nickname": "合成成员",
+      "sex": "unknown",
+      "group_id": 700000001,
+      "card": "合成名片",
+      "title": "",
+      "level": 1,
+      "role": "member",
+      "join_time": 1700000000,
+      "last_sent_time": 1700000010,
+      "shut_up_end_time": null
+    }
+  }
+}

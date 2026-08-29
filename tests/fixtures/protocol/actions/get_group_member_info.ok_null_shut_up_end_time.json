@@ -1,0 +1,19 @@
+{
+  "status": "ok",
+  "retcode": 0,
+  "data": {
+    "member": {
+      "user_id": 900000001,
+      "nickname": "合成机器人",
+      "sex": "unknown",
+      "group_id": 700000001,
+      "card": "",
+      "title": "",
+      "level": 1,
+      "role": "member",
+      "join_time": 1700000000,
+      "last_sent_time": 1700000001,
+      "shut_up_end_time": null
+    }
+  }
+}

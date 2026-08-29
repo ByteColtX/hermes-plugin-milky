@@ -1,0 +1,21 @@
+{
+  "event_type": "message_receive",
+  "time": 1700000030,
+  "self_id": 900000001,
+  "data": {
+    "message_scene": "temp",
+    "peer_id": 800000004,
+    "message_seq": 1003,
+    "sender_id": 800000004,
+    "time": 1700000030,
+    "segments": [
+      {
+        "type": "text",
+        "data": {
+          "text": "临时会话"
+        }
+      }
+    ],
+    "group": null
+  }
+}

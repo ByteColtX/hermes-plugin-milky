@@ -1,0 +1,39 @@
+{
+  "event_type": "message_receive",
+  "time": 1700000040,
+  "self_id": 900000001,
+  "data": {
+    "message_scene": "group",
+    "peer_id": 700000001,
+    "message_seq": 1004,
+    "sender_id": 800000002,
+    "time": 1700000040,
+    "segments": [
+      {"type": "text", "data": {"text": "保留文本"}},
+      {"type": "future_segment_extension", "data": {"opaque": "仅供诊断"}}
+    ],
+    "group": {
+      "group_id": 700000001,
+      "group_name": "合成群组",
+      "member_count": 3,
+      "max_member_count": 100,
+      "remark": "fixture",
+      "created_time": 1700000000,
+      "description": "中性测试群",
+      "question": "",
+      "announcement": ""
+    },
+    "group_member": {
+      "user_id": 800000002,
+      "nickname": "合成成员",
+      "sex": "unknown",
+      "group_id": 700000001,
+      "card": "合成名片",
+      "title": "",
+      "level": 1,
+      "role": "member",
+      "join_time": 1700000000,
+      "last_sent_time": 1700000010
+    }
+  }
+}

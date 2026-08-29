@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "classification_vocabulary": [
+    "accepted",
+    "ignored_temp",
+    "observe_only",
+    "malformed",
+    "protocol_rejected"
+  ],
+  "fixtures": [
+    {"path": "actions/get_login_info.ok.json", "classification": "accepted", "assertions": ["data.uin"]},
+    {"path": "actions/get_group_list.ok.json", "classification": "accepted", "assertions": ["data.groups"]},
+    {"path": "actions/get_group_member_info.ok_omits_shut_up_end_time.json", "classification": "accepted", "assertions": ["data.member", "optional.shut_up_end_time"]},
+    {"path": "actions/get_group_member_info.ok_null_shut_up_end_time.json", "classification": "accepted", "assertions": ["data.member.shut_up_end_time=null"]},
+    {"path": "actions/get_login_info.malformed_missing_uin.json", "classification": "malformed", "assertions": ["missing.data.uin"]},
+    {"path": "actions/get_group_list.malformed_groups_type.json", "classification": "malformed", "assertions": ["data.groups.object_not_array"]},
+    {"path": "actions/get_group_member_info.protocol_rejected.json", "classification": "protocol_rejected", "assertions": ["status=failed", "retcode!=0"]},
+    {"path": "events/message_receive.friend.json", "classification": "accepted", "assertions": ["friend", "text"]},
+    {"path": "events/message_receive.group.all_segments.json", "classification": "accepted", "assertions": ["group", "14_known_segments", "inline_reply", "forward_id"]},
+    {"path": "events/message_receive.temp.json", "classification": "ignored_temp", "assertions": ["no_chat_key", "no_canonical"]},
+    {"path": "events/message_receive.group.unknown_extension.json", "classification": "accepted", "tags": ["unknown_extension", "raw_only"]},
+    {"path": "events/message_receive.malformed_missing_sender.json", "classification": "malformed", "assertions": ["missing.data.sender_id"]},
+    {"path": "events/system.bot_offline.json", "classification": "observe_only"},
+    {"path": "events/system.message_recall.json", "classification": "observe_only"},
+    {"path": "events/system.friend_request.json", "classification": "observe_only"},
+    {"path": "events/system.group_join_request.json", "classification": "observe_only"},
+    {"path": "events/system.group_invitation.json", "classification": "observe_only"},
+    {"path": "events/system.friend_nudge.json", "classification": "observe_only"},
+    {"path": "events/system.group_nudge.json", "classification": "observe_only"},
+    {"path": "events/system.group_mute.json", "classification": "observe_only"},
+    {"path": "events/system.group_whole_mute.json", "classification": "observe_only"},
+    {"path": "events/system.group_file_upload.json", "classification": "observe_only"},
+    {"path": "events/system.group_admin_change.json", "classification": "observe_only"},
+    {"path": "events/unknown.event_extension.json", "classification": "observe_only", "tags": ["unknown_extension", "raw_only"]},
+    {"path": "sse/message_receive.multiline.sse", "classification": "accepted", "assertions": ["outer.milky_event", "inner.message_receive", "two_data_lines"]},
+    {"path": "sse/system-and-unknown.sse", "classification": "observe_only", "assertions": ["outer.milky_event", "unknown_continues"]},
+    {"path": "sse/malformed-then-valid.sse", "classification": "malformed", "assertions": ["first_frame_malformed", "later_frame_observable"]}
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "event_type": "friend_nudge",
+  "time": 1700000065,
+  "self_id": 900000001,
+  "data": {
+    "user_id": 800000001,
+    "is_self_send": false,
+    "is_self_receive": true,
+    "display_action": "戳一戳",
+    "display_suffix": "（合成）",
+    "display_action_img_url": ""
+  }
+}

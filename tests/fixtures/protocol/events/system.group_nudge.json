@@ -1,0 +1,13 @@
+{
+  "event_type": "group_nudge",
+  "time": 1700000066,
+  "self_id": 900000001,
+  "data": {
+    "group_id": 700000001,
+    "sender_id": 800000002,
+    "receiver_id": 900000001,
+    "display_action": "戳一戳",
+    "display_suffix": "（合成）",
+    "display_action_img_url": ""
+  }
+}

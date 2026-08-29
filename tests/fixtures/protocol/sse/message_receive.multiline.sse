@@ -1,0 +1,3 @@
+event: milky_event
+data: {"event_type":"message_receive","time":1700000010,
+data: "self_id":900000001,"data":{"message_scene":"friend","peer_id":800000001,"message_seq":1001,"sender_id":800000001,"time":1700000010,"segments":[{"type":"text","data":{"text":"朋友消息"}}],"friend":{"user_id":800000001,"nickname":"合成好友","sex":"unknown","qid":"fixture-qid","remark":"fixture","category":{"category_id":1,"category_name":"合成分组"}}}}

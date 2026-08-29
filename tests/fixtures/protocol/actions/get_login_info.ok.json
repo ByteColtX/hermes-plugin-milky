@@ -1,0 +1,9 @@
+{
+  "status": "ok",
+  "retcode": 0,
+  "data": {
+    "uin": 900000001,
+    "nickname": "合成机器人",
+    "fixture_extension": "保留但不解释"
+  }
+}

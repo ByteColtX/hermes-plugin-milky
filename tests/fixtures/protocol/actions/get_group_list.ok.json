@@ -1,0 +1,20 @@
+{
+  "status": "ok",
+  "retcode": 0,
+  "data": {
+    "groups": [
+      {
+        "group_id": 700000001,
+        "group_name": "合成群组",
+        "member_count": 3,
+        "max_member_count": 100,
+        "remark": "fixture",
+        "created_time": 1700000000,
+        "description": "中性测试群",
+        "question": "",
+        "announcement": ""
+      }
+    ],
+    "fixture_extension": true
+  }
+}

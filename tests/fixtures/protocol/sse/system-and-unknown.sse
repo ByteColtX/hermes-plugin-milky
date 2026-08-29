@@ -1,0 +1,5 @@
+event: milky_event
+data: {"event_type":"future_event_extension","time":1700000071,"self_id":900000001,"data":{"opaque":"仅供诊断"}}
+
+event: milky_event
+data: {"event_type":"bot_offline","time":1700000060,"self_id":900000001,"data":{"reason":"合成断线"}}

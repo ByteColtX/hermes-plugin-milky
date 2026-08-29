@@ -1,0 +1,6 @@
+{
+  "event_type": "bot_offline",
+  "time": 1700000060,
+  "self_id": 900000001,
+  "data": {"reason": "合成断线"}
+}
