@@ -191,6 +191,64 @@ async def _call_message_resource_uploads(client: MilkyClient) -> tuple[str, str]
     return group_result.message_id, private_result.message_id
 
 
+def test_file_download_methods_use_scene_specific_actions_and_fields() -> None:
+    """入站 group/private file 必须使用各自确认的下载 Action。"""
+
+    transport = FakeTransport(
+        [
+            response(ok({"download_url": ""})),
+            response(ok({"download_url": ""})),
+        ]
+    )
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    asyncio.run(_call_file_download_methods(client))
+
+    assert [request["url"].rsplit("/", 1)[-1] for request in transport.requests] == [
+        "get_group_file_download_url",
+        "get_private_file_download_url",
+    ]
+    assert transport.requests[0]["body"] == {
+        "group_id": 700000001,
+        "file_id": "fixture-group-file",
+    }
+    assert transport.requests[1]["body"] == {
+        "user_id": 800000001,
+        "file_id": "fixture-private-file",
+        "file_hash": "fixture-hash",
+    }
+
+
+async def _call_file_download_methods(client: MilkyClient) -> None:
+    """调用两类文件下载 Action。"""
+
+    await client.get_group_file_download_url(700000001, "fixture-group-file")
+    await client.get_private_file_download_url(800000001, "fixture-private-file", "fixture-hash")
+
+
+@pytest.mark.parametrize(
+    "method_args",
+    [
+        ("get_group_file_download_url", ("700000001:2", "fixture-file")),
+        ("get_private_file_download_url", (800000001, "fixture-file", "")),
+    ],
+)
+def test_file_download_parameters_are_validated_before_network(
+    method_args: tuple[str, tuple[object, ...]],
+) -> None:
+    """文件 Action 的目标、ID 和 hash 非法时不得访问网络。"""
+
+    method_name, args = method_args
+    transport = FakeTransport([])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(getattr(client, method_name)(*args))
+
+    assert error_info.value.classification == "invalid_input"
+    assert transport.requests == []
+
+
 @pytest.mark.parametrize("classification", ["rejected", "malformed"])
 def test_protocol_and_message_shape_errors_are_classified(classification: str) -> None:
     """协议拒绝和发送数据缺失必须分别分类，不能假成功。"""

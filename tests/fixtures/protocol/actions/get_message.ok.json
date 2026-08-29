@@ -1,0 +1,15 @@
+{
+  "status": "ok",
+  "retcode": 0,
+  "data": {
+    "message": {
+      "time": 1700000007,
+      "sender_id": 800000005,
+      "sender_name": "合成回复者",
+      "message_seq": 1005,
+      "segments": [
+        {"type": "text", "data": {"text": "远端回复中的中性内容"}}
+      ]
+    }
+  }
+}

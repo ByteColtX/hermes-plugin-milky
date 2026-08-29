@@ -264,6 +264,33 @@ class MilkyClient:
             {"resource_id": _validate_text(resource_id, "resource_id", "get_resource_temp_url")},
         )
 
+    async def get_group_file_download_url(self, group_id: object, file_id: object) -> MilkyEnvelope:
+        """按群号和文件 ID 查询群文件下载地址。"""
+
+        return await self.call(
+            "get_group_file_download_url",
+            {
+                "group_id": _validate_id(group_id, "group_id", "get_group_file_download_url"),
+                "file_id": _validate_text(file_id, "file_id", "get_group_file_download_url"),
+            },
+        )
+
+    async def get_private_file_download_url(
+        self, user_id: object, file_id: object, file_hash: object
+    ) -> MilkyEnvelope:
+        """按用户号、文件 ID 和 hash 查询私聊文件下载地址。"""
+
+        return await self.call(
+            "get_private_file_download_url",
+            {
+                "user_id": _validate_id(user_id, "user_id", "get_private_file_download_url"),
+                "file_id": _validate_text(file_id, "file_id", "get_private_file_download_url"),
+                "file_hash": _validate_text(
+                    file_hash, "file_hash", "get_private_file_download_url"
+                ),
+            },
+        )
+
     async def upload_group_file(
         self, group_id: object, file: object, name: object
     ) -> MilkyEnvelope:

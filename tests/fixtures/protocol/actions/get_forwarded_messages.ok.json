@@ -1,0 +1,17 @@
+{
+  "status": "ok",
+  "retcode": 0,
+  "data": {
+    "messages": [
+      {
+        "time": 1700000006,
+        "sender_id": 800000004,
+        "sender_name": "合成转发者",
+        "message_seq": 1004,
+        "segments": [
+          {"type": "text", "data": {"text": "转发中的中性内容"}}
+        ]
+      }
+    ]
+  }
+}
