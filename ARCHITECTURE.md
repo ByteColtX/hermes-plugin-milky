@@ -309,6 +309,12 @@ wait 阶段只保留资源引用，不下载。trigger 阶段才允许查询图�
 - 未实现的编辑、撤回、reaction 等能力返回 `unsupported`；
 - 结果区分 `rejected`、`transport_unknown`、`malformed` 和 `unsupported`。
 
+Agent 的普通文本可以使用受限的 CQ-compatible 语法表达模型选择的 `at` 和 `reply`。
+这只是出站适配层的文本解析约定：确认有 Milky native segment 映射时才生成 native
+segment，其他类型逐片段原样生成 text fallback；生成的请求仍严格使用 Milky wire
+protocol。该约定不实现 OneBot CQ 入站、OneBot Action、echo 或 WebSocket RPC，也不改变
+Milky 的能力声明。
+
 v0.1 只允许显式设计的 Agent 工具。工具必须独立校验类型、范围和目标，再调用同一个
 Milky client；入站正文、mention 或 Will 分数不能赋予工具权限。
 
@@ -371,10 +377,11 @@ smoke 只能从运行时环境读取凭证。新增行为先补 OpenSpec 对应�
 
 ## 14. 非目标和扩展边界
 
-v0.1 不复制 OneBot v11 的 Action、CQ 码、echo 或 WebSocket 回包模型；不实现 WebHook，
-不注册任意 Action catalog，不管理插件自己的媒体缓存，也不处理 temp 会话。standalone
-cron 目前只承诺无 thread 的文本/已格式化内容投递；缺少 Hermes 安全附件 seam 时不做
-独立媒体或文件投递。
+v0.1 不复制 OneBot v11 的 Action、CQ 入站协议、echo 或 WebSocket 回包模型；仅允许
+第 10 节所述 Agent 出站层的 CQ-compatible 文本解析例外。该例外不改变 Milky wire
+protocol 或 OneBot 能力声明。不实现 WebHook，不注册任意 Action catalog，不管理插件自己的
+媒体缓存，也不处理 temp 会话。standalone cron 目前只承诺无 thread 的文本/已格式化内容
+投递；缺少 Hermes 安全附件 seam 时不做独立媒体或文件投递。
 
 WebSocket fallback 和更多 Agent 工具必须先通过独立 OpenSpec 契约、Hermes 扩展点确认和
 测试，再加入本架构。

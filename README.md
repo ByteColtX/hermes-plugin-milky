@@ -41,6 +41,23 @@ home channel 的网关 live 投递和无附件 standalone 文本投递已接入 
 Hermes 安全附件 seam 的 standalone 媒体/文件、WebHook、WebSocket fallback、任意
 Action catalog 和其他未声明能力仍保持 `unsupported`。
 
+### 模型可控 QQ 消息
+
+普通 Agent 文本支持受限的 CQ-compatible 出站语法：
+
+- `[CQ:at,qq=<uid>]` 转换为 Milky `mention` segment；
+- `[CQ:reply,id=<msg_id>]` 转换为 Milky `reply` segment；
+- 未确认映射、未知类型、参数错误或转换失败的 CQ 片段会原样作为 text fallback
+  继续发送；fallback 不表示对应 QQ 语义已经执行；
+- 默认不会自动 @ 用户或引用当前消息，Hermes 的隐式 `reply_to` 会被忽略。`uid` 和
+  `msg_id` 只能复制当前消息或 `channel_context` 消息头中的真实值，不能从昵称或正文
+  猜测。
+
+需要完整 NapCat CQ 类型矩阵和三个显式 QQ ToolSpec 的参数边界时，按需加载插件命名空间
+skill：`hermes-plugin-milky:qq-reference`。该 skill 是只读参考资料，不注册额外工具；
+实际 ToolSpec 和 Milky native conversion 才决定可执行能力。CQ-compatible 语法只存在于
+Agent 出站适配层，不代表 OneBot 或 Milky 任意 Action 兼容。
+
 ## 配置指南
 
 ### Milky 插件环境变量

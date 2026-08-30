@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
+from html import unescape
 from typing import Any
 
 _MIN_QQ_ID = 10001
@@ -22,6 +24,39 @@ _SEGMENT_TYPES = frozenset(
         "light_app",
     }
 )
+_CQ_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+_CQ_KEY_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+_CQ_TYPES = (
+    "text",
+    "face",
+    "image",
+    "record",
+    "video",
+    "at",
+    "rps",
+    "dice",
+    "shake",
+    "poke",
+    "share",
+    "contact",
+    "location",
+    "music",
+    "reply",
+    "forward",
+    "node",
+    "json",
+    "mface",
+    "file",
+    "markdown",
+    "lightapp",
+    "anonymous",
+    "redbag",
+    "gift",
+    "cardimage",
+    "tts",
+    "xml",
+)
+CQ_TYPES = frozenset(_CQ_TYPES)
 
 
 class OutboundFormatError(ValueError):
@@ -31,6 +66,77 @@ class OutboundFormatError(ValueError):
         self.classification = classification
         self.reason = reason
         super().__init__(f"{classification}: {reason}")
+
+
+class _CqConversionError(ValueError):
+    """表示单个 CQ 片段不能安全转换。"""
+
+
+class _CqCode:
+    """保存已经通过边界解析的 CQ 片段。"""
+
+    __slots__ = ("name", "parameters", "raw")
+
+    def __init__(self, name: str, parameters: dict[str, str], raw: str) -> None:
+        self.name = name
+        self.parameters = parameters
+        self.raw = raw
+
+
+def parse_cq_code(raw: object) -> tuple[str, dict[str, str]] | None:
+    """解析一个完整 CQ 片段，并解码参数而不改变 fallback 原文。"""
+
+    if not isinstance(raw, str) or not raw.startswith("[CQ:") or not raw.endswith("]"):
+        return None
+    body = raw[4:-1]
+    if not body:
+        return None
+    name, separator, parameter_text = body.partition(",")
+    if _CQ_NAME_PATTERN.fullmatch(name) is None:
+        return None
+    if not separator:
+        return name.lower(), {}
+    if not parameter_text:
+        return None
+
+    parameters: dict[str, str] = {}
+    for field in parameter_text.split(","):
+        key, equals, value = field.partition("=")
+        if not equals or _CQ_KEY_PATTERN.fullmatch(key) is None or key in parameters:
+            return None
+        if "[" in value or "]" in value:
+            return None
+        parameters[key] = _decode_cq_value(value)
+    return name.lower(), parameters
+
+
+def format_cq_message(content: str) -> list[dict[str, Any]]:
+    """把 CQ-compatible 文本逐片段转换为 Milky segments。"""
+
+    if not isinstance(content, str):
+        raise OutboundFormatError("invalid_input", "message must be text")
+    segments: list[dict[str, Any]] = []
+    position = 0
+    while position < len(content):
+        start = content.find("[CQ:", position)
+        if start < 0:
+            _append_text(segments, content[position:])
+            break
+        _append_text(segments, content[position:start])
+        end = content.find("]", start + 4)
+        if end < 0:
+            _append_text(segments, content[start:])
+            break
+        raw = content[start : end + 1]
+        parsed = parse_cq_code(raw)
+        if parsed is None:
+            _append_text(segments, raw)
+        else:
+            name, parameters = parsed
+            converted = _convert_cq_code(_CqCode(name, parameters, raw))
+            segments.append(converted)
+        position = end + 1
+    return segments
 
 
 def text_segment(text: object) -> dict[str, Any]:
@@ -148,6 +254,157 @@ def light_app_segment(json_payload: object) -> dict[str, Any]:
     }
 
 
+def _convert_cq_code(code: _CqCode) -> dict[str, Any]:
+    """转换单个 CQ 片段，失败时只回退当前原文。"""
+
+    converter = CQ_TYPE_REGISTRY.get(code.name)
+    if converter is None:
+        return text_segment(code.raw)
+    try:
+        converted = converter(code.parameters)
+        if converted is None:
+            return text_segment(code.raw)
+        return format_segment(converted)
+    except Exception:  # noqa: BLE001 - 单片段失败必须安全 fallback
+        return text_segment(code.raw)
+
+
+def _append_text(segments: list[dict[str, Any]], value: str) -> None:
+    """追加非空文本片段，并保留其原始空白。"""
+
+    if value:
+        segments.append(text_segment(value))
+
+
+def _decode_cq_value(value: str) -> str:
+    """解码 NapCat CQ 参数中的实体，转换失败仍保留原始控制码。"""
+
+    return unescape(value)
+
+
+def _cq_text(parameters: Mapping[str, str]) -> dict[str, Any]:
+    """转换 CQ text。"""
+
+    _require_cq_fields(parameters, {"text"}, {"text"})
+    if not parameters["text"]:
+        raise _CqConversionError("text is empty")
+    return text_segment(parameters["text"])
+
+
+def _cq_face(parameters: Mapping[str, str]) -> dict[str, Any]:
+    """转换 CQ face。"""
+
+    _require_cq_fields(parameters, {"id", "large"}, {"id"})
+    face_id = _cq_safe_integer(parameters["id"], maximum=_MAX_SAFE_INTEGER)
+    large = None
+    if "large" in parameters:
+        if parameters["large"] not in {"0", "1"}:
+            raise _CqConversionError("large is invalid")
+        large = parameters["large"] == "1"
+    return face_segment(str(face_id), is_large=large)
+
+
+def _cq_image(parameters: Mapping[str, str]) -> dict[str, Any]:
+    """转换 CQ image；只接受 Milky 已确认的图片子类型。"""
+
+    _require_cq_fields(parameters, {"file", "type", "summary"}, {"file"})
+    sub_type = parameters.get("type")
+    if sub_type is not None and sub_type not in {"normal", "sticker"}:
+        raise _CqConversionError("image type is unsupported")
+    return image_segment(
+        parameters["file"],
+        sub_type=sub_type,
+        summary=parameters.get("summary"),
+    )
+
+
+def _cq_record(parameters: Mapping[str, str]) -> dict[str, Any]:
+    """转换 CQ record。"""
+
+    _require_cq_fields(parameters, {"file"}, {"file"})
+    return record_segment(parameters["file"])
+
+
+def _cq_video(parameters: Mapping[str, str]) -> dict[str, Any]:
+    """转换 CQ video。"""
+
+    _require_cq_fields(parameters, {"file"}, {"file"})
+    return video_segment(parameters["file"])
+
+
+def _cq_at(parameters: Mapping[str, str]) -> dict[str, Any]:
+    """转换 CQ at；all 保持 fallback，避免猜测 Milky 等价语义。"""
+
+    _require_cq_fields(parameters, {"qq", "text"}, {"qq"})
+    if parameters["qq"] == "all":
+        raise _CqConversionError("all mention has no confirmed mapping")
+    return mention_segment(_cq_safe_integer(parameters["qq"], maximum=_MAX_QQ_ID))
+
+
+def _cq_reply(parameters: Mapping[str, str]) -> dict[str, Any]:
+    """转换 CQ reply。"""
+
+    _require_cq_fields(parameters, {"id", "text", "seq"}, {"id"})
+    return reply_segment(_cq_safe_integer(parameters["id"], maximum=_MAX_SAFE_INTEGER))
+
+
+def _require_cq_fields(
+    parameters: Mapping[str, str], allowed: set[str], required: set[str]
+) -> None:
+    """校验 CQ 转换器支持的字段集合。"""
+
+    if set(parameters) - allowed or required - set(parameters):
+        raise _CqConversionError("CQ fields are invalid")
+    for field in required:
+        if not parameters[field].strip():
+            raise _CqConversionError("CQ field is empty")
+
+
+def _cq_safe_integer(value: object, *, maximum: int) -> int:
+    """校验 CQ 中的无前导零十进制 ID。"""
+
+    if not isinstance(value, str) or (value != "0" and value.startswith("0")):
+        raise _CqConversionError("CQ integer is invalid")
+    if not value.isdecimal():
+        raise _CqConversionError("CQ integer is invalid")
+    converted = int(value)
+    if converted > maximum:
+        raise _CqConversionError("CQ integer is out of range")
+    return converted
+
+
+CQ_TYPE_REGISTRY: dict[str, Any] = {
+    "text": _cq_text,
+    "face": _cq_face,
+    "image": _cq_image,
+    "record": _cq_record,
+    "video": _cq_video,
+    "at": _cq_at,
+    "rps": None,
+    "dice": None,
+    "shake": None,
+    "poke": None,
+    "share": None,
+    "contact": None,
+    "location": None,
+    "music": None,
+    "reply": _cq_reply,
+    "forward": None,
+    "node": None,
+    "json": None,
+    "mface": None,
+    "file": None,
+    "markdown": None,
+    "lightapp": None,
+    "anonymous": None,
+    "redbag": None,
+    "gift": None,
+    "cardimage": None,
+    "tts": None,
+    "xml": None,
+}
+
+
 def format_message(
     content: object,
     *,
@@ -155,24 +412,35 @@ def format_message(
 ) -> list[dict[str, Any]]:
     """把文本或 outgoing segment 序列格式化为可发送的 segment 列表。"""
 
+    del reply_to
     if isinstance(content, str):
         if not content.strip():
             raise OutboundFormatError("invalid_input", "message is blank")
-        segments = [text_segment(content)]
+        segments = format_cq_message(content)
     elif isinstance(content, Mapping):
-        segments = [format_segment(content)]
+        segments = _format_message_segment(content)
     elif isinstance(content, Sequence) and not isinstance(content, (bytes, bytearray)):
-        segments = [format_segment(segment) for segment in content]
+        segments = []
+        for segment in content:
+            segments.extend(_format_message_segment(segment))
         if not segments:
             raise OutboundFormatError("invalid_input", "message is empty")
-        if not _contains_visible_content(segments):
-            raise OutboundFormatError("invalid_input", "message is blank")
     else:
         raise OutboundFormatError("invalid_input", "message must be text or segments")
 
-    if reply_to is not None:
-        segments.insert(0, reply_segment(reply_to))
+    if not segments or not _contains_visible_content(segments):
+        raise OutboundFormatError("invalid_input", "message is blank")
+
     return segments
+
+
+def _format_message_segment(segment: object) -> list[dict[str, Any]]:
+    """格式化结构化消息，并展开其中的 CQ-compatible text。"""
+
+    formatted = format_segment(segment)
+    if formatted["type"] != "text":
+        return [formatted]
+    return format_cq_message(formatted["data"]["text"])
 
 
 def format_segments(content: object, *, reply_to: object = None) -> list[dict[str, Any]]:
@@ -325,8 +593,11 @@ def _integer(
 
 
 __all__ = [
+    "CQ_TYPES",
+    "CQ_TYPE_REGISTRY",
     "OutboundFormatError",
     "face_segment",
+    "format_cq_message",
     "format_message",
     "format_segment",
     "format_segments",
@@ -335,6 +606,7 @@ __all__ = [
     "light_app_segment",
     "mention_all_segment",
     "mention_segment",
+    "parse_cq_code",
     "record_segment",
     "reply_segment",
     "text_segment",

@@ -239,8 +239,8 @@ def test_sender_routes_group_and_dm_and_uses_remote_message_sequence() -> None:
     assert client.calls[0][1]["message"] == [{"type": "text", "data": {"text": "群消息"}}]
 
 
-def test_sender_integrates_structured_media_segments_and_reply() -> None:
-    """媒体、caption 和 reply 应在同一个 Milky message body 中保持顺序。"""
+def test_sender_integrates_structured_media_segments_without_implicit_reply() -> None:
+    """媒体和 caption 应保持顺序，Hermes 隐式 reply 不应进入消息。"""
 
     client = FakeOutboundClient([1101])
     sender = MilkyOutboundSender(client)
@@ -256,9 +256,69 @@ def test_sender_integrates_structured_media_segments_and_reply() -> None:
 
     assert result.success is True
     assert client.calls[0][1]["message"] == [
-        {"type": "reply", "data": {"message_seq": 1005}},
         {"type": "text", "data": {"text": "图片说明"}},
         {"type": "image", "data": {"uri": "https://media.example/image"}},
+    ]
+
+
+def test_sender_converts_explicit_cq_controls_for_group_and_dm() -> None:
+    """group 和 dm 请求都应使用模型显式选择的 native segment。"""
+
+    client = FakeOutboundClient([1102, 1103])
+    sender = MilkyOutboundSender(client)
+
+    group_result = asyncio.run(
+        sender.send(
+            "group:700000001",
+            "[CQ:reply,id=9001][CQ:at,qq=10001]群答复",
+            reply_to="9002",
+        )
+    )
+    dm_result = asyncio.run(
+        sender.send("dm:800000001", "[CQ:at,qq=10002]私聊答复", reply_to="9003")
+    )
+
+    assert group_result.message_id == "1102"
+    assert dm_result.message_id == "1103"
+    assert client.calls[0] == (
+        "send_group_message",
+        {
+            "group_id": 700000001,
+            "message": [
+                {"type": "reply", "data": {"message_seq": 9001}},
+                {"type": "mention", "data": {"user_id": 10001}},
+                {"type": "text", "data": {"text": "群答复"}},
+            ],
+        },
+    )
+    assert client.calls[1] == (
+        "send_private_message",
+        {
+            "user_id": 800000001,
+            "message": [
+                {"type": "mention", "data": {"user_id": 10002}},
+                {"type": "text", "data": {"text": "私聊答复"}},
+            ],
+        },
+    )
+
+
+def test_sender_keeps_cq_fallback_and_sends_once_on_remote_failure() -> None:
+    """CQ fallback 只改变 body，远端失败仍只调用一次 send。"""
+
+    client = FakeOutboundClient(
+        error=ActionError("transport_unknown", "send_group_message", "unknown")
+    )
+    sender = MilkyOutboundSender(client)
+
+    result = asyncio.run(sender.send("group:700000001", "前[CQ:future,x=y]后"))
+
+    assert result.error_kind == "transport_unknown"
+    assert len(client.calls) == 1
+    assert client.calls[0][1]["message"] == [
+        {"type": "text", "data": {"text": "前"}},
+        {"type": "text", "data": {"text": "[CQ:future,x=y]"}},
+        {"type": "text", "data": {"text": "后"}},
     ]
 
 

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -94,6 +95,142 @@ def test_import_and_register_do_not_start_network_or_background_work(monkeypatch
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
                 sys.modules.pop(name, None)
+
+
+class SkillAndPlatformContext:
+    """捕获 bundled skill 和 platform 注册，不执行外部动作。"""
+
+    def __init__(self) -> None:
+        self.skills: list[tuple[str, Path]] = []
+        self.platforms: list[dict[str, Any]] = []
+
+    def register_skill(self, name: str, path: Path) -> None:
+        self.skills.append((name, path))
+
+    def register_platform(self, **kwargs: Any) -> None:
+        self.platforms.append(kwargs)
+
+
+def test_root_registers_read_only_qq_skill_and_stable_platform_hint(monkeypatch) -> None:
+    """根入口应登记插件 skill，并只提供不含逐轮身份的基础提示。"""
+
+    set_valid_environment(monkeypatch)
+    entry, module_name = load_plugin_entry()
+    try:
+        context = SkillAndPlatformContext()
+        entry.register(context)
+
+        assert len(context.skills) == 1
+        skill_name, skill_path = context.skills[0]
+        assert skill_name == "qq-reference"
+        assert skill_path == PROJECT_ROOT / "skills" / "qq-reference" / "SKILL.md"
+        assert skill_path.is_file()
+
+        hint = context.platforms[0]["platform_hint"]
+        assert "[CQ:at,qq=<uid>]" in hint
+        assert "[CQ:reply,id=<msg_id>]" in hint
+        assert "默认不要自动 @ 用户" in hint
+        assert "不要自动引用当前消息" in hint
+        assert "hermes-plugin-milky:qq-reference" in hint
+        assert "101" not in hint
+        assert "9001" not in hint
+        assert "MILKY_ACCESS_TOKEN" not in hint
+        assert "https://" not in hint
+    finally:
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(f"{module_name}."):
+                sys.modules.pop(name, None)
+
+
+def test_bundled_skill_registration_is_optional_when_host_has_no_api(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """缺失 skill 文件或旧宿主 API 不应阻止平台注册。"""
+
+    set_valid_environment(monkeypatch)
+    entry, module_name = load_plugin_entry()
+    try:
+        monkeypatch.setattr(entry, "_PLUGIN_ROOT", str(tmp_path))
+        context = SkillAndPlatformContext()
+        entry._register_bundled_skill(context)
+        assert context.skills == []
+
+        class LegacyContext:
+            """没有 register_skill 的旧宿主上下文。"""
+
+        entry._register_bundled_skill(LegacyContext())
+    finally:
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(f"{module_name}."):
+                sys.modules.pop(name, None)
+
+
+def test_bundled_skill_uses_host_namespace_and_does_not_overwrite_siblings() -> None:
+    """skill 注册只提交裸名，由宿主生成插件命名空间并隔离同名项。"""
+
+    class NamespacedSkillContext:
+        """模拟宿主命名空间注册边界，不写入用户 skill 目录。"""
+
+        def __init__(self, namespace: str) -> None:
+            self.namespace = namespace
+            self.plugin_skills: dict[str, Path] = {}
+            self.user_skills: dict[str, Path] = {}
+
+        def register_skill(self, name: str, path: Path) -> None:
+            qualified_name = f"{self.namespace}:{name}"
+            self.plugin_skills.setdefault(qualified_name, path)
+
+    milky = NamespacedSkillContext("hermes-plugin-milky")
+    sibling = NamespacedSkillContext("another-plugin")
+    milky.register_skill("qq-reference", PROJECT_ROOT / "skills" / "qq-reference" / "SKILL.md")
+    sibling.register_skill("qq-reference", PROJECT_ROOT / "skills" / "qq-reference" / "SKILL.md")
+
+    assert set(milky.plugin_skills) == {"hermes-plugin-milky:qq-reference"}
+    assert set(sibling.plugin_skills) == {"another-plugin:qq-reference"}
+    assert milky.user_skills == {}
+    assert sibling.user_skills == {}
+
+
+def test_qq_reference_skill_is_namespaced_read_only_and_does_not_add_tools() -> None:
+    """skill 内容应声明命名空间和只读边界，工具仍只有 manifest 中的三项。"""
+
+    skill = (PROJECT_ROOT / "skills" / "qq-reference" / "SKILL.md").read_text(encoding="utf-8")
+    for cq_type in (
+        "text",
+        "face",
+        "image",
+        "record",
+        "video",
+        "at",
+        "rps",
+        "dice",
+        "shake",
+        "poke",
+        "share",
+        "contact",
+        "location",
+        "music",
+        "reply",
+        "forward",
+        "node",
+        "json",
+        "mface",
+        "file",
+        "markdown",
+        "lightapp",
+        "anonymous",
+        "redbag",
+        "gift",
+        "cardimage",
+        "tts",
+        "xml",
+    ):
+        assert f"| `{cq_type}` |" in skill
+    assert "text fallback" in skill
+    assert "不注册、不执行也不扩大工具能力" in skill
+    assert "milky_profile_like" in skill
+    assert "milky_nudge" in skill
+    assert "milky_recall_group_message" in skill
 
 
 def test_register_forwards_context_to_tools_without_implicit_actions(monkeypatch) -> None:

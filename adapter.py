@@ -324,13 +324,14 @@ class MilkyAdapter(BasePlatformAdapter):
     ) -> object:
         """把已连接 adapter 的出站调用委托给统一 sender。"""
 
+        del reply_to
         if not self._connected or self._closed:
             return OutboundSendResult(
                 success=False,
                 error="unsupported: adapter is disconnected",
                 error_kind="unsupported",
             )
-        return await self._outbound.send(chat_id, content, reply_to, metadata)
+        return await self._outbound.send(chat_id, content, None, metadata)
 
     async def send_image(
         self,
@@ -470,8 +471,8 @@ class MilkyAdapter(BasePlatformAdapter):
     ) -> object:
         """一次性发送 Milky 消息，不委托宿主的通用 fallback。"""
 
-        del max_retries, base_delay
-        return await self.send(chat_id, content, reply_to, metadata)
+        del max_retries, base_delay, reply_to
+        return await self.send(chat_id, content, None, metadata)
 
     async def _delegate_outbound(self, method_name: str, *args: object, **kwargs: object) -> object:
         """在不触发宿主 fallback 的前提下调用 sender 方法。"""
