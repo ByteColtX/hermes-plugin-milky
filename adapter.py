@@ -6,7 +6,8 @@ import asyncio
 import inspect
 import logging
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any
 
 from config import MilkyConfig, load_config
 from gates import GateRegistry
@@ -332,6 +333,135 @@ class MilkyAdapter(BasePlatformAdapter):
             )
         return await self._outbound.send(chat_id, content, reply_to, metadata)
 
+    async def send_image(
+        self,
+        chat_id: str,
+        image_url: str,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> object:
+        """通过 Milky image segment 发送远端或本地图片引用。"""
+
+        return await self._delegate_media(
+            "send_image",
+            chat_id=chat_id,
+            image_url=image_url,
+            caption=caption,
+            reply_to=reply_to,
+            metadata=metadata,
+        )
+
+    async def send_image_file(
+        self,
+        chat_id: str,
+        image_path: str,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> object:
+        """通过 Milky image segment 发送本地图片。"""
+
+        return await self._delegate_media(
+            "send_image_file",
+            chat_id=chat_id,
+            image_path=image_path,
+            caption=caption,
+            reply_to=reply_to,
+            metadata=metadata,
+            **kwargs,
+        )
+
+    async def send_animation(
+        self,
+        chat_id: str,
+        animation_url: str,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> object:
+        """通过 Milky image segment 发送动画引用。"""
+
+        return await self._delegate_media(
+            "send_animation",
+            chat_id=chat_id,
+            animation_url=animation_url,
+            caption=caption,
+            reply_to=reply_to,
+            metadata=metadata,
+        )
+
+    async def send_voice(
+        self,
+        chat_id: str,
+        audio_path: str,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> object:
+        """通过 Milky record segment 发送语音引用。"""
+
+        return await self._delegate_media(
+            "send_voice",
+            chat_id=chat_id,
+            audio_path=audio_path,
+            caption=caption,
+            reply_to=reply_to,
+            metadata=metadata,
+            **kwargs,
+        )
+
+    async def send_video(
+        self,
+        chat_id: str,
+        video_path: str,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> object:
+        """通过 Milky video segment 发送视频引用。"""
+
+        return await self._delegate_media(
+            "send_video",
+            chat_id=chat_id,
+            video_path=video_path,
+            caption=caption,
+            reply_to=reply_to,
+            metadata=metadata,
+            **kwargs,
+        )
+
+    async def send_document(
+        self,
+        chat_id: str,
+        file_path: str,
+        caption: str | None = None,
+        file_name: str | None = None,
+        reply_to: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> object:
+        """通过独立 Milky upload Action 发送文档附件。"""
+
+        return await self._delegate_media(
+            "send_document",
+            chat_id=chat_id,
+            file_path=file_path,
+            caption=caption,
+            file_name=file_name,
+            reply_to=reply_to,
+            metadata=metadata,
+            **kwargs,
+        )
+
+    async def send_file(self, *args: Any, **kwargs: Any) -> object:
+        """兼容 Hermes 旧式文件入口并保持独立上传边界。"""
+
+        return await self._delegate_media("send_file", *args, **kwargs)
+
     async def _send_with_retry(
         self,
         chat_id: str,
@@ -345,6 +475,27 @@ class MilkyAdapter(BasePlatformAdapter):
 
         del max_retries, base_delay
         return await self.send(chat_id, content, reply_to, metadata)
+
+    async def _delegate_media(self, method_name: str, *args: Any, **kwargs: Any) -> object:
+        """执行 native 媒体委托，并在停止时于读取资源前 fail-closed。"""
+
+        if not getattr(self, "_connected", False) or getattr(self, "_closed", False):
+            return OutboundSendResult(
+                success=False,
+                error="unsupported: adapter is disconnected",
+                error_kind="unsupported",
+            )
+        method = getattr(self._outbound, method_name, None)
+        if not callable(method):
+            return OutboundSendResult(
+                success=False,
+                error="unsupported: native media operation is unavailable",
+                error_kind="unsupported",
+            )
+        result = method(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     async def get_chat_info(self, chat_id: str) -> dict[str, str]:
         """只根据 namespaced chat key 返回本地可确认的最小信息。"""

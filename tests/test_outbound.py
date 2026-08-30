@@ -65,10 +65,10 @@ class FakeOutboundClient:
             raise self.error
         return MilkySendResult(str(self.message_sequences.pop(0)))
 
-    async def upload_group_file_from_path(
+    async def upload_group_file(
         self,
         group_id: int,
-        file_path: object,
+        file_uri: object,
         file_name: str,
         *,
         parent_folder_id: object = None,
@@ -78,7 +78,7 @@ class FakeOutboundClient:
                 "upload_group_file",
                 {
                     "group_id": group_id,
-                    "file_path": file_path,
+                    "file_uri": file_uri,
                     "file_name": file_name,
                     "parent_folder_id": parent_folder_id,
                 },
@@ -88,13 +88,13 @@ class FakeOutboundClient:
             raise self.error
         return MilkyEnvelope("ok", 0, {"file_id": "uploaded-group-file"})
 
-    async def upload_private_file_from_path(
-        self, user_id: int, file_path: object, file_name: str
+    async def upload_private_file(
+        self, user_id: int, file_uri: object, file_name: str
     ) -> MilkyEnvelope:
         self.upload_calls.append(
             (
                 "upload_private_file",
-                {"user_id": user_id, "file_path": file_path, "file_name": file_name},
+                {"user_id": user_id, "file_uri": file_uri, "file_name": file_name},
             )
         )
         if self.error is not None:

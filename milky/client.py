@@ -11,12 +11,15 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import re
+import stat
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, Self
+from urllib.parse import unquote, urlsplit
 
 from config import MilkyConfig
 
@@ -29,6 +32,7 @@ _NON_NEGATIVE_INTEGER_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
 _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
 _MAX_SAFE_INTEGER = 9007199254740991
+MAX_LOCAL_MEDIA_BYTES = 8 * 1024 * 1024
 _TRANSPORT_PHASES = frozenset({"connect", "write", "read", "pool", "unknown"})
 _MISSING = object()
 
@@ -172,6 +176,16 @@ class ActionError(Exception):
 
 # 供调用方按更具体的名称导入，同时保持唯一的错误语义。
 MilkyActionError = ActionError
+
+
+async def materialize_media_uri(value: object, *, action: str = "media") -> str:
+    """把出站资源规范化为远端 URI 或受限的 ``base64://`` URI。
+
+    显式的 HTTP(S) 和 base64 URI 不会在插件内下载或解码；本地路径和
+    ``file://`` URI 则在工作线程中读取一次，并受固定大小上限保护。
+    """
+
+    return await asyncio.to_thread(_materialize_media_uri, value, action)
 
 
 @dataclass(frozen=True, slots=True)
@@ -600,9 +614,7 @@ class MilkyClient:
     ) -> MilkyEnvelope:
         """读取本地文件并以 base64 URI 上传到群。"""
 
-        file_uri = await asyncio.to_thread(
-            _local_file_as_base64_uri, file_path, "upload_group_file"
-        )
+        file_uri = await materialize_media_uri(file_path, action="upload_group_file")
         kwargs: dict[str, object] = {}
         if parent_folder_id is not _MISSING:
             kwargs["parent_folder_id"] = parent_folder_id
@@ -634,9 +646,7 @@ class MilkyClient:
     ) -> MilkyEnvelope:
         """读取本地文件并以 base64 URI 上传到私聊。"""
 
-        file_uri = await asyncio.to_thread(
-            _local_file_as_base64_uri, file_path, "upload_private_file"
-        )
+        file_uri = await materialize_media_uri(file_path, action="upload_private_file")
         return await self.upload_private_file(user_id, file_uri, file_name)
 
     async def close(self) -> None:
@@ -840,8 +850,42 @@ def _parse_upload_result(envelope: MilkyEnvelope, action: str) -> MilkyEnvelope:
     return envelope
 
 
+def _materialize_media_uri(value: object, action: str) -> str:
+    """在工作线程中应用统一的 URI 和本地文件边界。"""
+
+    if isinstance(value, Path):
+        raw = str(value).strip()
+    elif isinstance(value, str):
+        raw = value.strip()
+    else:
+        raise ActionError("invalid_input", action, "media URI is invalid")
+    if not raw:
+        raise ActionError("invalid_input", action, "media URI is invalid")
+
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        raise ActionError("invalid_input", action, "media URI is invalid") from None
+    if parsed.scheme in {"http", "https"}:
+        if not parsed.netloc:
+            raise ActionError("invalid_input", action, "media URI is invalid")
+        return raw
+    if parsed.scheme == "base64":
+        if not raw.startswith("base64://") or not parsed.netloc and not parsed.path:
+            raise ActionError("invalid_input", action, "media URI is invalid")
+        return raw
+    if parsed.scheme == "file":
+        if parsed.netloc not in {"", "localhost"} or not parsed.path:
+            raise ActionError("invalid_input", action, "media URI is invalid")
+        raw = unquote(parsed.path)
+    elif parsed.scheme:
+        raise ActionError("invalid_input", action, "media URI is invalid")
+
+    return _local_file_as_base64_uri(raw, action)
+
+
 def _local_file_as_base64_uri(file_path: object, action: str) -> str:
-    """将可读普通文件编码为 Milky 支持的 base64 URI。"""
+    """将可读普通文件编码为受大小限制的 Milky base64 URI。"""
 
     try:
         path = Path(file_path).expanduser()
@@ -850,15 +894,27 @@ def _local_file_as_base64_uri(file_path: object, action: str) -> str:
     try:
         if not path.is_file():
             raise ActionError("invalid_input", action, "file path is unavailable")
-        data = path.read_bytes()
+        with path.open("rb") as stream:
+            file_stat = os.fstat(stream.fileno())
+            if not stat.S_ISREG(file_stat.st_mode):
+                raise ActionError("invalid_input", action, "file path is unavailable")
+            file_size = file_stat.st_size
+            if file_size > MAX_LOCAL_MEDIA_BYTES:
+                raise ActionError("invalid_input", action, "media file is too large")
+            data = stream.read(MAX_LOCAL_MEDIA_BYTES + 1)
     except ActionError:
         raise
     except (OSError, ValueError):
         raise ActionError("invalid_input", action, "file path is unavailable") from None
+    if len(data) > MAX_LOCAL_MEDIA_BYTES:
+        raise ActionError("invalid_input", action, "media file is too large")
+    if not data:
+        raise ActionError("invalid_input", action, "media file is empty")
     return "base64://" + base64.b64encode(data).decode("ascii")
 
 
 __all__ = [
+    "MAX_LOCAL_MEDIA_BYTES",
     "ActionError",
     "HttpTransport",
     "HttpxTransport",
@@ -867,4 +923,5 @@ __all__ = [
     "MilkyClient",
     "SendResult",
     "TransportResponse",
+    "materialize_media_uri",
 ]

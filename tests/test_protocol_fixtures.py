@@ -100,6 +100,35 @@ def test_action_fixtures_distinguish_malformed_and_protocol_rejected() -> None:
     assert rejected["retcode"] != 0
 
 
+def test_outbound_media_request_fixture_keeps_native_and_upload_boundaries() -> None:
+    """多媒体请求 fixture 应固定 group/dm、segment 和独立 upload 形状。"""
+
+    payload = load_fixture("actions/outbound_media_requests.json")
+    requests = payload["requests"]
+
+    assert payload["outcomes"] == [
+        "accepted",
+        "protocol_rejected",
+        "malformed",
+        "transport_unknown",
+    ]
+    assert [item["method"] for item in requests] == ["POST"] * 4
+    assert [item["action"] for item in requests] == [
+        "send_group_message",
+        "send_private_message",
+        "upload_group_file",
+        "upload_private_file",
+    ]
+    assert requests[0]["body"]["message"][1]["type"] == "image"
+    assert requests[1]["body"]["message"][0]["type"] == "record"
+    assert requests[1]["body"]["message"][1]["type"] == "video"
+    assert all(
+        all(segment["type"] != "file" for segment in item["body"].get("message", []))
+        for item in requests[:2]
+    )
+    assert all(item["body"]["file_uri"].startswith("base64://") for item in requests[2:])
+
+
 def test_message_fixture_covers_friend_group_temp_and_all_known_segments() -> None:
     """消息 fixture 应覆盖场景边界和 14 类已知 incoming segment。"""
 

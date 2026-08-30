@@ -39,6 +39,25 @@ Milky smoke。写入 smoke 必须显式使用 `--allow-write`，且目标必须�
 standalone/cron sender、WebHook、WebSocket fallback、任意 Action catalog 和其他未声明
 能力仍保持 `unsupported`，需先补充独立 OpenSpec 契约与 Hermes 扩展点确认。
 
+### 多媒体出站
+
+Milky adapter 已覆盖 Hermes 的 native 媒体交接：
+
+| Hermes 入口 | Milky 出站边界 |
+| --- | --- |
+| 图片 URL、动画 | `image` segment，经 `send_group_message` 或 `send_private_message` |
+| 图片文件 | 读取为 `base64://` 后使用 `image` segment |
+| 语音 | 读取为 `base64://` 后使用 `record` segment |
+| 视频 | 读取为 `base64://` 后使用 `video` segment |
+| 文档/普通文件 | 读取为 `base64://` 后使用独立 `upload_group_file` 或 `upload_private_file` |
+
+Hermes 负责从 Agent 输出中解析并校验 `MEDIA:<path>`，再调用 adapter 的对应媒体入口。
+插件不会下载 `http(s)://` URI、创建媒体缓存或接管 Hermes 的路径权限；显式
+`base64://` URI 会原样交给 Milky。当前本地资源会完整读入内存，固定上限为 8 MiB，空文件、
+目录、不可读路径、未知 scheme 和超限资源会在网络访问前返回 `invalid_input`。协议拒绝、
+传输结果未知、malformed 和未连接状态分别保持 `rejected`、`transport_unknown`、
+`malformed` 和 `unsupported`，不会改发路径文本或盲目重试。
+
 ## 配置指南
 
 ### Milky 插件环境变量
