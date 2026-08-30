@@ -11,7 +11,8 @@ hermes plugins install ByteColtX/hermes-plugin-milky
 
 安装器读取仓库根目录的 `plugin.yaml`，并加载根目录
 `__init__.py::register(ctx)`。`tools.py::register_tools(ctx)` 是显式 Agent 工具的发现
-边界；当前工具业务和 Milky 适配器仍在 OpenSpec change 中逐步实现。
+边界；Milky 适配器的协议、入站、出站和生命周期能力按 active OpenSpec change 的任务
+顺序交付。
 
 ## 入口布局
 
@@ -19,15 +20,24 @@ hermes plugins install ByteColtX/hermes-plugin-milky
 plugin.yaml       # Hermes directory plugin manifest
 __init__.py       # 唯一公开注册入口
 tools.py          # 显式工具发现入口
-adapter.py        # 后续实现的 platform adapter
+adapter.py        # Milky platform adapter 生命周期薄层
 ```
 
 本项目不使用 `hermes_plugin_milky/__init__.py`，也不声明 Hermes Python entry point；
 `pyproject.toml` 仅用于 uv 开发环境和质量检查。
 
 当前 manifest 仅声明三个显式 ToolSpec：`milky_profile_like`、`milky_nudge` 和
-`milky_recall_group_message`。工具业务与参数校验仍将在对应的出站能力实现并完成测试后补齐；
+`milky_recall_group_message`。三者的参数校验、目标校验和错误分类已由出站边界统一处理；
 `tools.py` 继续保持安全的发现边界。
+
+### 当前实现状态
+
+T01–T16 和 T18 的协议、canonical/dedup、Gate/Will、wait buffer、Hermes mapping、出站
+和 adapter 生命周期已有自动化测试；T19 另有脱敏本地 HTTP/SSE 集成 fixture 和默认只读
+Milky smoke。写入 smoke 必须显式使用 `--allow-write`，且目标必须命中运行时 allowlist。
+
+standalone/cron sender、WebHook、WebSocket fallback、任意 Action catalog 和其他未声明
+能力仍保持 `unsupported`，需先补充独立 OpenSpec 契约与 Hermes 扩展点确认。
 
 ## 配置指南
 
