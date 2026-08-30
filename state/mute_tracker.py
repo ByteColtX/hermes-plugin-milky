@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import Literal, Protocol, runtime_checkable
 
 from milky.models import Event, GroupList, GroupMemberInfo, LoginInfo
+from milky.observability import log_event
 from milky.parser import ParseError, parse_event
 from session.identity import normalize_chat_key
 
@@ -214,20 +215,39 @@ class MuteTracker:
                 raise
             except Exception as error:
                 self._record("initial_state_action_failed")
+                log_event(
+                    logger,
+                    "milky_mute_initial_sync_failed",
+                    logging.WARNING,
+                    stage="mute",
+                    classification="state_sync_failed",
+                    reason="initial_sync_failed",
+                )
                 raise MuteSyncError("initial mute sync failed") from error
 
             if not isinstance(login, LoginInfo) or not isinstance(groups, GroupList):
                 self._record("initial_state_shape_invalid")
+                log_event(
+                    logger,
+                    "milky_mute_initial_sync_failed",
+                    logging.WARNING,
+                    stage="mute",
+                    classification="malformed",
+                    reason="initial_sync_failed",
+                )
                 raise MuteSyncError("initial mute sync failed")
             self._self_id = _validate_id(login.uin, "self_id")
             self._nickname = login.nickname
             group_ids = self._select_group_ids(groups)
             self._retain_current_groups(group_ids)
 
-            logger.info(
-                "Milky cold-start identity uid=%s nickname=%s",
-                _mask_identifier(self._self_id),
-                _safe_log_text(self._nickname),
+            log_event(
+                logger,
+                "milky_mute_initial_sync_started",
+                logging.INFO,
+                stage="mute",
+                uid=self._self_id,
+                nickname=self._nickname,
             )
 
             failures = False
@@ -246,11 +266,14 @@ class MuteTracker:
                     state = _effective_mute_state(snapshot)
                     if state == "muted":
                         muted_count += 1
-                        logger.info(
-                            "Milky muted group group=%s member=%s whole=%s",
-                            _mask_identifier(group_id),
-                            snapshot.member_mute,
-                            snapshot.whole_mute,
+                        log_event(
+                            logger,
+                            "milky_mute_group_muted",
+                            logging.INFO,
+                            stage="mute",
+                            group_id=group_id,
+                            member_mute=snapshot.member_mute,
+                            whole_mute=snapshot.whole_mute,
                         )
                     elif state == "unmuted":
                         unmuted_count += 1
@@ -262,16 +285,24 @@ class MuteTracker:
                     failures = True
                     self._record("initial_member_query_failed")
 
-            logger.info(
-                "Milky mute scan completed scope=%s total=%d succeeded=%d failed=%d muted=%d "
-                "unmuted=%d unknown=%d",
-                "allowlist" if self._allowed_chats else "all_groups",
-                len(group_ids),
-                successful_count,
-                len(group_ids) - successful_count,
-                muted_count,
-                unmuted_count,
-                unknown_count,
+            scan_scope = "allowlist" if self._allowed_chats else "all_groups"
+            scan_event = (
+                "milky_mute_initial_sync_failed"
+                if failures
+                else "milky_mute_initial_sync_succeeded"
+            )
+            log_event(
+                logger,
+                scan_event,
+                logging.WARNING if failures else logging.INFO,
+                stage="mute",
+                scope=scan_scope,
+                total=len(group_ids),
+                succeeded=successful_count,
+                failed=len(group_ids) - successful_count,
+                muted=muted_count,
+                unmuted=unmuted_count,
+                unknown=unknown_count,
             )
 
             if failures:
@@ -320,7 +351,25 @@ class MuteTracker:
                     raise
                 except Exception:  # noqa: BLE001
                     self._record("member_refresh_failed")
+                    log_event(
+                        logger,
+                        "milky_mute_refresh_failed",
+                        logging.WARNING,
+                        stage="mute",
+                        classification="state_sync_failed",
+                        reason="state_update_failed",
+                        group_id=normalized_id,
+                    )
                     return False
+            log_event(
+                logger,
+                "milky_mute_refresh_succeeded",
+                logging.INFO,
+                stage="mute",
+                classification="accepted",
+                reason="state_updated",
+                group_id=normalized_id,
+            )
             return True
 
     async def refresh_after_send_failure(self, target: object) -> bool:
@@ -388,6 +437,14 @@ class MuteTracker:
             refreshed_at=current.refreshed_at,
         )
         self._wake_expiry_loop()
+        log_event(
+            logger,
+            "milky_mute_event_updated",
+            logging.DEBUG,
+            stage="mute",
+            event_type="group_mute",
+            group_id=group_id,
+        )
         return True
 
     def _apply_group_whole_mute(self, event: Event) -> bool:
@@ -406,6 +463,14 @@ class MuteTracker:
             member_mute_until=current.member_mute_until,
             observed_at=float(event.time),
             refreshed_at=current.refreshed_at,
+        )
+        log_event(
+            logger,
+            "milky_mute_event_updated",
+            logging.DEBUG,
+            stage="mute",
+            event_type="group_whole_mute",
+            group_id=group_id,
         )
         return True
 
@@ -533,10 +598,15 @@ class MuteTracker:
                 observed_at=now,
                 refreshed_at=snapshot.refreshed_at,
             )
-            logger.info(
-                "Milky mute TTL expired group=%s member=unmuted whole=%s",
-                _mask_identifier(current_group_id),
-                snapshot.whole_mute,
+            log_event(
+                logger,
+                "milky_mute_event_updated",
+                logging.DEBUG,
+                stage="mute",
+                event_type="member_mute_expired",
+                group_id=current_group_id,
+                member_mute="unmuted",
+                whole_mute=snapshot.whole_mute,
             )
 
     def _wake_expiry_loop(self) -> None:
@@ -584,22 +654,6 @@ def _normalize_allowed_chats(allowed_chats: Collection[str] | None) -> frozenset
         return frozenset(normalize_chat_key(chat_key) for chat_key in allowed_chats)
     except (TypeError, ValueError) as error:
         raise ValueError("allowed_chats contains an invalid chat key") from error
-
-
-def _mask_identifier(value: int) -> str:
-    """保留数字标识前后三位并隐藏中间部分。"""
-
-    text = str(value)
-    if len(text) <= 6:
-        return f"{text[:1]}{'*' * max(1, len(text) - 2)}{text[-1:]}"
-    return f"{text[:3]}{'*' * (len(text) - 6)}{text[-3:]}"
-
-
-def _safe_log_text(value: str) -> str:
-    """转义昵称中的控制字符并限制日志长度。"""
-
-    escaped = value.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
-    return escaped[:64] or "<empty>"
 
 
 __all__ = ["MuteSnapshot", "MuteState", "MuteSyncClient", "MuteSyncError", "MuteTracker"]

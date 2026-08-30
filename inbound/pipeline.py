@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from typing import Any
 
 from gates import GateContext, GateRegistry
 from milky.models import Event
+from milky.observability import log_event
 from milky.parser import ParseError, parse_event
 from milky.resources import ResolvedTriggerBatch, ResourceResolver
 from session import (
@@ -25,6 +27,8 @@ from .canonical import CanonicalMessage, canonicalize_event
 from .hermes_mapper import build_source, map_message_event
 
 Observer = Callable[[Event], Awaitable[object] | object]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,9 +129,24 @@ class InboundPipeline:
             parsed_event = event if isinstance(event, Event) else parse_event(event)
         except ParseError as error:
             self._record(f"{error.classification}:event")
+            log_event(
+                logger,
+                "milky_inbound_canonical_rejected",
+                logging.DEBUG,
+                stage="canonical",
+                classification=_safe_classification(error.classification),
+                reason="invalid_message",
+            )
             return PipelineResult(error.classification, reason=error.reason)
 
         if parsed_event.event_type != "message_receive":
+            log_event(
+                logger,
+                "milky_inbound_observe_only",
+                logging.DEBUG,
+                stage="canonical",
+                reason="unsupported_event",
+            )
             await self._observe(parsed_event)
             return PipelineResult("observe_only", reason="event is not message_receive")
 
@@ -136,6 +155,28 @@ class InboundPipeline:
             expected_self_id=self._self_id,
         )
         if canonical_result.classification != "accepted" or canonical_result.value is None:
+            event_name = (
+                "milky_inbound_temp_ignored"
+                if canonical_result.classification == "ignored_temp"
+                else "milky_inbound_canonical_rejected"
+            )
+            log_event(
+                logger,
+                event_name,
+                logging.DEBUG,
+                stage="canonical",
+                scene="temp" if event_name == "milky_inbound_temp_ignored" else "friend",
+                classification=(
+                    "unsupported"
+                    if event_name == "milky_inbound_temp_ignored"
+                    else _safe_classification(canonical_result.classification)
+                ),
+                reason=(
+                    "temporary_message"
+                    if event_name == "milky_inbound_temp_ignored"
+                    else "canonical_rejected"
+                ),
+            )
             return PipelineResult(
                 canonical_result.classification,
                 reason=canonical_result.reason,
@@ -143,28 +184,94 @@ class InboundPipeline:
         canonical = canonical_result.value
         if self._deduplicator.check_and_mark(canonical.dedup_key):
             self._record("duplicate")
+            log_event(
+                logger,
+                "milky_inbound_duplicate",
+                logging.DEBUG,
+                stage="dedup",
+                scene=canonical.scene,
+                chat_key=canonical.chat_key,
+                message_id=canonical.message_id,
+                reason="duplicate_message",
+            )
             return PipelineResult("duplicate", canonical=canonical, reason="duplicate_message")
 
         async with self._admission.admit(canonical.chat_key) as ticket:
             gate_result = self._gates.check(self._gate_context(canonical))
             if not gate_result.allow:
                 self._record(f"gate:{gate_result.reason}")
+                log_event(
+                    logger,
+                    "milky_inbound_gate_denied",
+                    logging.DEBUG,
+                    stage="gate",
+                    scene=canonical.scene,
+                    chat_key=canonical.chat_key,
+                    message_id=canonical.message_id,
+                    gate=_gate_name(gate_result.reason),
+                    reason=_safe_gate_reason(gate_result.reason),
+                )
                 return PipelineResult("denied", canonical=canonical, reason=gate_result.reason)
             if canonical.will_input is None:
                 self._record("malformed:missing_will_input")
+                log_event(
+                    logger,
+                    "milky_inbound_canonical_rejected",
+                    logging.DEBUG,
+                    stage="canonical",
+                    scene=canonical.scene,
+                    chat_key=canonical.chat_key,
+                    message_id=canonical.message_id,
+                    classification="malformed",
+                    reason="invalid_message",
+                )
                 return PipelineResult(
                     "malformed", canonical=canonical, reason="normalized Will input is missing"
                 )
             decision = self._will_decide(canonical.will_input)
+            if decision in {"wait", "trigger"}:
+                log_event(
+                    logger,
+                    "milky_will_decision",
+                    logging.DEBUG,
+                    stage="will",
+                    scene=canonical.scene,
+                    chat_key=canonical.chat_key,
+                    message_id=canonical.message_id,
+                    decision=decision,
+                    ingress_sequence=ticket.ingress_sequence,
+                )
             if decision == "wait":
-                self._buffer.append(
+                append_result = self._buffer.append(
                     canonical.chat_key,
                     canonical,
                     ingress_sequence=ticket.ingress_sequence,
                 )
+                wait_fields: dict[str, object] = {
+                    "stage": "buffer",
+                    "scene": canonical.scene,
+                    "chat_key": canonical.chat_key,
+                    "message_id": canonical.message_id,
+                    "decision": "wait",
+                    "ingress_sequence": ticket.ingress_sequence,
+                }
+                if not append_result.accepted:
+                    wait_fields["reason"] = "buffer_overflow"
+                log_event(logger, "milky_inbound_wait", logging.INFO, **wait_fields)
                 return PipelineResult("wait", canonical=canonical)
             if decision != "trigger":
                 self._record("will:invalid_decision")
+                log_event(
+                    logger,
+                    "milky_inbound_canonical_rejected",
+                    logging.WARNING,
+                    stage="will",
+                    scene=canonical.scene,
+                    chat_key=canonical.chat_key,
+                    message_id=canonical.message_id,
+                    classification="malformed",
+                    reason="invalid_decision",
+                )
                 return PipelineResult(
                     "malformed", canonical=canonical, reason="invalid Will decision"
                 )
@@ -172,6 +279,28 @@ class InboundPipeline:
                 canonical.chat_key,
                 canonical,
                 ingress_sequence=ticket.ingress_sequence,
+            )
+            log_event(
+                logger,
+                "milky_inbound_trigger",
+                logging.INFO,
+                stage="will",
+                scene=canonical.scene,
+                chat_key=canonical.chat_key,
+                message_id=canonical.message_id,
+                decision="trigger",
+                ingress_sequence=ticket.ingress_sequence,
+                history_count=len(batch.history),
+            )
+            log_event(
+                logger,
+                "milky_inbound_drain",
+                logging.DEBUG,
+                stage="buffer",
+                scene=canonical.scene,
+                chat_key=canonical.chat_key,
+                ingress_sequence=batch.trigger_ingress_sequence,
+                history_count=len(batch.history),
             )
             self._start_detached(batch)
             return PipelineResult("trigger", canonical=canonical, batch=batch)
@@ -183,6 +312,9 @@ class InboundPipeline:
             await asyncio.gather(*tuple(self._background_tasks))
 
     async def _process_batch(self, batch: object) -> None:
+        current = getattr(batch, "current", None)
+        chat_key = getattr(batch, "chat_key", None)
+        ingress_sequence = getattr(batch, "trigger_ingress_sequence", None)
         try:
             resolved_batch = await self._resolver.resolve_batch(batch)
             source_builder = getattr(self._hermes, "build_source", None)
@@ -204,12 +336,29 @@ class InboundPipeline:
             result = handle_message(event)
             if inspect.isawaitable(result):
                 await result
+            log_event(
+                logger,
+                "milky_inbound_handoff_succeeded",
+                logging.INFO,
+                stage="handoff",
+                **_batch_log_fields(chat_key, ingress_sequence, current),
+            )
             self._notify_reply_cost(current.chat_key)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - detached boundary records safe failure
             self._buffer.record_handoff_failure(batch, recoverable=False)
             self._record(f"trigger_failed:{_error_category(error)}")
+            failure_fields = _batch_log_fields(chat_key, ingress_sequence, current)
+            log_event(
+                logger,
+                "milky_inbound_handoff_failed",
+                logging.WARNING,
+                stage="handoff",
+                **failure_fields,
+                classification=_error_classification(error),
+                reason="handoff_failed",
+            )
 
     def _start_detached(self, batch: object) -> None:
         task = asyncio.create_task(self._process_batch(batch))
@@ -248,6 +397,25 @@ class InboundPipeline:
                 callback(chat_key)
             except Exception:  # noqa: BLE001 - feedback cannot undo a submitted turn
                 self._record("will_feedback_error")
+                log_event(
+                    logger,
+                    "milky_will_reply_cost",
+                    logging.WARNING,
+                    stage="will",
+                    chat_key=chat_key,
+                    classification="malformed",
+                    reason="reply_cost_failed",
+                )
+            else:
+                log_event(
+                    logger,
+                    "milky_will_reply_cost",
+                    logging.DEBUG,
+                    stage="will",
+                    chat_key=chat_key,
+                    classification="accepted",
+                    reason="state_updated",
+                )
         self._reply_costs += 1
 
     async def _observe(self, event: Event) -> None:
@@ -258,6 +426,14 @@ class InboundPipeline:
                     apply_event(event)
                 except Exception:  # noqa: BLE001 - observe-only state cannot trigger Agent
                     self._record("observe_state_error")
+                    log_event(
+                        logger,
+                        "milky_inbound_observer_failed",
+                        logging.DEBUG,
+                        stage="mute",
+                        classification="malformed",
+                        reason="observer_failed",
+                    )
         if self._observer is None:
             return
         try:
@@ -266,6 +442,14 @@ class InboundPipeline:
                 await result
         except Exception:  # noqa: BLE001 - observer must not break event processing
             self._record("observer_error")
+            log_event(
+                logger,
+                "milky_inbound_observer_failed",
+                logging.DEBUG,
+                stage="canonical",
+                classification="handler_error",
+                reason="observer_failed",
+            )
 
     def _record(self, reason: str) -> None:
         self._diagnostics.append(reason)
@@ -321,6 +505,75 @@ class _HistoryRecord:
 
 def _error_category(error: Exception) -> str:
     return type(error).__name__.lower().replace("error", "")[:64] or "failure"
+
+
+def _safe_classification(value: object) -> str:
+    """把 parser 分类收敛到日志允许的固定集合。"""
+
+    return value if value in {"malformed", "unsupported", "unknown"} else "malformed"
+
+
+def _safe_gate_reason(value: object) -> str:
+    """把 Gate 原因限制为固定日志分类。"""
+
+    allowed = {
+        "self_message",
+        "chat_not_allowed",
+        "member_muted",
+        "whole_muted",
+        "mute_state_unknown",
+        "unsupported_scene",
+    }
+    return value if value in allowed else "unknown"
+
+
+def _gate_name(value: object) -> str:
+    """将 Gate 结果映射到稳定 Gate 名称。"""
+
+    if value == "self_message":
+        return "self_message"
+    if value == "chat_not_allowed":
+        return "chat_allowlist"
+    if value in {"member_muted", "whole_muted", "mute_state_unknown", "unsupported_scene"}:
+        return "muted_group"
+    return "muted_group"
+
+
+def _batch_log_fields(chat_key: object, sequence: object, current: object) -> dict[str, object]:
+    """提取 detached batch 的安全关联字段。"""
+
+    fields: dict[str, object] = {}
+    if isinstance(chat_key, str):
+        fields["chat_key"] = chat_key
+    if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence >= 0:
+        fields["ingress_sequence"] = sequence
+    message_id = getattr(current, "message_id", None)
+    if message_id is not None:
+        fields["message_id"] = message_id
+    scene = getattr(current, "scene", None)
+    if scene in {"friend", "group"}:
+        fields["scene"] = scene
+    return fields
+
+
+def _error_classification(error: BaseException) -> str:
+    """将本地或远端错误映射到安全分类。"""
+
+    classification = getattr(error, "classification", None)
+    allowed = {
+        "rejected",
+        "transport_unknown",
+        "malformed",
+        "unsupported",
+        "invalid_input",
+        "http_error",
+        "stream_error",
+        "protocol_error",
+        "connection_error",
+        "timeout",
+        "unknown",
+    }
+    return classification if classification in allowed else "malformed"
 
 
 __all__ = ["InboundPipeline", "PipelineResult"]

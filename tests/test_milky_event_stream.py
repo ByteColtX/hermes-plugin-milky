@@ -377,7 +377,7 @@ def test_malformed_and_unknown_outer_events_do_not_stop_later_frames() -> None:
     assert {item.classification for item in stream.diagnostics} >= {"malformed", "unknown"}
 
 
-def test_handler_exception_isolated_and_receive_loop_continues() -> None:
+def test_handler_exception_isolated_and_receive_loop_continues(caplog) -> None:
     """handler 异常不得终止后续 frame 的接收。"""
 
     response = FakeResponse(fixture_lines("system-and-unknown.sse"))
@@ -391,13 +391,14 @@ def test_handler_exception_isolated_and_receive_loop_continues() -> None:
             raise RuntimeError("不应进入诊断正文")
 
     async def scenario() -> None:
-        task = asyncio.create_task(stream.run(handler))
-        while len(received) < 2 or not any(
-            item.classification == "handler_error" for item in stream.diagnostics
-        ):
-            await asyncio.sleep(0)
-        await stream.close()
-        await task
+        with caplog.at_level(logging.DEBUG, logger="milky.event_stream"):
+            task = asyncio.create_task(stream.run(handler))
+            while len(received) < 2 or not any(
+                item.classification == "handler_error" for item in stream.diagnostics
+            ):
+                await asyncio.sleep(0)
+            await stream.close()
+            await task
 
     asyncio.run(scenario())
 
@@ -405,6 +406,19 @@ def test_handler_exception_isolated_and_receive_loop_continues() -> None:
     assert any(item.classification == "handler_error" for item in stream.diagnostics)
     assert "不应进入诊断正文" not in repr(stream.diagnostics)
     assert "stream-test-secret" not in repr(stream.diagnostics)
+    handler_logs = [
+        record
+        for record in caplog.records
+        if record.name == "milky.event_stream"
+        and getattr(record, "event_name", None) == "milky_event_stream_handler_failed"
+    ]
+    assert len(handler_logs) == 1
+    assert handler_logs[0].reason == "handler_failed"
+    assert not any(
+        record.name == "milky.event_stream"
+        and getattr(record, "event_name", None) == "milky_event_stream_frame_ignored"
+        for record in caplog.records
+    )
 
 
 def test_slow_handler_does_not_block_receive_loop() -> None:

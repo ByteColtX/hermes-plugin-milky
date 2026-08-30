@@ -200,16 +200,32 @@ def test_tracker_scans_only_group_allowlist_and_logs_masked_identity_and_results
     assert member_calls == [("member", 700000001, 900000001)]
     assert client.member_no_cache == [True]
     assert tracker.group_ids == (700000001,)
-    assert "Milky cold-start identity uid=900***001 nickname=合成机器人" in caplog.text
+    assert "[Milky] Cold-start identity" in caplog.text
     assert "冷启动" not in caplog.text
     assert "群禁言" not in caplog.text
     assert "Milky muted group" not in caplog.text
     assert "900000001" not in caplog.text
     assert "700000002" not in caplog.text
-    assert (
-        "Milky mute scan completed scope=allowlist total=1 succeeded=1 failed=0 "
-        "muted=0 unmuted=0 unknown=1"
-    ) in caplog.text
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "state.mute_tracker" and hasattr(record, "event_name")
+    ]
+    identity = next(
+        record for record in records if record.event_name == "milky_mute_initial_sync_started"
+    )
+    summary = next(
+        record for record in records if record.event_name == "milky_mute_initial_sync_succeeded"
+    )
+    assert identity.uid == "900***001"
+    assert identity.nickname == "合成机器人"
+    assert identity.getMessage().count("uid=900***001") == 1
+    assert identity.getMessage().count("nickname=合成机器人") == 1
+    assert summary.scope == "allowlist"
+    assert (summary.total, summary.succeeded, summary.failed) == (1, 1, 0)
+    assert (summary.muted, summary.unmuted, summary.unknown) == (0, 0, 1)
+    assert summary.getMessage().count("scope=allowlist") == 1
+    assert summary.getMessage().count("total=1") == 1
 
 
 def test_tracker_logs_only_muted_groups_and_summarizes_all_states(
@@ -226,13 +242,27 @@ def test_tracker_logs_only_muted_groups_and_summarizes_all_states(
     with caplog.at_level(logging.INFO, logger="state.mute_tracker"):
         asyncio.run(tracker.initialize())
 
-    assert "Milky muted group group=700***001 member=muted whole=unknown" in caplog.text
-    assert "group=700***002" not in caplog.text
-    assert "group=700***003" not in caplog.text
-    assert (
-        "Milky mute scan completed scope=all_groups total=3 succeeded=3 failed=0 "
-        "muted=1 unmuted=0 unknown=2"
-    ) in caplog.text
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "state.mute_tracker" and hasattr(record, "event_name")
+    ]
+    muted_records = [record for record in records if record.event_name == "milky_mute_group_muted"]
+    assert len(muted_records) == 1
+    assert muted_records[0].group_id == "700***001"
+    assert muted_records[0].member_mute == "muted"
+    assert muted_records[0].whole_mute == "unknown"
+    assert muted_records[0].getMessage().count("group_id=700***001") == 1
+    assert muted_records[0].getMessage().count("member_mute=muted") == 1
+    assert muted_records[0].getMessage().count("whole_mute=unknown") == 1
+    summary = next(
+        record for record in records if record.event_name == "milky_mute_initial_sync_succeeded"
+    )
+    assert summary.scope == "all_groups"
+    assert (summary.total, summary.succeeded, summary.failed) == (3, 3, 0)
+    assert (summary.muted, summary.unmuted, summary.unknown) == (1, 0, 2)
+    assert summary.getMessage().count("scope=all_groups") == 1
+    assert summary.getMessage().count("total=3") == 1
 
 
 def test_tracker_initial_failure_keeps_not_ready_and_muted() -> None:

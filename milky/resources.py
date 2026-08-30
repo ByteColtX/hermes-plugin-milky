@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -14,9 +15,13 @@ from typing import Any, Protocol
 from inbound.extractor import extract_segments
 from milky.client import ActionError
 from milky.models import IncomingMessage, Segment
+from milky.observability import log_event
 from milky.parser import ParseError, parse_forwarded_message, parse_incoming_message_data
+from session.identity import validate_chat_key
 
 UrlToBytes = Callable[[str], Awaitable[bytes]]
+
+logger = logging.getLogger(__name__)
 
 
 class ResourceClient(Protocol):
@@ -229,8 +234,44 @@ class ResourceResolver:
         chat_key = getattr(batch, "chat_key", None)
         if not isinstance(chat_key, str) or not isinstance(history, tuple) or current is None:
             raise TypeError("batch must be a detached trigger batch")
-        resolved_history = tuple(await self.resolve(item) for item in history)
-        return ResolvedTriggerBatch(chat_key, resolved_history, await self.resolve(current))
+        log_fields = _resource_log_fields(chat_key, batch)
+        log_event(
+            logger,
+            "milky_resource_resolution_started",
+            logging.DEBUG,
+            stage="resource",
+            **log_fields,
+            history_count=len(history),
+        )
+        resolved_history = tuple([await self.resolve(item) for item in history])
+        resolved_current = await self.resolve(current)
+        result = ResolvedTriggerBatch(chat_key, resolved_history, resolved_current)
+        materialized_count, degraded_count, reply_count, forward_count = _resource_counts(result)
+        completion_fields = _resource_log_fields(chat_key, batch)
+        log_event(
+            logger,
+            "milky_resource_resolution_completed",
+            logging.INFO,
+            stage="resource",
+            **completion_fields,
+            history_count=len(resolved_history),
+            materialized_count=materialized_count,
+            degraded_count=degraded_count,
+            reply_count=reply_count,
+            forward_count=forward_count,
+        )
+        if degraded_count:
+            log_event(
+                logger,
+                "milky_resource_resolution_degraded",
+                logging.WARNING,
+                stage="resource",
+                **completion_fields,
+                classification=_resource_classification(result),
+                reason="resource_resolution_failed",
+                degraded_count=degraded_count,
+            )
+        return result
 
     async def _resolve_message_content(self, message: object, *, depth: int) -> _ContentResolution:
         body = _required_text(message, "body")
@@ -900,6 +941,57 @@ def _diagnostic_from_error(
     else:
         classification = "unsupported"
     return _diagnostic(classification, reference_kind, reason, reference_id)
+
+
+def _resource_log_fields(chat_key: str, batch: object) -> dict[str, object]:
+    """提取资源 batch 的安全关联字段。"""
+
+    fields: dict[str, object] = {}
+    try:
+        fields["chat_key"] = validate_chat_key(chat_key)
+    except (TypeError, ValueError):
+        pass
+    sequence = getattr(batch, "trigger_ingress_sequence", None)
+    if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence >= 0:
+        fields["ingress_sequence"] = sequence
+    current = getattr(batch, "current", None)
+    message_id = getattr(current, "message_id", None)
+    if message_id is not None:
+        fields["message_id"] = message_id
+    scene = getattr(current, "scene", None)
+    if scene in {"friend", "group"}:
+        fields["scene"] = scene
+    return fields
+
+
+def _resource_counts(batch: ResolvedTriggerBatch) -> tuple[int, int, int, int]:
+    """汇总 materialization、降级、reply 和 forward 数量。"""
+
+    messages = (*batch.history, batch.current)
+    return (
+        sum(len(message.hermes_attachment_materializations) for message in messages),
+        sum(len(message.diagnostics) for message in messages),
+        sum(len(message.replies) for message in messages),
+        sum(len(message.forwards) for message in messages),
+    )
+
+
+def _resource_classification(batch: ResolvedTriggerBatch) -> str:
+    """返回第一个安全的资源错误分类。"""
+
+    allowed = {
+        "rejected",
+        "transport_unknown",
+        "malformed",
+        "unsupported",
+        "invalid_input",
+        "http_error",
+    }
+    for message in (*batch.history, batch.current):
+        for diagnostic in message.diagnostics:
+            if diagnostic.classification in allowed:
+                return diagnostic.classification
+    return "unsupported"
 
 
 __all__ = [

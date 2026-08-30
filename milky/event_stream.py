@@ -18,6 +18,7 @@ from typing import Any, Protocol, Self
 from config import MilkyConfig
 
 from .models import Event
+from .observability import log_event
 from .parser import ParseError, parse_event
 
 logger = logging.getLogger(__name__)
@@ -59,20 +60,14 @@ def _log_stream_event(
     delay_seconds: float | None = None,
 ) -> None:
     """输出不含敏感内容的事件流生命周期日志。"""
-
-    fields: dict[str, object] = {"event_name": event_name}
-    message_parts = [event_name]
+    fields: dict[str, object] = {}
     if reason is not None:
-        safe_reason = _safe_reconnect_reason(reason)
-        fields["reason"] = safe_reason
-        message_parts.append(f"reason={safe_reason}")
+        fields["reason"] = _safe_reconnect_reason(reason)
     if attempt is not None:
         fields["attempt"] = attempt
-        message_parts.append(f"attempt={attempt}")
     if delay_seconds is not None:
         fields["delay_seconds"] = delay_seconds
-        message_parts.append(f"delay_seconds={delay_seconds}")
-    logger.log(level, " ".join(message_parts), extra=fields)
+    log_event(logger, event_name, level, **fields)
 
 
 class EventStreamError(Exception):
@@ -503,9 +498,25 @@ class SseEventStream:
             frame = decode_sse_frame(lines)
         except EventStreamError as error:
             self._record(error.classification, error.reason)
+            log_event(
+                logger,
+                "milky_event_stream_frame_ignored",
+                logging.DEBUG,
+                stage="event_stream",
+                classification="malformed",
+                reason="malformed_event",
+            )
             return
         if frame.event != "milky_event":
             self._record("unknown", "unsupported SSE event name")
+            log_event(
+                logger,
+                "milky_event_stream_frame_ignored",
+                logging.DEBUG,
+                stage="event_stream",
+                classification="unknown",
+                reason="unsupported_event",
+            )
             return
         try:
             payload = json.loads(frame.data)
@@ -514,6 +525,14 @@ class SseEventStream:
                 raise ParseError("malformed", "event_type is empty")
         except (json.JSONDecodeError, ParseError, TypeError, ValueError):
             self._record("malformed", "event frame payload is malformed")
+            log_event(
+                logger,
+                "milky_event_stream_frame_ignored",
+                logging.DEBUG,
+                stage="event_stream",
+                classification="malformed",
+                reason="malformed_event",
+            )
             return
         task = asyncio.create_task(self._invoke_handler(event, handler))
         self._handler_tasks.add(task)
@@ -530,6 +549,14 @@ class SseEventStream:
             raise
         except Exception:  # noqa: BLE001
             self._record("handler_error", "event handler failed")
+            log_event(
+                logger,
+                "milky_event_stream_handler_failed",
+                logging.DEBUG,
+                stage="event_stream",
+                classification="handler_error",
+                reason="handler_failed",
+            )
 
     async def _wait_backoff(self, delay: float) -> None:
         """等待退避或在主动停止时立即结束等待。"""
@@ -574,8 +601,15 @@ class SseEventStream:
 
     def _record(self, classification: str, reason: str) -> None:
         """记录不含凭证、正文和原始 URL 的固定诊断。"""
-
-        self._diagnostics.append(StreamDiagnostic(classification, reason))
+        safe_reason = {
+            "malformed": "malformed_event",
+            "unknown": "unsupported_event",
+            "handler_error": "unknown",
+            "transport_unknown": "connection_error",
+            "http_error": "http_error",
+            "stream_error": "stream_error",
+        }.get(classification, "unknown")
+        self._diagnostics.append(StreamDiagnostic(classification, safe_reason))
 
     async def __aenter__(self) -> Self:
         """支持异步上下文管理器形式使用。"""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ from urllib.parse import urlsplit
 
 from milky.client import ActionError
 from milky.models import MilkyEnvelope
+from milky.observability import log_event
 from session.identity import CanonicalError, normalize_chat_key
 
 from .chunking import DEFAULT_TEXT_LENGTH, chunk_text
@@ -29,6 +31,8 @@ _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
 _MAX_SAFE_INTEGER = 9007199254740991
 _MISSING = object()
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,19 +95,52 @@ class MilkyOutboundSender:
             target = parse_outbound_target(chat_id)
             parts = self._message_parts(content, reply_to)
         except (OutboundFormatError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            result = _failure(_error_classification(error), _safe_reason(error))
+            log_event(
+                logger,
+                "milky_outbound_failed",
+                logging.WARNING,
+                stage="outbound",
+                classification=_log_classification(result.error_kind),
+                reason=_log_reason(result.error_kind),
+            )
+            return result
+
+        log_event(
+            logger,
+            "milky_outbound_route",
+            logging.DEBUG,
+            stage="outbound",
+            route=target.scene,
+            peer_id=target.peer_id,
+        )
+        if len(parts) > 1:
+            log_event(
+                logger,
+                "milky_outbound_chunked",
+                logging.DEBUG,
+                stage="outbound",
+                route=target.scene,
+                peer_id=target.peer_id,
+                chunk_count=len(parts),
+            )
 
         sent_ids: list[str] = []
         for index, segments in enumerate(parts):
             result = await self._send_segments(target, segments)
             if not result.success:
                 if sent_ids:
-                    return _with_partial(result, sent_ids, index)
+                    result = _with_partial(result, sent_ids, index)
+                _log_outbound_result(target, result, chunk_count=len(parts))
                 return result
             if result.message_id is None:
-                return _failure("malformed", "send result has no message id")
+                result = _failure("malformed", "send result has no message id")
+                _log_outbound_result(target, result, chunk_count=len(parts))
+                return result
             sent_ids.append(result.message_id)
-        return _success(sent_ids[-1], continuation_message_ids=tuple(sent_ids[:-1]))
+        result = _success(sent_ids[-1], continuation_message_ids=tuple(sent_ids[:-1]))
+        _log_outbound_result(target, result, chunk_count=len(parts))
+        return result
 
     async def send_image(
         self,
@@ -208,17 +245,30 @@ class MilkyOutboundSender:
                 target, file_path, file_name, parent_folder_id=parent_folder_id
             )
             file_id = _file_id(envelope)
-            return _success(file_id)
+            result = _success(file_id)
+            log_event(
+                logger,
+                "milky_outbound_upload_succeeded",
+                logging.INFO,
+                stage="outbound",
+                route=target.scene,
+                peer_id=target.peer_id,
+                file_id=file_id,
+                attachment_count=1,
+            )
+            return result
         except asyncio.CancelledError:
             raise
         except (ActionError, OSError, TypeError, ValueError) as error:
             result = _failure(_error_classification(error), _safe_reason(error))
             if _is_remote_failure(error):
                 await self._notify_group_failure(target if "target" in locals() else None)
+            _log_upload_result(target if "target" in locals() else None, result)
             return result
         except Exception:  # noqa: BLE001
             result = _failure("malformed", "file upload failed")
             await self._notify_group_failure(target if "target" in locals() else None)
+            _log_upload_result(target if "target" in locals() else None, result)
             return result
 
     async def send_file(self, *args: Any, **kwargs: Any) -> OutboundSendResult:
@@ -610,6 +660,85 @@ def _is_remote_failure(error: BaseException) -> bool:
         "malformed",
         "http_error",
     }
+
+
+def _log_outbound_result(
+    target: OutboundTarget,
+    result: OutboundSendResult,
+    *,
+    chunk_count: int,
+) -> None:
+    """记录文本或 segment 发送的最终安全结果。"""
+
+    if result.success:
+        log_event(
+            logger,
+            "milky_outbound_succeeded",
+            logging.INFO,
+            stage="outbound",
+            route=target.scene,
+            peer_id=target.peer_id,
+            message_id=result.message_id,
+            chunk_count=chunk_count,
+            sent_count=chunk_count,
+        )
+        return
+    log_event(
+        logger,
+        "milky_outbound_failed",
+        logging.WARNING,
+        stage="outbound",
+        route=target.scene,
+        peer_id=target.peer_id,
+        classification=_log_classification(result.error_kind),
+        reason=_log_reason(result.error_kind),
+        chunk_count=chunk_count,
+    )
+
+
+def _log_upload_result(target: OutboundTarget | None, result: OutboundSendResult) -> None:
+    """记录文件上传失败且不回显路径、文件名或远端正文。"""
+
+    fields: dict[str, object] = {
+        "stage": "outbound",
+        "classification": _log_classification(result.error_kind),
+        "reason": _log_reason(result.error_kind),
+    }
+    if target is not None:
+        fields["route"] = target.scene
+        fields["peer_id"] = target.peer_id
+    log_event(logger, "milky_outbound_upload_failed", logging.WARNING, **fields)
+
+
+def _log_classification(value: str | None) -> str:
+    """将出站结果分类转换为共享日志允许的值。"""
+
+    return (
+        value
+        if value
+        in {
+            "rejected",
+            "transport_unknown",
+            "malformed",
+            "unsupported",
+            "invalid_input",
+            "http_error",
+        }
+        else "unknown"
+    )
+
+
+def _log_reason(value: str | None) -> str:
+    """将出站结果原因转换为固定的安全值。"""
+
+    return {
+        "invalid_input": "invalid_input",
+        "unsupported": "operation_unsupported",
+        "rejected": "action_rejected",
+        "transport_unknown": "request_unknown",
+        "malformed": "malformed_response",
+        "http_error": "http_error",
+    }.get(value, "unknown")
 
 
 __all__ = [

@@ -13,6 +13,7 @@ from gates import GateRegistry
 from inbound.pipeline import InboundPipeline
 from milky.client import MilkyClient
 from milky.event_stream import SseEventStream
+from milky.observability import log_event
 from milky.resources import HermesMediaHelpers, ResourceResolver
 from outbound.sender import MilkyOutboundSender, OutboundSendResult, parse_outbound_target
 from session import ChatAdmissionCoordinator, TtlDeduplicator, WaitBuffer
@@ -233,9 +234,18 @@ class MilkyAdapter(BasePlatformAdapter):
         async with self._lifecycle_lock:
             if self._closed:
                 self._record("connect_after_stop")
+                log_event(
+                    logger,
+                    "milky_adapter_connect_failed",
+                    logging.WARNING,
+                    stage="lifecycle",
+                    classification="unsupported",
+                    reason="stopped",
+                )
                 return False
             if self._connected and self._event_task is not None and not self._event_task.done():
                 return True
+            log_event(logger, "milky_adapter_connecting", logging.INFO, stage="lifecycle")
             try:
                 if not self._initial_sync_complete:
                     await self._initialize_state()
@@ -253,6 +263,13 @@ class MilkyAdapter(BasePlatformAdapter):
                     self._run_event_stream(),
                     name="milky-event-stream",
                 )
+                log_event(
+                    logger,
+                    "milky_adapter_ready",
+                    logging.INFO,
+                    stage="lifecycle",
+                    self_id=self._self_id,
+                )
                 return True
             except asyncio.CancelledError:
                 raise
@@ -261,6 +278,14 @@ class MilkyAdapter(BasePlatformAdapter):
                 self._mark_disconnected()
                 self._unbind_sender()
                 self._record(f"connect_failed:{_safe_error_category(error)}")
+                log_event(
+                    logger,
+                    "milky_adapter_connect_failed",
+                    logging.WARNING,
+                    stage="lifecycle",
+                    classification=_error_classification(error),
+                    reason="initial_sync_failed",
+                )
                 self._set_fatal_error_safely()
                 return False
 
@@ -272,6 +297,7 @@ class MilkyAdapter(BasePlatformAdapter):
                 return
             self._closed = True
             self._connected = False
+            log_event(logger, "milky_adapter_stopping", logging.INFO, stage="lifecycle")
             event_task = self._event_task
             self._event_task = None
 
@@ -286,6 +312,7 @@ class MilkyAdapter(BasePlatformAdapter):
             await self._close_component(self._client, "client_close_failed")
             self._unbind_sender()
             self._mark_disconnected()
+            log_event(logger, "milky_adapter_stopped", logging.INFO, stage="lifecycle")
 
     async def send(
         self,
@@ -407,6 +434,15 @@ class MilkyAdapter(BasePlatformAdapter):
             raise
         except Exception:  # noqa: BLE001 - 关闭流程必须继续释放其余资源
             self._record(reason)
+            log_event(
+                logger,
+                "milky_adapter_component_close_failed",
+                logging.WARNING,
+                stage="lifecycle",
+                classification="malformed",
+                reason="component_close_failed",
+                component=reason.removesuffix("_close_failed"),
+            )
 
     def _set_fatal_error_safely(self) -> None:
         """将启动失败报告给 Hermes，同时不暴露异常正文。"""
@@ -422,6 +458,14 @@ class MilkyAdapter(BasePlatformAdapter):
             )
         except Exception:  # noqa: BLE001 - 诊断失败不得覆盖原始失败结果
             self._record("fatal_error_report_failed")
+            log_event(
+                logger,
+                "milky_adapter_fatal_error_report_failed",
+                logging.WARNING,
+                stage="lifecycle",
+                classification="internal_error",
+                reason="fatal_error_report_failed",
+            )
 
     def _record(self, reason: str) -> None:
         """记录有界且不包含敏感内容的诊断。"""
@@ -433,6 +477,28 @@ def _safe_error_category(error: BaseException) -> str:
     """把异常类型转换为固定安全类别。"""
 
     return type(error).__name__.lower().replace("error", "")[:48] or "failure"
+
+
+def _error_classification(error: BaseException) -> str:
+    """将生命周期异常转换为日志允许的固定分类。"""
+
+    classification = getattr(error, "classification", None)
+    if classification in {
+        "rejected",
+        "transport_unknown",
+        "malformed",
+        "unsupported",
+        "invalid_input",
+        "http_error",
+        "stream_error",
+        "protocol_error",
+        "connection_error",
+        "timeout",
+        "unknown",
+        "state_sync_failed",
+    }:
+        return classification
+    return "state_sync_failed"
 
 
 __all__ = ["MilkyAdapter"]

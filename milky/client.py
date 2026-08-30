@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import re
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +21,7 @@ from typing import Any, Protocol, Self
 from config import MilkyConfig
 
 from .models import GroupList, GroupMemberInfo, LoginInfo, MilkyEnvelope
+from .observability import log_event
 from .parser import ParseError, parse_action_response, parse_envelope
 
 _ACTION_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
@@ -27,6 +30,8 @@ _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
 _MAX_SAFE_INTEGER = 9007199254740991
 _MISSING = object()
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,53 +186,91 @@ class MilkyClient:
         params: Mapping[str, Any] | None = None,
     ) -> MilkyEnvelope:
         """发送一次 Action 并返回已校验的成功 envelope。"""
-
-        if self._closed:
-            raise ActionError("transport_unknown", _safe_action_name(action), "client is closed")
-        if not isinstance(action, str) or _ACTION_PATTERN.fullmatch(action) is None:
-            raise ActionError("invalid_input", "<invalid>", "invalid action name")
-        if params is None:
-            request_params: Mapping[str, Any] = {}
-        elif isinstance(params, Mapping):
-            request_params = params
-        else:
-            raise ActionError("invalid_input", action, "parameters must be an object")
+        started = time.perf_counter()
+        status_code: int | None = None
+        safe_action = _safe_log_action(action)
         try:
-            body = json.dumps(
-                dict(request_params), ensure_ascii=False, separators=(",", ":")
-            ).encode("utf-8")
-        except (TypeError, ValueError):
-            raise ActionError(
-                "invalid_input", action, "parameters are not JSON serializable"
-            ) from None
+            if self._closed:
+                raise ActionError("transport_unknown", safe_action, "client is closed")
+            if not isinstance(action, str) or _ACTION_PATTERN.fullmatch(action) is None:
+                raise ActionError("invalid_input", "invalid", "invalid action name")
+            if params is None:
+                request_params: Mapping[str, Any] = {}
+            elif isinstance(params, Mapping):
+                request_params = params
+            else:
+                raise ActionError("invalid_input", action, "parameters must be an object")
+            try:
+                body = json.dumps(
+                    dict(request_params), ensure_ascii=False, separators=(",", ":")
+                ).encode("utf-8")
+            except (TypeError, ValueError):
+                raise ActionError(
+                    "invalid_input", action, "parameters are not JSON serializable"
+                ) from None
 
-        try:
-            response = await self._transport.request(
-                "POST",
-                self._config.action_url(action),
-                {**self._config.auth_headers, "Content-Type": "application/json"},
-                body,
-                self._timeout,
+            try:
+                response = await self._transport.request(
+                    "POST",
+                    self._config.action_url(action),
+                    {**self._config.auth_headers, "Content-Type": "application/json"},
+                    body,
+                    self._timeout,
+                )
+            except asyncio.CancelledError:
+                raise
+            except (TimeoutError, OSError):
+                raise ActionError(
+                    "transport_unknown", action, "request outcome is unknown"
+                ) from None
+            except Exception:  # noqa: BLE001 - transport details are never exposed
+                raise ActionError(
+                    "transport_unknown", action, "request outcome is unknown"
+                ) from None
+
+            if not isinstance(response, TransportResponse):
+                raise ActionError("malformed", action, "transport returned an invalid response")
+            status_code = response.status_code
+            if not 200 <= response.status_code < 300:
+                raise ActionError("http_error", action, "HTTP status is not successful")
+            payload = self._decode_json(response.body, action)
+            try:
+                envelope = parse_envelope(payload)
+            except ParseError:
+                raise ActionError("malformed", action, "response envelope is malformed") from None
+            if envelope.status != "ok" or envelope.retcode != 0:
+                raise ActionError("rejected", action, "Milky Action envelope rejected")
+            if not isinstance(envelope.data, Mapping):
+                raise ActionError("malformed", action, "response data is malformed")
+            log_event(
+                logger,
+                "milky_action_succeeded",
+                logging.INFO,
+                stage="action",
+                action=action,
+                status_code=status_code,
+                duration_ms=_duration_ms(started),
             )
+            return envelope
         except asyncio.CancelledError:
             raise
-        except (TimeoutError, OSError):
-            raise ActionError("transport_unknown", action, "request outcome is unknown") from None
-
-        if not isinstance(response, TransportResponse):
-            raise ActionError("malformed", action, "transport returned an invalid response")
-        if not 200 <= response.status_code < 300:
-            raise ActionError("http_error", action, f"HTTP status {response.status_code}")
-        payload = self._decode_json(response.body, action)
-        try:
-            envelope = parse_envelope(payload)
-        except ParseError:
-            raise ActionError("malformed", action, "response envelope is malformed") from None
-        if envelope.status != "ok" or envelope.retcode != 0:
-            raise ActionError("rejected", action, "Milky Action envelope rejected")
-        if not isinstance(envelope.data, Mapping):
-            raise ActionError("malformed", action, "response data is malformed")
-        return envelope
+        except ActionError as error:
+            failure_fields: dict[str, object] = {
+                "stage": "action",
+                "action": _safe_log_action(error.action),
+                "classification": _safe_action_classification(error.classification),
+                "reason": _safe_action_reason(error.classification),
+                "duration_ms": _duration_ms(started),
+            }
+            if status_code is not None:
+                failure_fields["status_code"] = status_code
+            log_event(
+                logger,
+                "milky_action_failed",
+                logging.WARNING,
+                **failure_fields,
+            )
+            raise
 
     async def action(
         self,
@@ -667,6 +710,50 @@ def _safe_action_name(value: object) -> str:
     if isinstance(value, str) and _ACTION_PATTERN.fullmatch(value):
         return value
     return "<invalid>"
+
+
+def _safe_log_action(value: object) -> str:
+    """将 Action 名称转换为日志允许的非空标识。"""
+
+    return value if isinstance(value, str) and _ACTION_PATTERN.fullmatch(value) else "invalid"
+
+
+def _safe_action_classification(value: object) -> str:
+    """将 Action 错误分类收敛到日志允许的固定集合。"""
+
+    allowed = {
+        "rejected",
+        "transport_unknown",
+        "malformed",
+        "unsupported",
+        "invalid_input",
+        "http_error",
+        "stream_error",
+        "protocol_error",
+        "connection_error",
+        "timeout",
+        "unknown",
+    }
+    return value if isinstance(value, str) and value in allowed else "unknown"
+
+
+def _safe_action_reason(value: object) -> str:
+    """将 Action 错误映射为不含原始异常的固定 reason。"""
+
+    return {
+        "rejected": "action_rejected",
+        "transport_unknown": "request_unknown",
+        "malformed": "malformed_response",
+        "unsupported": "operation_unsupported",
+        "invalid_input": "invalid_input",
+        "http_error": "http_error",
+    }.get(value, "unknown")
+
+
+def _duration_ms(started: float) -> float:
+    """返回非负的单调耗时。"""
+
+    return round(max(0.0, (time.perf_counter() - started) * 1000), 3)
 
 
 def _validate_text(value: object, field: str, action: str) -> str:
