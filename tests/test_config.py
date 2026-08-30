@@ -62,6 +62,7 @@ def test_load_config_derives_prefixed_urls_and_bearer_header() -> None:
     config = load_config(DEFAULT_ENV)
 
     assert config.base_url == "https://localhost:5500/milky"
+    assert config.home_channel is None
     assert config.action_url("get_group_list") == (
         "https://localhost:5500/milky/api/get_group_list"
     )
@@ -196,11 +197,49 @@ def test_load_config_rejects_invalid_session_buffer_size(value: str) -> None:
         load_config(DEFAULT_ENV | {"MILKY_SESSION_BUFFER_SIZE": value})
 
 
-def test_load_config_rejects_legacy_configuration_names() -> None:
-    """旧的 groups/users 等配置名不得被转换为新配置。"""
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("group:700000001", "group:700000001"), (" dm:800000001 ", "dm:800000001")],
+)
+def test_load_config_preserves_home_channel_as_outbound_target(value: str, expected: str) -> None:
+    """home channel 应独立于入站白名单保存为规范化目标。"""
 
-    with pytest.raises(ConfigError, match="legacy"):
-        load_config(DEFAULT_ENV | {"MILKY_ALLOWED_GROUPS": "123"})
+    config = load_config(DEFAULT_ENV | {"MILKY_HOME_CHANNEL": value})
+
+    assert config.home_channel == expected
+    assert config.allowed_chats == frozenset()
+    assert config.redacted_summary()["has_home_channel"] is True
+    assert expected not in repr(config.redacted_summary())
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "   ",
+        "home",
+        "temp:700000001",
+        "group:",
+        "group:-1",
+        "group:1:2",
+        "dm:abc",
+    ],
+)
+def test_load_config_rejects_invalid_home_channel_without_echoing_value(value: str) -> None:
+    """home channel 只接受完整 group/dm chat key，错误不得回显输入。"""
+
+    with pytest.raises(ConfigError, match="MILKY_HOME_CHANNEL") as error:
+        load_config(DEFAULT_ENV | {"MILKY_HOME_CHANNEL": value})
+
+    assert value.strip() not in str(error.value) or not value.strip()
+
+
+def test_load_config_treats_empty_home_channel_as_unconfigured() -> None:
+    """可选环境变量为空字符串时不创建隐式 home 目标。"""
+
+    config = load_config(DEFAULT_ENV | {"MILKY_HOME_CHANNEL": ""})
+
+    assert config.home_channel is None
+    assert config.redacted_summary()["has_home_channel"] is False
 
 
 def test_manifest_declares_only_the_new_environment_contract_and_tools() -> None:
@@ -213,7 +252,7 @@ def test_manifest_declares_only_the_new_environment_contract_and_tools() -> None
     assert "MILKY_ALLOWED_CHATS" in manifest
     assert "MILKY_WILL_POLICY" in manifest
     assert "MILKY_SESSION_BUFFER_SIZE" in manifest
-    assert "MILKY_HOME_CHANNEL" not in manifest
+    assert "MILKY_HOME_CHANNEL" in manifest
     assert "provides_tools:" in manifest
     assert manifest.count("  - milky_profile_like") == 1
     assert manifest.count("  - milky_nudge") == 1

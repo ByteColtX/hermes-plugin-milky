@@ -18,11 +18,14 @@ def register(ctx: Any) -> None:
     网络连接或创建长期后台任务。
     """
 
+    from outbound.standalone import make_standalone_sender
+
     from .config import load_config
     from .tools import register_tools
 
     milky_config = load_config()
     register_tools(ctx)
+    standalone_sender = make_standalone_sender(milky_config)
 
     register_platform = getattr(ctx, "register_platform", None)
     if not callable(register_platform):
@@ -40,11 +43,28 @@ def register(ctx: Any) -> None:
         check_fn=lambda: True,
         validate_config=lambda _platform_config: True,
         required_env=["MILKY_BASE_URL", "MILKY_ACCESS_TOKEN"],
+        env_enablement_fn=lambda: _home_channel_enablement(milky_config),
+        cron_deliver_env_var="MILKY_HOME_CHANNEL",
+        standalone_sender_fn=standalone_sender,
         max_message_length=4096,
         emoji="🪶",
         pii_safe=True,
         platform_hint="你正在通过 Hermes 的 Milky QQ 平台通信。",
     )
+
+
+def _home_channel_enablement(config: object) -> dict[str, object] | None:
+    """向 Hermes 提供启动时固定的 home channel 元数据。"""
+
+    home_channel = getattr(config, "home_channel", None)
+    if not isinstance(home_channel, str) or not home_channel:
+        return None
+    return {
+        "home_channel": {
+            "chat_id": home_channel,
+            "name": "Milky Home",
+        }
+    }
 
 
 __all__ = ["register"]

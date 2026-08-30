@@ -31,3 +31,7 @@ optional_env:
     description: "Optional plugin-side pending-message buffer size for Will wait messages, default 20; this is not the Hermes session context"
     prompt: "Milky session buffer size"
     password: false
+  - name: MILKY_HOME_CHANNEL
+    description: "Optional system and cron destination as a complete group:<id> or dm:<id> chat key; unset means no default destination"
+    prompt: "Milky home channel"
+    password: false

@@ -23,6 +23,7 @@ from .sender import (
     OutboundTarget,
     parse_outbound_target,
 )
+from .standalone import make_standalone_sender, standalone_send
 
 __all__ = [
     "DEFAULT_TEXT_LENGTH",
@@ -38,11 +39,13 @@ __all__ = [
     "forward_segment",
     "image_segment",
     "light_app_segment",
+    "make_standalone_sender",
     "mention_all_segment",
     "mention_segment",
     "parse_outbound_target",
     "record_segment",
     "reply_segment",
+    "standalone_send",
     "text_segment",
     "video_segment",
 ]

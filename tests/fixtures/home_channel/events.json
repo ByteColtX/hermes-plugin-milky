@@ -1,0 +1,14 @@
+{
+  "observe_only_event_types": [
+    "message_recall",
+    "friend_request",
+    "group_join_request",
+    "group_invitation",
+    "bot_offline",
+    "notice",
+    "unknown_extension"
+  ],
+  "expected_pipeline_classification": "observe_only",
+  "expected_outbound_calls": 0,
+  "expected_agent_turns": 0
+}
