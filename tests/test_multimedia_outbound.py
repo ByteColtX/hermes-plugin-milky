@@ -319,30 +319,30 @@ class RecordingMediaSender:
 
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
-    async def _record(self, name: str, **kwargs: Any) -> SimpleNamespace:
-        self.calls.append((name, kwargs))
+    async def _record(self, name: str, *args: Any, **kwargs: Any) -> SimpleNamespace:
+        self.calls.append((name, {"args": args, **kwargs}))
         return SimpleNamespace(success=True, message_id=name)
 
-    async def send_image(self, **kwargs: Any) -> SimpleNamespace:
-        return await self._record("send_image", **kwargs)
+    async def send_image(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
+        return await self._record("send_image", *args, **kwargs)
 
-    async def send_image_file(self, **kwargs: Any) -> SimpleNamespace:
-        return await self._record("send_image_file", **kwargs)
+    async def send_image_file(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
+        return await self._record("send_image_file", *args, **kwargs)
 
-    async def send_animation(self, **kwargs: Any) -> SimpleNamespace:
-        return await self._record("send_animation", **kwargs)
+    async def send_animation(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
+        return await self._record("send_animation", *args, **kwargs)
 
-    async def send_voice(self, **kwargs: Any) -> SimpleNamespace:
-        return await self._record("send_voice", **kwargs)
+    async def send_voice(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
+        return await self._record("send_voice", *args, **kwargs)
 
-    async def send_video(self, **kwargs: Any) -> SimpleNamespace:
-        return await self._record("send_video", **kwargs)
+    async def send_video(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
+        return await self._record("send_video", *args, **kwargs)
 
-    async def send_document(self, **kwargs: Any) -> SimpleNamespace:
-        return await self._record("send_document", **kwargs)
+    async def send_document(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
+        return await self._record("send_document", *args, **kwargs)
 
     async def send_file(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
-        return await self._record("send_file", args=args, **kwargs)
+        return await self._record("send_file", *args, **kwargs)
 
 
 def test_adapter_media_methods_delegate_without_base_text_fallback() -> None:
