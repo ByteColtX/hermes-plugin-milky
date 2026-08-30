@@ -315,6 +315,14 @@ class GroupList:
 
 
 @dataclass(frozen=True, slots=True)
+class GroupMemberList:
+    """群成员列表 Action 的最小结果。"""
+
+    members: tuple[GroupMemberEntity, ...]
+    extras: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class GroupMemberInfo:
     """群成员查询 Action 的最小结果。"""
 

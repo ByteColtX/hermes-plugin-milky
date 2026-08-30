@@ -27,9 +27,11 @@ adapter.py        # Milky platform adapter 生命周期薄层
 本项目不使用 `hermes_plugin_milky/__init__.py`，也不声明 Hermes Python entry point；
 `pyproject.toml` 仅用于 uv 开发环境和质量检查。
 
-当前 manifest 仅声明三个显式 ToolSpec：`milky_profile_like`、`milky_nudge` 和
-`milky_recall_group_message`。三者的参数校验、目标校验和错误分类已由出站边界统一处理；
-`tools.py` 继续保持安全的发现边界。
+当前 manifest 声明九个与 Milky operationId 对齐的显式 ToolSpec：
+`send_profile_like`、`send_friend_nudge`、`send_group_nudge`、`recall_group_message`、
+`get_group_info`、`get_group_member_list`、`get_group_member_info`、
+`set_group_member_mute` 和 `set_group_whole_mute`。它们的参数校验、目标校验和错误分类
+由出站边界统一处理；`tools.py` 继续保持安全的发现边界。
 
 ### Hermes 斜杠命令
 
@@ -77,10 +79,11 @@ Action catalog 和其他未声明能力仍保持 `unsupported`。
   `msg_id` 只能复制当前消息或 `channel_context` 消息头中的真实值，不能从昵称或正文
   猜测。
 
-需要完整 NapCat CQ 类型矩阵和三个显式 QQ ToolSpec 的参数边界时，按需加载插件命名空间
-skill：`hermes-plugin-milky:qq-reference`。该 skill 是只读参考资料，不注册额外工具；
-实际 ToolSpec 和 Milky native conversion 才决定可执行能力。CQ-compatible 语法只存在于
-Agent 出站适配层，不代表 OneBot 或 Milky 任意 Action 兼容。
+需要 CQ `at`/`reply` 说明时，按需加载插件命名空间 skill：
+`hermes-plugin-milky:qq-reference`；需要显式 QQ ToolSpec 的参数边界时，加载
+`hermes-plugin-milky:qq-tools`。两个 skill 都是只读参考资料，不注册额外工具；实际
+ToolSpec 和 Milky native conversion 才决定可执行能力。CQ-compatible 语法只存在于 Agent
+出站适配层，不代表 OneBot 或 Milky 任意 Action 兼容。
 
 ### 多媒体出站
 

@@ -12,7 +12,13 @@ import pytest
 
 from milky.client import ActionError
 from milky.client import SendResult as MilkySendResult
-from milky.models import MilkyEnvelope
+from milky.models import (
+    GroupEntity,
+    GroupMemberEntity,
+    GroupMemberInfo,
+    GroupMemberList,
+    MilkyEnvelope,
+)
 from outbound.chunking import chunk_text
 from outbound.formatter import (
     OutboundFormatError,
@@ -123,6 +129,57 @@ class FakeOutboundClient:
         self.calls.append(
             ("recall_group_message", {"group_id": group_id, "message_seq": message_seq})
         )
+        return MilkyEnvelope("ok", 0, {})
+
+    async def get_group_info(self, group_id: int, *, no_cache: bool = False) -> GroupEntity:
+        params: dict[str, Any] = {"group_id": group_id}
+        if no_cache:
+            params["no_cache"] = True
+        self.calls.append(("get_group_info", params))
+        return GroupEntity(group_id=group_id, group_name="合成群")
+
+    async def get_group_member_list(
+        self, group_id: int, *, no_cache: bool = False
+    ) -> GroupMemberList:
+        params: dict[str, Any] = {"group_id": group_id}
+        if no_cache:
+            params["no_cache"] = True
+        self.calls.append(("get_group_member_list", params))
+        return GroupMemberList(
+            members=(
+                GroupMemberEntity(
+                    user_id=900000001,
+                    group_id=group_id,
+                    nickname="合成成员",
+                ),
+            )
+        )
+
+    async def get_group_member_info(
+        self, group_id: int, user_id: int, *, no_cache: bool = False
+    ) -> GroupMemberInfo:
+        params: dict[str, Any] = {"group_id": group_id, "user_id": user_id}
+        if no_cache:
+            params["no_cache"] = True
+        self.calls.append(("get_group_member_info", params))
+        return GroupMemberInfo(
+            GroupMemberEntity(user_id=user_id, group_id=group_id, nickname="合成成员")
+        )
+
+    async def set_group_member_mute(
+        self, group_id: int, user_id: int, duration: object = None
+    ) -> MilkyEnvelope:
+        params: dict[str, Any] = {"group_id": group_id, "user_id": user_id}
+        if duration is not None:
+            params["duration"] = duration
+        self.calls.append(("set_group_member_mute", params))
+        return MilkyEnvelope("ok", 0, {})
+
+    async def set_group_whole_mute(self, group_id: int, is_mute: object = None) -> MilkyEnvelope:
+        params: dict[str, Any] = {"group_id": group_id}
+        if is_mute is not None:
+            params["is_mute"] = is_mute
+        self.calls.append(("set_group_whole_mute", params))
         return MilkyEnvelope("ok", 0, {})
 
 
@@ -491,14 +548,24 @@ class ToolContext:
         self.registered.append(kwargs)
 
 
-def test_tools_register_exactly_three_explicit_specs_and_validate_arguments() -> None:
-    """工具发现只注册三个显式能力，并在网络前校验参数。"""
+def test_tools_register_explicit_api_specs_and_validate_arguments() -> None:
+    """工具发现只注册明确的 Milky operation，并在网络前校验参数。"""
 
     context = ToolContext()
     register_tools(context)
 
     names = [item["name"] for item in context.registered]
-    assert names == ["milky_profile_like", "milky_nudge", "milky_recall_group_message"]
+    assert names == [
+        "send_profile_like",
+        "send_friend_nudge",
+        "send_group_nudge",
+        "recall_group_message",
+        "get_group_info",
+        "get_group_member_list",
+        "get_group_member_info",
+        "set_group_member_mute",
+        "set_group_whole_mute",
+    ]
     assert all(item["is_async"] is True for item in context.registered)
     assert {item["schema"]["name"] for item in context.registered} == set(names)
 
@@ -506,16 +573,18 @@ def test_tools_register_exactly_three_explicit_specs_and_validate_arguments() ->
     bind_sender(MilkyOutboundSender(client))
     try:
         handlers = {item["name"]: item["handler"] for item in context.registered}
-        invalid = json.loads(asyncio.run(handlers["milky_profile_like"]({"user_id": True})))
+        invalid = json.loads(asyncio.run(handlers["send_profile_like"]({"user_id": True})))
         invalid_type = json.loads(
-            asyncio.run(handlers["milky_profile_like"]({"user_id": "800000001"}))
+            asyncio.run(handlers["send_profile_like"]({"user_id": "800000001"}))
         )
-        invalid_nudge = json.loads(
-            asyncio.run(handlers["milky_nudge"]({"target": "group:700000001"}))
+        invalid_nudge = json.loads(asyncio.run(handlers["send_group_nudge"]({"group_id": 1})))
+        invalid_group = json.loads(
+            asyncio.run(handlers["get_group_info"]({"group_id": "700000001"}))
         )
         assert invalid["classification"] == "invalid_input"
         assert invalid_type["classification"] == "invalid_input"
         assert invalid_nudge["classification"] == "invalid_input"
+        assert invalid_group["classification"] == "invalid_input"
         assert client.calls == []
     finally:
         unbind_sender()
@@ -531,30 +600,74 @@ def test_tools_call_confirmed_actions_after_local_validation() -> None:
     bind_sender(MilkyOutboundSender(client))
     try:
         profile = json.loads(
-            asyncio.run(handlers["milky_profile_like"]({"user_id": 800000001, "count": 2}))
+            asyncio.run(handlers["send_profile_like"]({"user_id": 800000001, "count": 2}))
         )
-        friend_nudge = json.loads(asyncio.run(handlers["milky_nudge"]({"target": "dm:800000001"})))
+        friend_nudge = json.loads(
+            asyncio.run(handlers["send_friend_nudge"]({"user_id": 800000001}))
+        )
         group_nudge = json.loads(
-            asyncio.run(
-                handlers["milky_nudge"]({"target": "group:700000001", "user_id": 900000001})
-            )
+            asyncio.run(handlers["send_group_nudge"]({"group_id": 700000001, "user_id": 900000001}))
         )
         recall = json.loads(
             asyncio.run(
-                handlers["milky_recall_group_message"](
-                    {"target": "group:700000001", "message_seq": 123}
+                handlers["recall_group_message"]({"group_id": 700000001, "message_seq": 123})
+            )
+        )
+        group_info = json.loads(
+            asyncio.run(handlers["get_group_info"]({"group_id": 700000001, "no_cache": True}))
+        )
+        member_list = json.loads(
+            asyncio.run(
+                handlers["get_group_member_list"]({"group_id": 700000001, "no_cache": True})
+            )
+        )
+        member_info = json.loads(
+            asyncio.run(
+                handlers["get_group_member_info"](
+                    {"group_id": 700000001, "user_id": 900000001, "no_cache": True}
                 )
             )
+        )
+        member_mute = json.loads(
+            asyncio.run(
+                handlers["set_group_member_mute"](
+                    {"group_id": 700000001, "user_id": 900000001, "duration": 60}
+                )
+            )
+        )
+        whole_mute = json.loads(
+            asyncio.run(handlers["set_group_whole_mute"]({"group_id": 700000001, "is_mute": True}))
         )
     finally:
         unbind_sender()
 
-    assert all(item["ok"] is True for item in (profile, friend_nudge, group_nudge, recall))
+    assert all(
+        item["ok"] is True
+        for item in (
+            profile,
+            friend_nudge,
+            group_nudge,
+            recall,
+            group_info,
+            member_list,
+            member_info,
+            member_mute,
+            whole_mute,
+        )
+    )
+    assert group_info["data"]["group"]["group_id"] == 700000001
+    assert len(member_list["data"]["members"]) == 1
+    assert member_info["data"]["member"]["user_id"] == 900000001
     assert [call[0] for call in client.calls] == [
         "send_profile_like",
         "send_friend_nudge",
         "send_group_nudge",
         "recall_group_message",
+        "get_group_info",
+        "get_group_member_list",
+        "get_group_member_info",
+        "set_group_member_mute",
+        "set_group_whole_mute",
     ]
 
 
@@ -564,7 +677,7 @@ def test_profile_like_tool_omits_optional_count_when_not_provided() -> None:
     context = ToolContext()
     register_tools(context)
     handler = next(
-        item["handler"] for item in context.registered if item["name"] == "milky_profile_like"
+        item["handler"] for item in context.registered if item["name"] == "send_profile_like"
     )
     client = FakeOutboundClient()
     bind_sender(MilkyOutboundSender(client))

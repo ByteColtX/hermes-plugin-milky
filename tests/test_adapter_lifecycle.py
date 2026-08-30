@@ -537,7 +537,17 @@ def test_root_register_assembles_platform_without_network_or_background_task(
         registration = context.platforms[0]
         assert registration["name"] == "milky"
         assert registration["adapter_factory"]
-        assert len(context.tools) == 3
+        assert [tool["name"] for tool in context.tools] == [
+            "send_profile_like",
+            "send_friend_nudge",
+            "send_group_nudge",
+            "recall_group_message",
+            "get_group_info",
+            "get_group_member_list",
+            "get_group_member_info",
+            "set_group_member_mute",
+            "set_group_whole_mute",
+        ]
         adapter = registration["adapter_factory"](SimpleNamespace())
         assert adapter.__class__.__name__ == "MilkyAdapter"
     finally:

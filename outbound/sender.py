@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from milky.client import ActionError, materialize_media_uri
-from milky.models import MilkyEnvelope
+from milky.models import GroupEntity, GroupMemberInfo, GroupMemberList, MilkyEnvelope
 from milky.observability import log_event
 from session.identity import CanonicalError, normalize_chat_key
 
@@ -290,6 +290,55 @@ class MilkyOutboundSender:
         """提供 Hermes 旧式文件发送名称的兼容委托。"""
 
         return await self.send_document(*args, **kwargs)
+
+    async def get_group_info(
+        self, group_id: object, *, no_cache: bool | None = False
+    ) -> GroupEntity:
+        """查询群信息并返回已校验的 Milky DTO。"""
+
+        return await _maybe_await(self._client.get_group_info(group_id, no_cache=no_cache))  # type: ignore[attr-defined]
+
+    async def get_group_member_list(
+        self, group_id: object, *, no_cache: bool | None = False
+    ) -> GroupMemberList:
+        """查询群成员列表并返回已校验的 Milky DTO。"""
+
+        return await _maybe_await(  # type: ignore[attr-defined]
+            self._client.get_group_member_list(group_id, no_cache=no_cache)
+        )
+
+    async def get_group_member_info(
+        self, group_id: object, user_id: object, *, no_cache: bool | None = False
+    ) -> GroupMemberInfo:
+        """查询群成员信息并返回已校验的 Milky DTO。"""
+
+        return await _maybe_await(  # type: ignore[attr-defined]
+            self._client.get_group_member_info(group_id, user_id, no_cache=no_cache)
+        )
+
+    async def set_group_member_mute(
+        self, group_id: object, user_id: object, duration: object = _MISSING
+    ) -> MilkyEnvelope:
+        """设置群成员禁言状态。"""
+
+        if duration is _MISSING:
+            return await _maybe_await(  # type: ignore[attr-defined]
+                self._client.set_group_member_mute(group_id, user_id)
+            )
+        return await _maybe_await(  # type: ignore[attr-defined]
+            self._client.set_group_member_mute(group_id, user_id, duration)
+        )
+
+    async def set_group_whole_mute(
+        self, group_id: object, is_mute: object = _MISSING
+    ) -> MilkyEnvelope:
+        """设置群全员禁言状态。"""
+
+        if is_mute is _MISSING:
+            return await _maybe_await(self._client.set_group_whole_mute(group_id))  # type: ignore[attr-defined]
+        return await _maybe_await(  # type: ignore[attr-defined]
+            self._client.set_group_whole_mute(group_id, is_mute)
+        )
 
     async def profile_like(self, user_id: object, count: object = _MISSING) -> OutboundSendResult:
         """执行已确认的名片点赞 Action。"""

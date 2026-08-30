@@ -111,8 +111,8 @@ class SkillAndPlatformContext:
         self.platforms.append(kwargs)
 
 
-def test_root_registers_read_only_qq_skill_and_stable_platform_hint(monkeypatch) -> None:
-    """根入口应登记插件 skill，并只提供不含逐轮身份的基础提示。"""
+def test_root_registers_split_qq_skills_and_stable_platform_hint(monkeypatch) -> None:
+    """根入口应登记拆分后的插件 skill，并只提供不含逐轮身份的基础提示。"""
 
     set_valid_environment(monkeypatch)
     entry, module_name = load_plugin_entry()
@@ -120,11 +120,11 @@ def test_root_registers_read_only_qq_skill_and_stable_platform_hint(monkeypatch)
         context = SkillAndPlatformContext()
         entry.register(context)
 
-        assert len(context.skills) == 1
-        skill_name, skill_path = context.skills[0]
-        assert skill_name == "qq-reference"
-        assert skill_path == PROJECT_ROOT / "skills" / "qq-reference" / "SKILL.md"
-        assert skill_path.is_file()
+        assert dict(context.skills) == {
+            "qq-reference": PROJECT_ROOT / "skills" / "qq-reference" / "SKILL.md",
+            "qq-tools": PROJECT_ROOT / "skills" / "qq-tools" / "SKILL.md",
+        }
+        assert all(skill_path.is_file() for _, skill_path in context.skills)
 
         hint = context.platforms[0]["platform_hint"]
         assert "[CQ:at,qq=<uid>]" in hint
@@ -132,6 +132,7 @@ def test_root_registers_read_only_qq_skill_and_stable_platform_hint(monkeypatch)
         assert "默认不要自动 @ 用户" in hint
         assert "不要自动引用当前消息" in hint
         assert "hermes-plugin-milky:qq-reference" in hint
+        assert "hermes-plugin-milky:qq-tools" in hint
         assert "101" not in hint
         assert "9001" not in hint
         assert "MILKY_ACCESS_TOKEN" not in hint
@@ -145,7 +146,7 @@ def test_root_registers_read_only_qq_skill_and_stable_platform_hint(monkeypatch)
 def test_bundled_skill_registration_is_optional_when_host_has_no_api(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """缺失 skill 文件或旧宿主 API 不应阻止平台注册。"""
+    """缺失任一 skill 文件或旧宿主 API 不应阻止平台注册。"""
 
     set_valid_environment(monkeypatch)
     entry, module_name = load_plugin_entry()
@@ -182,26 +183,36 @@ def test_bundled_skill_uses_host_namespace_and_does_not_overwrite_siblings() -> 
 
     milky = NamespacedSkillContext("hermes-plugin-milky")
     sibling = NamespacedSkillContext("another-plugin")
-    milky.register_skill("qq-reference", PROJECT_ROOT / "skills" / "qq-reference" / "SKILL.md")
-    sibling.register_skill("qq-reference", PROJECT_ROOT / "skills" / "qq-reference" / "SKILL.md")
+    for skill_name in ("qq-reference", "qq-tools"):
+        skill_path = PROJECT_ROOT / "skills" / skill_name / "SKILL.md"
+        milky.register_skill(skill_name, skill_path)
+        sibling.register_skill(skill_name, skill_path)
 
-    assert set(milky.plugin_skills) == {"hermes-plugin-milky:qq-reference"}
-    assert set(sibling.plugin_skills) == {"another-plugin:qq-reference"}
+    assert set(milky.plugin_skills) == {
+        "hermes-plugin-milky:qq-reference",
+        "hermes-plugin-milky:qq-tools",
+    }
+    assert set(sibling.plugin_skills) == {
+        "another-plugin:qq-reference",
+        "another-plugin:qq-tools",
+    }
     assert milky.user_skills == {}
     assert sibling.user_skills == {}
 
 
-def test_qq_reference_skill_is_namespaced_read_only_and_does_not_add_tools() -> None:
-    """skill 内容应声明命名空间和只读边界，工具仍只有 manifest 中的三项。"""
+def test_qq_skills_are_split_and_do_not_add_tools() -> None:
+    """CQ 和工具说明应拆分，实际工具仍只有 manifest 中的明确项。"""
 
-    skill = (PROJECT_ROOT / "skills" / "qq-reference" / "SKILL.md").read_text(encoding="utf-8")
-    for cq_type in (
-        "text",
+    cq_skill = (PROJECT_ROOT / "skills" / "qq-reference" / "SKILL.md").read_text(encoding="utf-8")
+    tools_skill = (PROJECT_ROOT / "skills" / "qq-tools" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "[CQ:at,qq=<uid>]" in cq_skill
+    assert "[CQ:reply,id=<msg_id>]" in cq_skill
+    for removed_type in (
         "face",
         "image",
         "record",
         "video",
-        "at",
         "rps",
         "dice",
         "shake",
@@ -210,7 +221,6 @@ def test_qq_reference_skill_is_namespaced_read_only_and_does_not_add_tools() -> 
         "contact",
         "location",
         "music",
-        "reply",
         "forward",
         "node",
         "json",
@@ -225,12 +235,35 @@ def test_qq_reference_skill_is_namespaced_read_only_and_does_not_add_tools() -> 
         "tts",
         "xml",
     ):
-        assert f"| `{cq_type}` |" in skill
-    assert "text fallback" in skill
-    assert "不注册、不执行也不扩大工具能力" in skill
-    assert "milky_profile_like" in skill
-    assert "milky_nudge" in skill
-    assert "milky_recall_group_message" in skill
+        assert f"[CQ:{removed_type}" not in cq_skill
+    for tool_name in (
+        "send_profile_like",
+        "send_friend_nudge",
+        "send_group_nudge",
+        "recall_group_message",
+        "get_group_info",
+        "get_group_member_list",
+        "get_group_member_info",
+        "set_group_member_mute",
+        "set_group_whole_mute",
+    ):
+        assert tool_name not in cq_skill
+
+    assert "[CQ:" not in tools_skill
+    assert "文字说明不注册" in tools_skill
+    assert "不执行也不扩大工具能力" in tools_skill
+    for tool_name in (
+        "send_profile_like",
+        "send_friend_nudge",
+        "send_group_nudge",
+        "recall_group_message",
+        "get_group_info",
+        "get_group_member_list",
+        "get_group_member_info",
+        "set_group_member_mute",
+        "set_group_whole_mute",
+    ):
+        assert tool_name in tools_skill
 
 
 def test_register_forwards_context_to_tools_without_implicit_actions(monkeypatch) -> None:

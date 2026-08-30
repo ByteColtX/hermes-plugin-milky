@@ -12,7 +12,7 @@ import pytest
 
 from config import load_config
 from milky.client import ActionError, HttpxTransport, MilkyClient, TransportResponse
-from milky.models import GroupList, LoginInfo
+from milky.models import GroupEntity, GroupList, GroupMemberList, LoginInfo
 
 DEFAULT_ENV = {
     "MILKY_BASE_URL": "https://localhost:5500/milky/",
@@ -155,6 +155,75 @@ def test_group_member_info_can_bypass_server_cache() -> None:
         "user_id": 900000001,
         "no_cache": True,
     }
+
+
+def test_group_query_and_mute_actions_use_openapi_fields() -> None:
+    """群查询和禁言 Action 应按 Milky 字段调用并校验返回层级。"""
+
+    transport = FakeTransport(
+        [
+            response(ok({"group": {"group_id": 700000001, "group_name": "合成群"}})),
+            response(
+                ok(
+                    {
+                        "members": [
+                            {
+                                "user_id": 900000001,
+                                "group_id": 700000001,
+                                "nickname": "合成成员",
+                            }
+                        ]
+                    }
+                )
+            ),
+            response(
+                ok(
+                    {
+                        "member": {
+                            "user_id": 900000001,
+                            "group_id": 700000001,
+                            "nickname": "合成成员",
+                        }
+                    }
+                )
+            ),
+            response(ok({})),
+            response(ok({})),
+        ]
+    )
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    async def call_actions() -> tuple[GroupEntity, GroupMemberList, object, object, object]:
+        """按协议顺序执行群查询和禁言 Action。"""
+
+        group = await client.get_group_info(700000001, no_cache=True)
+        members = await client.get_group_member_list(700000001, no_cache=True)
+        member = await client.get_group_member_info(700000001, 900000001, no_cache=True)
+        member_mute = await client.set_group_member_mute(700000001, 900000001, 60)
+        whole_mute = await client.set_group_whole_mute(700000001, True)
+        return group, members, member, member_mute, whole_mute
+
+    group, members, member, _, _ = asyncio.run(call_actions())
+
+    assert isinstance(group, GroupEntity)
+    assert group.group_name == "合成群"
+    assert isinstance(members, GroupMemberList)
+    assert members.members[0].user_id == 900000001
+    assert member.member.group_id == 700000001
+    assert [request["url"].rsplit("/", 1)[-1] for request in transport.requests] == [
+        "get_group_info",
+        "get_group_member_list",
+        "get_group_member_info",
+        "set_group_member_mute",
+        "set_group_whole_mute",
+    ]
+    assert [request["body"] for request in transport.requests] == [
+        {"group_id": 700000001, "no_cache": True},
+        {"group_id": 700000001, "no_cache": True},
+        {"group_id": 700000001, "user_id": 900000001, "no_cache": True},
+        {"group_id": 700000001, "user_id": 900000001, "duration": 60},
+        {"group_id": 700000001, "is_mute": True},
+    ]
 
 
 def test_group_member_info_rejects_invalid_no_cache_before_network() -> None:
@@ -319,6 +388,11 @@ def test_profile_like_accepts_explicit_nullable_count() -> None:
         ("send_friend_nudge", (800000001, "yes")),
         ("send_group_nudge", (700000001, 1)),
         ("recall_group_message", (700000001, -1)),
+        ("get_group_info", (1,)),
+        ("get_group_member_list", (1,)),
+        ("get_group_member_info", (700000001, 1)),
+        ("set_group_member_mute", (700000001, 900000001, -1)),
+        ("set_group_whole_mute", (700000001, "true")),
     ],
 )
 def test_explicit_outbound_action_parameters_fail_before_network(

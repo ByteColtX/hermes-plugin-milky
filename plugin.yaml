@@ -5,9 +5,15 @@ version: 0.1.0
 description: Hermes 的 Milky QQ 平台适配器；媒体安全下载由 Hermes 管理
 author: ByteColtX
 provides_tools:
-  - milky_profile_like
-  - milky_nudge
-  - milky_recall_group_message
+  - send_profile_like
+  - send_friend_nudge
+  - send_group_nudge
+  - recall_group_message
+  - get_group_info
+  - get_group_member_list
+  - get_group_member_info
+  - set_group_member_mute
+  - set_group_whole_mute
 requires_env:
   - name: MILKY_BASE_URL
     description: "Milky HTTP base URL, e.g. http://127.0.0.1:3000; the event SSE endpoint is derived by the protocol layer"

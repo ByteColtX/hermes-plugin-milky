@@ -243,7 +243,7 @@ def test_load_config_treats_empty_home_channel_as_unconfigured() -> None:
 
 
 def test_manifest_declares_only_the_new_environment_contract_and_tools() -> None:
-    """manifest 应只暴露新环境变量和三项显式 ToolSpec。"""
+    """manifest 应只暴露新环境变量和明确的 Milky ToolSpec。"""
 
     manifest = (PROJECT_ROOT / "plugin.yaml").read_text(encoding="utf-8")
 
@@ -254,6 +254,17 @@ def test_manifest_declares_only_the_new_environment_contract_and_tools() -> None
     assert "MILKY_SESSION_BUFFER_SIZE" in manifest
     assert "MILKY_HOME_CHANNEL" in manifest
     assert "provides_tools:" in manifest
-    assert manifest.count("  - milky_profile_like") == 1
-    assert manifest.count("  - milky_nudge") == 1
-    assert manifest.count("  - milky_recall_group_message") == 1
+    for tool_name in (
+        "send_profile_like",
+        "send_friend_nudge",
+        "send_group_nudge",
+        "recall_group_message",
+        "get_group_info",
+        "get_group_member_list",
+        "get_group_member_info",
+        "set_group_member_mute",
+        "set_group_whole_mute",
+    ):
+        assert manifest.count(f"  - {tool_name}") == 1
+    for old_name in ("milky_profile_like", "milky_nudge", "milky_recall_group_message"):
+        assert old_name not in manifest

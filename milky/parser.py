@@ -17,6 +17,7 @@ from .models import (
     GroupList,
     GroupMemberEntity,
     GroupMemberInfo,
+    GroupMemberList,
     ImageSegment,
     IncomingForwardedMessage,
     IncomingMessage,
@@ -93,6 +94,10 @@ def parse_action_response(payload: object, action: str) -> ParseResult[Any]:
         return ParseResult("accepted", _parse_login_info(envelope.data))
     if action == "get_group_list":
         return ParseResult("accepted", _parse_group_list(envelope.data))
+    if action == "get_group_info":
+        return ParseResult("accepted", _parse_group_info(envelope.data))
+    if action == "get_group_member_list":
+        return ParseResult("accepted", _parse_group_member_list(envelope.data))
     if action == "get_group_member_info":
         return ParseResult("accepted", _parse_group_member_info(envelope.data))
     return ParseResult("accepted", envelope)
@@ -295,6 +300,26 @@ def _parse_group_list(data: Mapping[str, Any] | None) -> GroupList:
     return GroupList(
         groups=tuple(_parse_group(item) for item in groups),
         extras=_freeze_mapping(_extras(source, {"groups"})),
+    )
+
+
+def _parse_group_info(data: Mapping[str, Any] | None) -> GroupEntity:
+    """解析 ``get_group_info`` 的群实体。"""
+
+    source = _required_data(data, "group info data")
+    return _parse_group(source.get("group"))
+
+
+def _parse_group_member_list(data: Mapping[str, Any] | None) -> GroupMemberList:
+    """解析 ``get_group_member_list`` 的群成员数组。"""
+
+    source = _required_data(data, "group member list data")
+    members = source.get("members")
+    if not isinstance(members, Sequence) or isinstance(members, (str, bytes)):
+        raise ParseError("malformed", "data.members must be an array")
+    return GroupMemberList(
+        members=tuple(_parse_group_member(item) for item in members),
+        extras=_freeze_mapping(_extras(source, {"members"})),
     )
 
 

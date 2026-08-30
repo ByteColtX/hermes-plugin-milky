@@ -23,7 +23,14 @@ from urllib.parse import unquote, urlsplit
 
 from config import MilkyConfig
 
-from .models import GroupList, GroupMemberInfo, LoginInfo, MilkyEnvelope
+from .models import (
+    GroupEntity,
+    GroupList,
+    GroupMemberInfo,
+    GroupMemberList,
+    LoginInfo,
+    MilkyEnvelope,
+)
 from .observability import log_event
 from .parser import ParseError, parse_action_response, parse_envelope
 
@@ -357,12 +364,56 @@ class MilkyClient:
         assert isinstance(result, GroupList)
         return result
 
+    async def get_group_info(
+        self, group_id: object, *, no_cache: bool | None = False
+    ) -> GroupEntity:
+        """获取群信息，并按需绕过 Milky 缓存。"""
+
+        group_value = _validate_id(
+            group_id,
+            "group_id",
+            "get_group_info",
+            minimum=_MIN_QQ_ID,
+            maximum=_MAX_QQ_ID,
+        )
+        if no_cache is not None and not isinstance(no_cache, bool):
+            raise ActionError("invalid_input", "get_group_info", "no_cache is invalid")
+        params: dict[str, Any] = {"group_id": group_value}
+        if no_cache is not False:
+            params["no_cache"] = no_cache
+        envelope = await self.call("get_group_info", params)
+        result = self._parse_typed(envelope, "get_group_info")
+        assert isinstance(result, GroupEntity)
+        return result
+
+    async def get_group_member_list(
+        self, group_id: object, *, no_cache: bool | None = False
+    ) -> GroupMemberList:
+        """获取群成员列表，并按需绕过 Milky 缓存。"""
+
+        group_value = _validate_id(
+            group_id,
+            "group_id",
+            "get_group_member_list",
+            minimum=_MIN_QQ_ID,
+            maximum=_MAX_QQ_ID,
+        )
+        if no_cache is not None and not isinstance(no_cache, bool):
+            raise ActionError("invalid_input", "get_group_member_list", "no_cache is invalid")
+        params: dict[str, Any] = {"group_id": group_value}
+        if no_cache is not False:
+            params["no_cache"] = no_cache
+        envelope = await self.call("get_group_member_list", params)
+        result = self._parse_typed(envelope, "get_group_member_list")
+        assert isinstance(result, GroupMemberList)
+        return result
+
     async def get_group_member_info(
         self,
         group_id: object,
         user_id: object,
         *,
-        no_cache: bool = False,
+        no_cache: bool | None = False,
     ) -> GroupMemberInfo:
         """获取指定群的成员信息，并按需绕过 Milky 缓存。"""
 
@@ -380,15 +431,72 @@ class MilkyClient:
             minimum=_MIN_QQ_ID,
             maximum=_MAX_QQ_ID,
         )
-        if not isinstance(no_cache, bool):
+        if no_cache is not None and not isinstance(no_cache, bool):
             raise ActionError("invalid_input", "get_group_member_info", "no_cache is invalid")
         params: dict[str, Any] = {"group_id": group_value, "user_id": user_value}
-        if no_cache:
-            params["no_cache"] = True
+        if no_cache is not False:
+            params["no_cache"] = no_cache
         envelope = await self.call("get_group_member_info", params)
         result = self._parse_typed(envelope, "get_group_member_info")
         assert isinstance(result, GroupMemberInfo)
         return result
+
+    async def set_group_member_mute(
+        self,
+        group_id: object,
+        user_id: object,
+        duration: object = _MISSING,
+    ) -> MilkyEnvelope:
+        """设置群成员禁言状态；``duration=0`` 表示取消禁言。"""
+
+        params: dict[str, Any] = {
+            "group_id": _validate_id(
+                group_id,
+                "group_id",
+                "set_group_member_mute",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            ),
+            "user_id": _validate_id(
+                user_id,
+                "user_id",
+                "set_group_member_mute",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            ),
+        }
+        if duration is not _MISSING:
+            params["duration"] = (
+                None
+                if duration is None
+                else _validate_id(
+                    duration,
+                    "duration",
+                    "set_group_member_mute",
+                    maximum=_MAX_SAFE_INTEGER,
+                )
+            )
+        return await self.call("set_group_member_mute", params)
+
+    async def set_group_whole_mute(
+        self, group_id: object, is_mute: object = _MISSING
+    ) -> MilkyEnvelope:
+        """设置群全员禁言状态。"""
+
+        params: dict[str, Any] = {
+            "group_id": _validate_id(
+                group_id,
+                "group_id",
+                "set_group_whole_mute",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            )
+        }
+        if is_mute is not _MISSING:
+            if is_mute is not None and not isinstance(is_mute, bool):
+                raise ActionError("invalid_input", "set_group_whole_mute", "is_mute is invalid")
+            params["is_mute"] = is_mute
+        return await self.call("set_group_whole_mute", params)
 
     async def send_group_message(self, group_id: object, message: object) -> SendResult:
         """向群发送 segments，并只接受远端 ``message_seq``。"""

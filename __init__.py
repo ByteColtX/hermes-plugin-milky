@@ -17,7 +17,8 @@ PLATFORM_HINT = (
     "[CQ:reply,id=<msg_id>]：引用指定消息。msg_id 必须取自当前消息或 channel_context 消息头中的 msg_id。\n"
     "同时 @ 和引用时，将两个 CQ 码连续放在正文前。\n"
     "不要从昵称、正文或记忆猜测 uid/msg_id；没有对应真实字段时不要生成该 CQ 码。\n"
-    "需要完整 CQ 码或 QQ 工具说明时，可按需加载插件 skill `hermes-plugin-milky:qq-reference`。"
+    "需要 CQ 码说明时，可按需加载插件 skill `hermes-plugin-milky:qq-reference`；"
+    "需要 QQ 工具说明时，可按需加载插件 skill `hermes-plugin-milky:qq-tools`。"
 )
 
 
@@ -25,9 +26,13 @@ def _register_bundled_skill(ctx: Any) -> None:
     """登记存在的插件自带只读 skill，不写入用户全局目录。"""
 
     register_skill = getattr(ctx, "register_skill", None)
-    skill_path = Path(_PLUGIN_ROOT) / "skills" / "qq-reference" / "SKILL.md"
-    if callable(register_skill) and skill_path.is_file():
-        register_skill("qq-reference", skill_path)
+    if not callable(register_skill):
+        return
+
+    for skill_name in ("qq-reference", "qq-tools"):
+        skill_path = Path(_PLUGIN_ROOT) / "skills" / skill_name / "SKILL.md"
+        if skill_path.is_file():
+            register_skill(skill_name, skill_path)
 
 
 def register(ctx: Any) -> None:

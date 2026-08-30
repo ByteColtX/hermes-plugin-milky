@@ -191,7 +191,7 @@ def test_home_fixtures_are_synthetic_and_redacted() -> None:
 
 
 def test_register_exposes_fixed_home_metadata_and_cron_hooks_without_network(monkeypatch) -> None:
-    """注册应固定启动时目标并暴露 Hermes 所需三个 hook。"""
+    """注册应固定启动时目标并暴露 Hermes 所需 hook。"""
 
     monkeypatch.setenv("MILKY_BASE_URL", "https://localhost:5500/milky")
     monkeypatch.setenv("MILKY_ACCESS_TOKEN", "registry-test-token")
@@ -207,9 +207,15 @@ def test_register_exposes_fixed_home_metadata_and_cron_hooks_without_network(mon
         assert callable(registration["env_enablement_fn"])
         assert callable(registration["standalone_sender_fn"])
         assert [tool["name"] for tool in context.tools] == [
-            "milky_profile_like",
-            "milky_nudge",
-            "milky_recall_group_message",
+            "send_profile_like",
+            "send_friend_nudge",
+            "send_group_nudge",
+            "recall_group_message",
+            "get_group_info",
+            "get_group_member_list",
+            "get_group_member_info",
+            "set_group_member_mute",
+            "set_group_whole_mute",
         ]
         enablement = registration["env_enablement_fn"]
         assert enablement() == {
