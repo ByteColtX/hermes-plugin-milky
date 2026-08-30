@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 ChatScene = Literal["friend", "group"]
-MuteState = Literal["muted", "unmuted"]
+MuteState = Literal["muted", "unmuted", "unknown"]
 
 
 @dataclass(frozen=True, slots=True)

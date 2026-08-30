@@ -48,12 +48,12 @@ class ChatAllowlistGate(Gate):
 
 
 class MutedGroupGate(Gate):
-    """拒绝成员禁言、全体禁言或未确认禁言状态的群消息。"""
+    """拒绝已确认的成员禁言或全体禁言群消息。"""
 
     name = "muted_group"
 
     def check(self, context: GateContext) -> GateResult:
-        """只读取调用方提供的二态快照，不主动查询状态。"""
+        """只读取调用方提供的禁言快照，不主动查询状态。"""
 
         if context.scene == "friend":
             return GateResult(True, "passed")
@@ -65,7 +65,7 @@ class MutedGroupGate(Gate):
             return GateResult(False, "mute_state_unknown")
         if context.whole_mute == "muted":
             return GateResult(False, "whole_muted")
-        if context.whole_mute != "unmuted":
+        if context.whole_mute not in {"unmuted", "unknown"}:
             return GateResult(False, "mute_state_unknown")
         return GateResult(True, "passed")
 

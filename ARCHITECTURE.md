@@ -219,7 +219,8 @@ Gate 是确定性的硬性门禁，顺序固定为：
 
 1. `SelfMessageGate`：拒绝 `sender_id == self_id`；
 2. `ChatAllowlistGate`：空白名单放行，否则要求完整 chat key 命中；
-3. `MutedGroupGate`：群成员禁言或全体禁言任一为 `muted` 时拒绝，未成功维护时默认拒绝。
+3. `MutedGroupGate`：群成员禁言或已确认的全体禁言为 `muted` 时拒绝；初始化未完成时默认拒绝，
+   Milky 无法查询到的全体禁言状态不作为已禁言处理。
 
 Gate deny 不增长 wait buffer，也不修改 Will 状态。
 
@@ -234,11 +235,19 @@ Hermes `handle_message()` 正常返回、确认 trigger 已提交后，才扣除
 ### 8.3 MuteTracker
 
 `MuteTracker` 是 Bot 群禁言状态的唯一拥有者。初始同步顺序为登录信息、群列表、逐群查询
-Bot 自身成员信息；成员禁言只读取 Milky 的 `member.shut_up_end_time`。
+Bot 自身成员信息；成员禁言只读取 Milky 的 `member.shut_up_end_time`，且启动同步与主动刷新
+必须在 `get_group_member_info` 请求中使用 `no_cache=true`，避免服务端成员缓存掩盖刚发生的禁言。
+Milky v1.3 没有读取全体禁言状态的 Action 或群实体字段，因此完成成员查询后 whole mute 可以是
+`unknown`，只有明确的 `group_whole_mute` 事件才能更新为 `muted` 或 `unmuted`。
 
-状态只有 `muted` 和 `unmuted`，包含 member mute、whole mute、观测时间和刷新时间。查询
-失败保留原状态；从未成功维护的群保持 `muted`。`group_mute` 和 `group_whole_mute` 事件
-更新对应状态，群发送失败可以触发受锁、冷却和并发上限保护的刷新，私聊失败不得刷新群状态。
+member mute 使用 `muted` 和 `unmuted`，whole mute 另外允许 `unknown`，并包含观测时间和刷新
+时间。初始化未完成或查询失败时 Gate 仍保持 fail-closed；成功完成成员查询后，unknown
+whole mute 不阻塞群消息，实际发送失败仍原样返回。冷启动逐群日志只显示确认被禁言的群，
+最终汇总使用 `total`、`succeeded`、`failed`、`muted`、`unmuted` 和 `unknown` 计数。
+`group_mute` 和 `group_whole_mute` 事件
+更新对应状态；正时长的个人禁言会按 `member_mute_until` 启动本地 TTL 到期任务，到期后
+自动更新为 `unmuted`，Gate 查询也会惰性校正已到期状态。群发送失败可以触发受锁、冷却和
+并发上限保护的刷新，私聊失败不得刷新群状态；停止时必须取消 TTL 任务。
 
 ## 9. Milky 协议边界
 

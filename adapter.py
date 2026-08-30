@@ -122,7 +122,11 @@ class MilkyAdapter(BasePlatformAdapter):
         self._event_stream = (
             event_stream if event_stream is not None else SseEventStream(self._config)
         )
-        self._mute_tracker = mute_tracker if mute_tracker is not None else MuteTracker(self._client)
+        self._mute_tracker = (
+            mute_tracker
+            if mute_tracker is not None
+            else MuteTracker(self._client, allowed_chats=self._config.allowed_chats)
+        )
         self._resource_resolver = (
             resource_resolver
             if resource_resolver is not None
@@ -153,6 +157,7 @@ class MilkyAdapter(BasePlatformAdapter):
         self._connected = False
         self._closed = False
         self._sender_bound = False
+        self._nickname: str | None = None
         self._diagnostics: deque[str] = deque(maxlen=_MAX_DIAGNOSTICS)
 
     @property
@@ -178,6 +183,12 @@ class MilkyAdapter(BasePlatformAdapter):
         """返回初始同步确认的 Bot 身份。"""
 
         return self._self_id
+
+    @property
+    def nickname(self) -> str | None:
+        """返回初始同步确认的 Bot 昵称。"""
+
+        return self._nickname
 
     @property
     def diagnostics(self) -> tuple[str, ...]:
@@ -271,6 +282,7 @@ class MilkyAdapter(BasePlatformAdapter):
                 await asyncio.gather(event_task, return_exceptions=True)
 
             await self._close_component(self._pipeline, "pipeline_close_failed")
+            await self._close_component(self._mute_tracker, "mute_tracker_close_failed")
             await self._close_component(self._client, "client_close_failed")
             self._unbind_sender()
             self._mark_disconnected()
@@ -313,7 +325,14 @@ class MilkyAdapter(BasePlatformAdapter):
         if isinstance(self_id, bool) or not isinstance(self_id, int) or self_id < 0:
             raise ValueError("initial state sync did not confirm self identity")
         self._self_id = self_id
+        nickname = getattr(self._mute_tracker, "nickname", None)
+        self._nickname = nickname if isinstance(nickname, str) else None
         self._initial_sync_complete = True
+        start = getattr(self._mute_tracker, "start", None)
+        if callable(start):
+            result = start()
+            if inspect.isawaitable(result):
+                await result
 
     def _build_pipeline(self) -> InboundPipeline:
         """使用初始同步确认的 Bot 身份组装入站 pipeline。"""

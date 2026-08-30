@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 
 import pytest
@@ -43,6 +44,7 @@ class FakeMuteClient:
     group_ids: list[int]
     member_results: dict[int, GroupMemberInfo | BaseException] = field(default_factory=dict)
     calls: list[tuple[str, int | None, int | None]] = field(default_factory=list)
+    member_no_cache: list[bool] = field(default_factory=list)
     delay: float = 0
 
     def __post_init__(self) -> None:
@@ -62,10 +64,13 @@ class FakeMuteClient:
         self.calls.append(("groups", None, None))
         return GroupList(tuple(GroupEntity(group_id=group_id) for group_id in self.group_ids))
 
-    async def get_group_member_info(self, group_id: int, user_id: int) -> GroupMemberInfo:
+    async def get_group_member_info(
+        self, group_id: int, user_id: int, *, no_cache: bool = False
+    ) -> GroupMemberInfo:
         """返回成员状态或安全的 fake Action 错误。"""
 
         self.calls.append(("member", group_id, user_id))
+        self.member_no_cache.append(no_cache)
         self.inflight += 1
         self.max_inflight = max(self.max_inflight, self.inflight)
         try:
@@ -97,9 +102,11 @@ def test_tracker_fails_closed_before_ordered_initial_sync() -> None:
         ("member", 700000001, 900000001),
         ("member", 700000002, 900000001),
     ]
+    assert client.member_no_cache == [True, True]
     assert tracker.get_snapshot(700000001).member_mute == "unmuted"
     assert tracker.get_snapshot(700000002).member_mute == "unmuted"
-    assert tracker.get_snapshot(700000001).whole_mute == "muted"
+    assert tracker.get_snapshot(700000001).whole_mute == "unknown"
+    assert tracker.is_muted(700000001) is False
 
 
 def test_tracker_treats_null_and_omitted_mute_end_as_unmuted() -> None:
@@ -116,6 +123,116 @@ def test_tracker_treats_null_and_omitted_mute_end_as_unmuted() -> None:
     assert all(
         tracker.get_snapshot(group_id).member_mute == "unmuted" for group_id in client.group_ids
     )
+
+
+def test_tracker_expires_member_mute_from_end_time_without_remote_refresh() -> None:
+    """个人禁言 TTL 到期后应本地转为 unmuted，不依赖下一次 Action。"""
+
+    current_time = 100
+    client = FakeMuteClient(
+        [700000001],
+        member_results={700000001: member(700000001, shut_up_end_time=130)},
+    )
+    tracker = MuteTracker(client, clock=lambda: current_time)
+    asyncio.run(tracker.initialize())
+
+    assert tracker.get_snapshot(700000001).member_mute == "muted"
+    member_calls_before = len([call for call in client.calls if call[0] == "member"])
+
+    current_time = 130
+    expired = tracker.get_snapshot(700000001)
+
+    assert expired.member_mute == "unmuted"
+    assert expired.member_mute_until is None
+    assert tracker.is_muted(700000001) is False
+    assert len([call for call in client.calls if call[0] == "member"]) == member_calls_before
+
+
+def test_tracker_expiry_task_updates_state_and_closes_cleanly() -> None:
+    """TTL 任务应在截止时间后更新状态，并可被生命周期安全取消。"""
+
+    current_time = 100
+    client = FakeMuteClient([700000001])
+    tracker = MuteTracker(client, clock=lambda: current_time)
+
+    async def scenario() -> None:
+        nonlocal current_time
+        await tracker.initialize()
+        tracker.apply_event(
+            {
+                "event_type": "group_mute",
+                "time": 100,
+                "self_id": 900000001,
+                "data": {
+                    "group_id": 700000001,
+                    "user_id": 900000001,
+                    "duration": 1,
+                },
+            }
+        )
+        tracker.start()
+        current_time = 101
+        await asyncio.sleep(0.01)
+
+        assert tracker._snapshots[700000001].member_mute == "unmuted"
+        await tracker.close()
+        assert tracker._expiry_task is None
+
+    asyncio.run(scenario())
+
+
+def test_tracker_scans_only_group_allowlist_and_logs_masked_identity_and_results(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """冷启动日志应显示身份和白名单群结果，且隐藏 ID 中间部分。"""
+
+    client = FakeMuteClient([700000001, 700000002])
+    tracker = MuteTracker(
+        client,
+        allowed_chats={"group:700000001", "dm:800000001"},
+        clock=lambda: 100,
+    )
+
+    with caplog.at_level(logging.INFO, logger="state.mute_tracker"):
+        asyncio.run(tracker.initialize())
+
+    member_calls = [call for call in client.calls if call[0] == "member"]
+    assert member_calls == [("member", 700000001, 900000001)]
+    assert client.member_no_cache == [True]
+    assert tracker.group_ids == (700000001,)
+    assert "Milky cold-start identity uid=900***001 nickname=合成机器人" in caplog.text
+    assert "冷启动" not in caplog.text
+    assert "群禁言" not in caplog.text
+    assert "Milky muted group" not in caplog.text
+    assert "900000001" not in caplog.text
+    assert "700000002" not in caplog.text
+    assert (
+        "Milky mute scan completed scope=allowlist total=1 succeeded=1 failed=0 "
+        "muted=0 unmuted=0 unknown=1"
+    ) in caplog.text
+
+
+def test_tracker_logs_only_muted_groups_and_summarizes_all_states(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """逐群日志只显示禁言群，汇总应区分所有成功状态。"""
+
+    client = FakeMuteClient(
+        [700000001, 700000002, 700000003],
+        member_results={700000001: member(700000001, shut_up_end_time=200)},
+    )
+    tracker = MuteTracker(client, clock=lambda: 100)
+
+    with caplog.at_level(logging.INFO, logger="state.mute_tracker"):
+        asyncio.run(tracker.initialize())
+
+    assert "Milky muted group group=700***001 member=muted whole=unknown" in caplog.text
+    assert "group=700***002" not in caplog.text
+    assert "group=700***003" not in caplog.text
+    assert (
+        "Milky mute scan completed scope=all_groups total=3 succeeded=3 failed=0 "
+        "muted=1 unmuted=0 unknown=2"
+    ) in caplog.text
 
 
 def test_tracker_initial_failure_keeps_not_ready_and_muted() -> None:
@@ -162,6 +279,7 @@ def test_tracker_refresh_failure_preserves_existing_two_state_values() -> None:
 
     assert after.member_mute == before.member_mute == "muted"
     assert after.whole_mute == before.whole_mute == "unmuted"
+    assert client.member_no_cache == [True, True]
 
 
 def test_tracker_full_sync_cleans_groups_missing_from_new_list() -> None:
@@ -267,6 +385,7 @@ def test_tracker_limits_same_group_refresh_and_never_refreshes_dm() -> None:
     assert results.count(False) == 2
     member_calls_after = len([call for call in client.calls if call[0] == "member"])
     assert member_calls_after == member_calls_before + 1
+    assert client.member_no_cache[-1] is True
 
 
 def test_tracker_refreshes_different_groups_with_global_limit() -> None:

@@ -213,8 +213,14 @@ class MilkyClient:
         assert isinstance(result, GroupList)
         return result
 
-    async def get_group_member_info(self, group_id: object, user_id: object) -> GroupMemberInfo:
-        """获取指定群的成员信息并校验两个非负 ID。"""
+    async def get_group_member_info(
+        self,
+        group_id: object,
+        user_id: object,
+        *,
+        no_cache: bool = False,
+    ) -> GroupMemberInfo:
+        """获取指定群的成员信息，并按需绕过 Milky 缓存。"""
 
         group_value = _validate_id(
             group_id,
@@ -230,10 +236,12 @@ class MilkyClient:
             minimum=_MIN_QQ_ID,
             maximum=_MAX_QQ_ID,
         )
-        envelope = await self.call(
-            "get_group_member_info",
-            {"group_id": group_value, "user_id": user_value},
-        )
+        if not isinstance(no_cache, bool):
+            raise ActionError("invalid_input", "get_group_member_info", "no_cache is invalid")
+        params: dict[str, Any] = {"group_id": group_value, "user_id": user_value}
+        if no_cache:
+            params["no_cache"] = True
+        envelope = await self.call("get_group_member_info", params)
         result = self._parse_typed(envelope, "get_group_member_info")
         assert isinstance(result, GroupMemberInfo)
         return result

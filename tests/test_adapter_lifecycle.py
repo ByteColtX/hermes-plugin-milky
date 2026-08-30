@@ -37,6 +37,8 @@ class FakeMuteTracker:
         self.initialized = False
         self.self_id: int | None = None
         self.initialize_calls = 0
+        self.start_calls = 0
+        self.close_calls = 0
 
     async def initialize(self) -> bool:
         """完成或拒绝初始状态同步。"""
@@ -47,6 +49,16 @@ class FakeMuteTracker:
         self.initialized = True
         self.self_id = 900000001
         return True
+
+    def start(self) -> None:
+        """启动模拟 TTL 任务。"""
+
+        self.start_calls += 1
+
+    async def close(self) -> None:
+        """停止模拟 TTL 任务。"""
+
+        self.close_calls += 1
 
 
 class FakeEventStream:
@@ -165,12 +177,14 @@ def test_connect_syncs_state_before_starting_event_stream() -> None:
         await stream.started.wait()
 
         assert tracker.initialize_calls == 1
+        assert tracker.start_calls == 1
         assert pipeline.start_calls == 1
         assert stream.run_calls == 1
         assert adapter.ready is True
         assert adapter.self_id == 900000001
 
         await adapter.disconnect()
+        assert tracker.close_calls == 1
 
     asyncio.run(scenario())
 

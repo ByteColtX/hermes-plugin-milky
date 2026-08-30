@@ -380,7 +380,19 @@ def test_local_http_lifecycle_outbound_refresh_and_upload(tmp_path: Path) -> Non
         assert all(item["path"].startswith("/milky/api/") for item in requests)
         assert requests[0]["body"] == {}
         assert requests[1]["body"] == {}
-        assert requests[2]["body"] == {"group_id": 700000001, "user_id": _SELF_ID}
+        member_requests = [
+            item for item in requests if item["path"].endswith("get_group_member_info")
+        ]
+        assert member_requests
+        assert all(
+            item["body"]
+            == {
+                "group_id": item["body"]["group_id"],
+                "user_id": _SELF_ID,
+                "no_cache": True,
+            }
+            for item in member_requests
+        )
         upload = next(item for item in requests if item["path"].endswith("upload_group_file"))
         assert upload["body"]["file_uri"].startswith("base64://")
         assert "file" not in upload["body"]

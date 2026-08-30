@@ -78,8 +78,8 @@ def test_empty_allowlist_allows_friend_and_unmuted_group() -> None:
     assert registry.check(make_context(scene="group", chat_key="group:300")).allow is True
 
 
-def test_muted_group_gate_fails_closed_but_does_not_block_friend() -> None:
-    """群禁言状态任一未确认即拒绝，私聊不读取群状态。"""
+def test_muted_group_gate_uses_confirmed_state_and_does_not_block_friend() -> None:
+    """只阻止已确认的群禁言，未知全体状态和私聊不误拦截。"""
 
     gate = MutedGroupGate()
 
@@ -87,6 +87,7 @@ def test_muted_group_gate_fails_closed_but_does_not_block_friend() -> None:
     assert gate.check(make_context(member_mute="unmuted", whole_mute="muted")).reason == (
         "whole_muted"
     )
+    assert gate.check(make_context(member_mute="unmuted", whole_mute="unknown")).allow is True
     assert gate.check(make_context(member_mute="unverified")).reason == "mute_state_unknown"
     assert gate.check(
         make_context(scene="friend", chat_key="dm:300", member_mute="muted", whole_mute="muted")

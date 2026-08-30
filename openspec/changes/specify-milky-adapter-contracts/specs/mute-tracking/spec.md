@@ -1,19 +1,30 @@
 ## Purpose
 
-维护 Milky Bot 自身在各群的可发言权威状态，使用 fail-closed 的 muted/unmuted 二态模型，
-正确处理成员禁言、全体禁言、查询失败和事件更新，减少确定不能回复时的无效 Agent turn 与发送请求。
+维护 Milky Bot 自身在各群的可发言状态，成员禁言使用 fail-closed 的 muted/unmuted 二态模型，
+全体禁言在 Milky 无法查询时显式记录 unknown，正确处理成员禁言、全体禁言、查询失败和事件
+更新，减少确定不能回复时的无效 Agent turn 与发送请求。
 
 ## ADDED Requirements
 
 ### Requirement: 初始群禁言同步使用正确顺序和字段
 
-连接初始化 MUST 依次获取登录信息、群列表，再为每个群查询 Bot 自身成员信息；成员禁言截止时间 MUST 读取 `member.shut_up_end_time`。
+连接初始化 MUST 依次获取登录信息、群列表，再只为白名单允许的群查询 Bot 自身成员信息；
+成员禁言截止时间 MUST 读取 `member.shut_up_end_time`；启动同步和主动刷新调用
+`get_group_member_info` 时 MUST 传入 `no_cache=true`，以避免读取过期的成员状态缓存。
+白名单为空时沿用允许所有群的语义，
+`dm:<id>` 白名单项不触发群成员查询。
 
-#### Scenario: 初始化多个群
+#### Scenario: 空白名单初始化多个群
 
-- **WHEN** 适配器完成登录信息和群列表请求
+- **WHEN** 适配器完成登录信息和群列表请求且白名单为空
 - **THEN** SHALL 为群列表中的每个群查询 `group_id` 与 `user_id=self_id` 的成员信息
 - **AND** SHALL 在所有必要查询完成前不将消息标记为初始化完成
+
+#### Scenario: 初始同步只扫描群白名单
+
+- **WHEN** 白名单包含 `group:100`、`dm:200`，而群列表包含群 `100` 和群 `101`
+- **THEN** SHALL 只查询群 `100` 的 Bot 成员信息
+- **AND** SHALL 不查询群 `101` 或因 `dm:200` 查询群成员
 
 #### Scenario: 成员字段为 null
 
@@ -27,15 +38,37 @@
 - **THEN** tracker SHALL 将该次成员查询视为成功且当前 member mute 为 unmuted
 - **AND** SHALL 不因字段省略把成功响应退化为永久 muted；只有请求失败或响应结构损坏时才保持既有 fail-closed 状态
 
-### Requirement: 状态模型只有 muted 和 unmuted
+#### Scenario: 成员状态查询绕过缓存
 
-每个群 MUST 维护 member mute、whole mute、观测时间和刷新时间；每个 mute 字段只能是 muted 或 unmuted，初始值 MUST 为 muted。
+- **WHEN** tracker 在启动同步或主动刷新时查询 Bot 自身成员信息
+- **THEN** SHALL 向 `get_group_member_info` 传入 `no_cache=true`
+- **AND** SHALL 不因服务端返回过期缓存而把当前成员禁言误判为 unmuted
+
+#### Scenario: 个人禁言 TTL 到期
+
+- **WHEN** 成员查询或 `group_mute` 事件得到未来的 `shut_up_end_time`，且本地时间达到该截止时间
+- **THEN** member mute SHALL 自动更新为 `unmuted`
+- **AND** SHALL 不依赖新的 Milky 查询或 `duration=0` 事件才能恢复群消息处理
+
+### Requirement: 状态模型区分已确认和未确认的全体禁言
+
+每个群 MUST 维护 member mute、whole mute、观测时间和刷新时间。member mute 只能是
+`muted` 或 `unmuted`，初始值 MUST 为 `muted`；由于 Milky v1.3 没有读取全体禁言状态的
+Action 或群实体字段，whole mute 在完成成员查询但没有明确事件时 MUST 为 `unknown`。
+初始化尚未完成时，Gate MUST 继续 fail-closed；`unknown` 的 whole mute 不得被当作已确认的
+`muted`，也不得阻止群消息。
 
 #### Scenario: 查询失败保持 fail-closed 状态
 
 - **WHEN** 某群刷新查询失败
 - **THEN** 系统 SHALL 保留上次二态状态
 - **AND** 若此前从未成功维护状态，系统 SHALL 保持 muted，不得把失败解释成 unmuted
+
+#### Scenario: 全体禁言状态不可查询
+
+- **WHEN** 成员查询成功但 Milky 没有提供全体禁言读取结果或对应事件
+- **THEN** whole mute SHALL 记录为 `unknown`
+- **AND** 状态汇总 SHALL 计入 `unknown`，群 Gate SHALL 不因该状态误判为已禁言
 
 #### Scenario: 全量刷新发现群离开
 
@@ -44,7 +77,8 @@
 
 ### Requirement: 禁言事件更新遵循 Milky 语义
 
-`group_mute` 的 `duration=0` MUST 清除对应成员禁言，正 duration MUST 计算截止时间；`group_whole_mute` MUST 按 `is_mute` 更新 whole mute 状态。
+`group_mute` 的 `duration=0` MUST 清除对应成员禁言，正 duration MUST 计算截止时间并安排本地
+TTL 到期更新；`group_whole_mute` MUST 按 `is_mute` 更新 whole mute 状态。
 
 #### Scenario: 取消成员禁言
 

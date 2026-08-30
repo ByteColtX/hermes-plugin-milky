@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import time
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, Protocol, runtime_checkable
@@ -15,7 +16,9 @@ from milky.models import Event, GroupList, GroupMemberInfo, LoginInfo
 from milky.parser import ParseError, parse_event
 from session.identity import normalize_chat_key
 
-MuteState = Literal["muted", "unmuted"]
+MuteState = Literal["muted", "unmuted", "unknown"]
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -28,8 +31,10 @@ class MuteSyncClient(Protocol):
     async def get_group_list(self) -> GroupList:
         """读取 Bot 当前群列表。"""
 
-    async def get_group_member_info(self, group_id: int, user_id: int) -> GroupMemberInfo:
-        """读取 Bot 在指定群的成员信息。"""
+    async def get_group_member_info(
+        self, group_id: int, user_id: int, *, no_cache: bool = False
+    ) -> GroupMemberInfo:
+        """读取 Bot 在指定群的成员信息，并支持绕过服务端缓存。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +43,7 @@ class MuteSnapshot:
 
     group_id: int
     member_mute: MuteState = "muted"
-    whole_mute: MuteState = "muted"
+    whole_mute: MuteState = "unknown"
     member_mute_until: int | None = None
     observed_at: float | None = None
     refreshed_at: float | None = None
@@ -72,6 +77,7 @@ class MuteTracker:
         self,
         client: MuteSyncClient,
         *,
+        allowed_chats: Collection[str] | None = None,
         clock: Clock | None = None,
         refresh_cooldown: float = 5.0,
         max_concurrent_refreshes: int = 2,
@@ -101,8 +107,12 @@ class MuteTracker:
         self._refresh_attempts: dict[int, float] = {}
         self._diagnostics: deque[str] = deque(maxlen=128)
         self._initialize_lock = asyncio.Lock()
+        self._expiry_task: asyncio.Task[None] | None = None
+        self._expiry_wakeup: asyncio.Event | None = None
         self._initialized = False
         self._self_id: int | None = None
+        self._nickname: str | None = None
+        self._allowed_chats = _normalize_allowed_chats(allowed_chats)
 
     @property
     def initialized(self) -> bool:
@@ -123,6 +133,12 @@ class MuteTracker:
         return self._self_id
 
     @property
+    def nickname(self) -> str | None:
+        """返回最近一次成功读取的 Bot 昵称。"""
+
+        return self._nickname
+
+    @property
     def group_ids(self) -> tuple[int, ...]:
         """返回当前群列表中的群 ID。"""
 
@@ -138,12 +154,14 @@ class MuteTracker:
     def snapshots(self) -> Mapping[int, MuteSnapshot]:
         """返回不可变的当前快照。"""
 
+        self._expire_member_mutes_if_ready()
         return MappingProxyType(dict(self._snapshots))
 
     def get_snapshot(self, group_id: object) -> MuteSnapshot:
         """返回指定群的快照，未知群使用 fail-closed 默认值。"""
 
         value = _validate_id(group_id, "group_id")
+        self._expire_member_mute_if_ready(value)
         return self._snapshots.get(value, MuteSnapshot(value))
 
     def get_state(self, group_id: object) -> MuteSnapshot:
@@ -152,7 +170,7 @@ class MuteTracker:
         return self.get_snapshot(group_id)
 
     def gate_snapshot(self, group_id: object) -> tuple[MuteState, MuteState]:
-        """返回供 MutedGroupGate 使用的成员和全体二态快照。"""
+        """返回供 MutedGroupGate 使用的成员和全体禁言快照。"""
 
         if not self._initialized:
             return "muted", "muted"
@@ -160,15 +178,34 @@ class MuteTracker:
         return snapshot.member_mute, snapshot.whole_mute
 
     def is_muted(self, group_id: object) -> bool:
-        """返回成员禁言或全体禁言是否会阻止该群发言。"""
+        """返回已确认的成员或全体禁言是否会阻止该群发言。"""
 
         member_mute, whole_mute = self.gate_snapshot(group_id)
         return member_mute == "muted" or whole_mute == "muted"
+
+    def start(self) -> None:
+        """启动个人禁言 TTL 到期任务；重复启动不会创建重复任务。"""
+
+        if not self._initialized:
+            return
+        if self._expiry_task is not None and not self._expiry_task.done():
+            return
+        self._expiry_wakeup = asyncio.Event()
+        self._expiry_task = asyncio.create_task(
+            self._run_expiry_loop(),
+            name="milky-mute-expiry",
+        )
+
+    async def close(self) -> None:
+        """取消个人禁言 TTL 到期任务。"""
+
+        await self._stop_expiry_task()
 
     async def initialize(self) -> bool:
         """按登录、群列表、逐群成员查询顺序建立初始快照。"""
 
         async with self._initialize_lock:
+            await self._stop_expiry_task()
             self._initialized = False
             try:
                 login = await self._client.get_login_info()
@@ -183,19 +220,59 @@ class MuteTracker:
                 self._record("initial_state_shape_invalid")
                 raise MuteSyncError("initial mute sync failed")
             self._self_id = _validate_id(login.uin, "self_id")
-            group_ids = tuple(_validate_id(group.group_id, "group_id") for group in groups.groups)
+            self._nickname = login.nickname
+            group_ids = self._select_group_ids(groups)
             self._retain_current_groups(group_ids)
 
+            logger.info(
+                "Milky cold-start identity uid=%s nickname=%s",
+                _mask_identifier(self._self_id),
+                _safe_log_text(self._nickname),
+            )
+
             failures = False
+            successful_count = 0
+            muted_count = 0
+            unmuted_count = 0
+            unknown_count = 0
             for group_id in group_ids:
                 try:
-                    member_info = await self._client.get_group_member_info(group_id, self._self_id)
+                    member_info = await self._client.get_group_member_info(
+                        group_id, self._self_id, no_cache=True
+                    )
                     self._apply_member_info(group_id, member_info, self._read_clock())
+                    successful_count += 1
+                    snapshot = self._snapshots[group_id]
+                    state = _effective_mute_state(snapshot)
+                    if state == "muted":
+                        muted_count += 1
+                        logger.info(
+                            "Milky muted group group=%s member=%s whole=%s",
+                            _mask_identifier(group_id),
+                            snapshot.member_mute,
+                            snapshot.whole_mute,
+                        )
+                    elif state == "unmuted":
+                        unmuted_count += 1
+                    else:
+                        unknown_count += 1
                 except asyncio.CancelledError:
                     raise
                 except Exception:  # noqa: BLE001
                     failures = True
                     self._record("initial_member_query_failed")
+
+            logger.info(
+                "Milky mute scan completed scope=%s total=%d succeeded=%d failed=%d muted=%d "
+                "unmuted=%d unknown=%d",
+                "allowlist" if self._allowed_chats else "all_groups",
+                len(group_ids),
+                successful_count,
+                len(group_ids) - successful_count,
+                muted_count,
+                unmuted_count,
+                unknown_count,
+            )
 
             if failures:
                 raise MuteSyncError("initial mute sync failed")
@@ -236,7 +313,7 @@ class MuteTracker:
             async with self._refresh_slots:
                 try:
                     member_info = await self._client.get_group_member_info(
-                        normalized_id, self._self_id
+                        normalized_id, self._self_id, no_cache=True
                     )
                     self._apply_member_info(normalized_id, member_info, now)
                 except asyncio.CancelledError:
@@ -310,6 +387,7 @@ class MuteTracker:
             observed_at=float(event.time),
             refreshed_at=current.refreshed_at,
         )
+        self._wake_expiry_loop()
         return True
 
     def _apply_group_whole_mute(self, event: Event) -> bool:
@@ -353,12 +431,26 @@ class MuteTracker:
             observed_at=observed_at,
             refreshed_at=observed_at,
         )
+        self._wake_expiry_loop()
 
     def _retain_current_groups(self, group_ids: tuple[int, ...]) -> None:
         previous = self._snapshots
         self._snapshots = {
             group_id: previous.get(group_id, MuteSnapshot(group_id)) for group_id in group_ids
         }
+
+    def _select_group_ids(self, groups: GroupList) -> tuple[int, ...]:
+        """按白名单选择需要查询禁言状态的群。"""
+
+        group_ids = tuple(_validate_id(group.group_id, "group_id") for group in groups.groups)
+        if not self._allowed_chats:
+            return group_ids
+        allowed_group_ids = {
+            int(chat_key.split(":", 1)[1])
+            for chat_key in self._allowed_chats
+            if chat_key.startswith("group:")
+        }
+        return tuple(group_id for group_id in group_ids if group_id in allowed_group_ids)
 
     def _read_clock(self) -> float:
         value = self._clock()
@@ -367,6 +459,91 @@ class MuteTracker:
         if not math.isfinite(value):
             raise ValueError("clock must return a finite number")
         return float(value)
+
+    async def _stop_expiry_task(self) -> None:
+        """停止已有 TTL 任务，避免重新同步时复制后台任务。"""
+
+        task = self._expiry_task
+        self._expiry_task = None
+        self._expiry_wakeup = None
+        if task is None or task is asyncio.current_task():
+            return
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    async def _run_expiry_loop(self) -> None:
+        """等待最早的个人禁言截止时间并更新本地成员状态。"""
+
+        wakeup = self._expiry_wakeup
+        if wakeup is None:
+            return
+        while self._initialized:
+            deadline = self._next_member_mute_deadline()
+            if deadline is None:
+                await wakeup.wait()
+                wakeup.clear()
+                continue
+            delay = max(0.0, deadline - self._read_clock())
+            try:
+                await asyncio.wait_for(wakeup.wait(), timeout=delay)
+            except TimeoutError:
+                self._expire_member_mutes_if_ready()
+            else:
+                wakeup.clear()
+
+    def _next_member_mute_deadline(self) -> int | None:
+        """返回当前最早的个人禁言截止时间。"""
+
+        deadlines = tuple(
+            snapshot.member_mute_until
+            for snapshot in self._snapshots.values()
+            if snapshot.member_mute == "muted" and snapshot.member_mute_until is not None
+        )
+        return min(deadlines) if deadlines else None
+
+    def _expire_member_mute_if_ready(self, group_id: int) -> None:
+        """在已初始化状态下按本地 TTL 惰性修正一个群。"""
+
+        if self._initialized:
+            self._expire_member_mutes(self._read_clock(), group_id)
+
+    def _expire_member_mutes_if_ready(self) -> None:
+        """在已初始化状态下按本地 TTL 惰性修正所有群。"""
+
+        if self._initialized:
+            self._expire_member_mutes(self._read_clock())
+
+    def _expire_member_mutes(self, now: float, group_id: int | None = None) -> None:
+        """将已到期的个人禁言更新为 unmuted。"""
+
+        group_ids = (group_id,) if group_id is not None else tuple(self._snapshots)
+        for current_group_id in group_ids:
+            snapshot = self._snapshots.get(current_group_id)
+            if snapshot is None:
+                continue
+            until = snapshot.member_mute_until
+            if snapshot.member_mute != "muted" or until is None or until > now:
+                continue
+            self._snapshots[current_group_id] = MuteSnapshot(
+                group_id=current_group_id,
+                member_mute="unmuted",
+                whole_mute=snapshot.whole_mute,
+                member_mute_until=None,
+                observed_at=now,
+                refreshed_at=snapshot.refreshed_at,
+            )
+            logger.info(
+                "Milky mute TTL expired group=%s member=unmuted whole=%s",
+                _mask_identifier(current_group_id),
+                snapshot.whole_mute,
+            )
+
+    def _wake_expiry_loop(self) -> None:
+        """通知 TTL 任务重新计算最近截止时间。"""
+
+        if self._expiry_wakeup is not None:
+            self._expiry_wakeup.set()
 
     def _record(self, reason: str) -> None:
         self._diagnostics.append(reason)
@@ -384,6 +561,45 @@ def _event_id(data: Mapping[str, object], field_name: str) -> int | None:
         return _validate_id(value, field_name)
     except (TypeError, ValueError):
         return None
+
+
+def _effective_mute_state(snapshot: MuteSnapshot) -> MuteState:
+    """计算汇总使用的有效群禁言状态。"""
+
+    if snapshot.member_mute == "muted" or snapshot.whole_mute == "muted":
+        return "muted"
+    if snapshot.member_mute == "unmuted" and snapshot.whole_mute == "unmuted":
+        return "unmuted"
+    return "unknown"
+
+
+def _normalize_allowed_chats(allowed_chats: Collection[str] | None) -> frozenset[str]:
+    """校验并保存群禁言扫描使用的完整 chat key 白名单。"""
+
+    if allowed_chats is None:
+        return frozenset()
+    if isinstance(allowed_chats, (str, bytes)):
+        raise TypeError("allowed_chats must be a collection of chat keys")
+    try:
+        return frozenset(normalize_chat_key(chat_key) for chat_key in allowed_chats)
+    except (TypeError, ValueError) as error:
+        raise ValueError("allowed_chats contains an invalid chat key") from error
+
+
+def _mask_identifier(value: int) -> str:
+    """保留数字标识前后三位并隐藏中间部分。"""
+
+    text = str(value)
+    if len(text) <= 6:
+        return f"{text[:1]}{'*' * max(1, len(text) - 2)}{text[-1:]}"
+    return f"{text[:3]}{'*' * (len(text) - 6)}{text[-3:]}"
+
+
+def _safe_log_text(value: str) -> str:
+    """转义昵称中的控制字符并限制日志长度。"""
+
+    escaped = value.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
+    return escaped[:64] or "<empty>"
 
 
 __all__ = ["MuteSnapshot", "MuteState", "MuteSyncClient", "MuteSyncError", "MuteTracker"]

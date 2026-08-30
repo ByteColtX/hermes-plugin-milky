@@ -202,7 +202,7 @@ async def run_smoke(arguments: argparse.Namespace) -> dict[str, object]:
         "security": "sanitized_summary_only",
         "read_only": not arguments.allow_write,
     }
-    tracker = MuteTracker(client)
+    tracker = MuteTracker(client, allowed_chats=config.allowed_chats)
     try:
         try:
             login = await client.get_login_info()

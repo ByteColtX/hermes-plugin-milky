@@ -38,7 +38,9 @@
 
 ### Requirement: 禁言门禁读取显式状态
 
-群消息 MUST 根据 MuteTracker 的 member mute 和 whole mute 二态快照判断；任一状态为 muted SHALL 拒绝发送路径。未被成功维护为 unmuted 前，状态 MUST 默认按 muted 处理。
+群消息 MUST 根据 MuteTracker 的 member mute 和 whole mute 快照判断；member mute 或已确认的
+whole mute 为 `muted` 时 SHALL 拒绝发送路径。初始化未完成时状态 MUST 默认按 muted 处理；
+Milky 无法通过初始 Action 确认的 whole mute SHALL 记录为 `unknown`，不得因 unknown 阻塞群消息。
 
 #### Scenario: 群处于确认禁言
 

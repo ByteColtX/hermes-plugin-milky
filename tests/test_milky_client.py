@@ -128,6 +128,48 @@ def test_state_sync_methods_validate_milky_data_layers() -> None:
     }
 
 
+def test_group_member_info_can_bypass_server_cache() -> None:
+    """状态同步需要显式发送 Milky 的 no_cache 参数绕过旧成员缓存。"""
+
+    transport = FakeTransport(
+        [
+            response(
+                ok(
+                    {
+                        "member": {
+                            "user_id": 900000001,
+                            "group_id": 700000001,
+                            "nickname": "合成机器人",
+                        }
+                    }
+                )
+            )
+        ]
+    )
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    asyncio.run(client.get_group_member_info(700000001, 900000001, no_cache=True))
+
+    assert transport.requests[0]["body"] == {
+        "group_id": 700000001,
+        "user_id": 900000001,
+        "no_cache": True,
+    }
+
+
+def test_group_member_info_rejects_invalid_no_cache_before_network() -> None:
+    """no_cache 必须是布尔值，并在网络访问前拒绝非法输入。"""
+
+    transport = FakeTransport([])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(client.get_group_member_info(700000001, 900000001, no_cache="true"))
+
+    assert error_info.value.classification == "invalid_input"
+    assert transport.requests == []
+
+
 async def _get_group_data(client: MilkyClient) -> tuple[GroupList, Any]:
     """并发测试不参与，按初始化契约顺序调用状态 Action。"""
 

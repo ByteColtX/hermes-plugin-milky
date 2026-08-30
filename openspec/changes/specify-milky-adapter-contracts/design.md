@@ -254,12 +254,13 @@ security constraints. Module names, dependency direction, fixture strategy, and 
 sequencing remain in this design, `ARCHITECTURE.md`, and this change's `tasks.md` so a
 future refactor does not unnecessarily change the behavior contract.
 
-### Protocol and safety uncertainty fails closed
+### Protocol and safety uncertainty is explicit
 
 Where the architecture cannot confirm remote execution, target routing, or media safety,
 the contracts require `transport_unknown`, `unsupported`, or safe placeholders. For
-plugin-local mute tracking, the state is deliberately fail-closed with only `muted` and
-`unmuted`; an unverified refresh never silently becomes unmuted.
+plugin-local mute tracking, member mute remains fail-closed; Milky v1.3 has no initial
+whole-mute read result, so an unverified whole-mute state is recorded as `unknown` and
+must not be logged or treated as confirmed `muted`.
 
 ## Risks / Trade-offs
 
