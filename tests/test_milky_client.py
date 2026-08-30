@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from config import load_config
-from milky.client import ActionError, MilkyClient, TransportResponse
+from milky.client import ActionError, HttpxTransport, MilkyClient, TransportResponse
 from milky.models import GroupList, LoginInfo
 
 DEFAULT_ENV = {
@@ -696,6 +696,23 @@ def test_client_close_releases_transport() -> None:
     assert transport.close_calls == 1
 
 
+def test_client_rejects_new_actions_after_idempotent_close() -> None:
+    """关闭后应在网络边界前拒绝 Action，重复关闭不触碰 transport。"""
+
+    transport = FakeTransport([])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    asyncio.run(client.close())
+    asyncio.run(client.close())
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(client.call("get_login_info"))
+
+    assert error_info.value.classification == "transport_unknown"
+    assert transport.requests == []
+    assert transport.close_calls == 1
+
+
 def test_invalid_action_does_not_echo_untrusted_value() -> None:
     """非法 Action 名称不得把可能的凭证值带入错误。"""
 
@@ -706,3 +723,102 @@ def test_invalid_action_does_not_echo_untrusted_value() -> None:
 
     assert error_info.value.classification == "invalid_input"
     assert "client-test-secret" not in str(error_info.value)
+
+
+def test_httpx_transport_uses_json_bearer_and_releases_client() -> None:
+    """HTTPX Action transport 应保留请求契约并允许重复关闭。"""
+
+    httpx = pytest.importorskip("httpx")
+    seen: list[object] = []
+
+    async def handler(request):
+        seen.append(
+            {
+                "method": request.method,
+                "url": str(request.url),
+                "authorization": request.headers.get("authorization"),
+                "content": request.content,
+                "timeout": request.extensions["timeout"],
+            }
+        )
+        return httpx.Response(
+            200,
+            json={"status": "ok", "retcode": 0, "data": {"uin": 900000001}},
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = MilkyClient(
+        load_config(DEFAULT_ENV),
+        transport=HttpxTransport(client=http_client),
+        timeout=2.5,
+    )
+
+    result = asyncio.run(client.call("get_login_info"))
+    asyncio.run(client.close())
+    asyncio.run(client.close())
+
+    assert result.data == {"uin": 900000001}
+    assert seen == [
+        {
+            "method": "POST",
+            "url": "https://localhost:5500/milky/api/get_login_info",
+            "authorization": "Bearer client-test-secret",
+            "content": b"{}",
+            "timeout": {"connect": 2.5, "read": 2.5, "write": 2.5, "pool": 2.5},
+        }
+    ]
+
+
+def test_httpx_timeout_is_transport_unknown_without_retry() -> None:
+    """HTTPX 超时应返回未知结果且不自动重发。"""
+
+    httpx = pytest.importorskip("httpx")
+    calls = 0
+
+    async def handler(request):
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("secret timeout detail", request=request)
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=HttpxTransport(client=http_client))
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(client.send_private_message(800000001, [{"type": "text"}]))
+    asyncio.run(client.close())
+
+    assert error_info.value.classification == "transport_unknown"
+    assert "secret timeout detail" not in str(error_info.value)
+    assert calls == 1
+
+
+def test_httpx_transport_keeps_concurrent_action_results_separate() -> None:
+    """并发 HTTPX Action 应各自保留响应，不互相覆盖或关闭。"""
+
+    httpx = pytest.importorskip("httpx")
+    seen: list[str] = []
+
+    async def handler(request):
+        action = request.url.path.rsplit("/", 1)[-1]
+        seen.append(action)
+        await asyncio.sleep(0)
+        return httpx.Response(
+            200,
+            json={"status": "ok", "retcode": 0, "data": {"action": action}},
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=HttpxTransport(client=http_client))
+
+    async def scenario() -> tuple[object, object]:
+        return await asyncio.gather(
+            client.call("get_login_info"),
+            client.call("get_group_list"),
+        )
+
+    first, second = asyncio.run(scenario())
+    asyncio.run(client.close())
+
+    assert first.data == {"action": "get_login_info"}
+    assert second.data == {"action": "get_group_list"}
+    assert sorted(seen) == ["get_group_list", "get_login_info"]

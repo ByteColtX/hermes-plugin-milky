@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,16 +12,23 @@ from types import SimpleNamespace
 from typing import Any, Self
 from urllib.parse import urlsplit
 
+import pytest
+
 from adapter import MilkyAdapter
 from config import load_config
 from milky.client import ActionError, MilkyClient
-from milky.event_stream import SseEventStream, UrllibSseTransport
+from milky.event_stream import HttpxSseTransport, SseEventStream
 from outbound.sender import OutboundSendResult
 
 _TOKEN = "integration-test-token"
 _SELF_ID = 900000001
 _GROUP_IDS = (700000001, 700000002)
 _FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "protocol"
+
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("httpx") is None,
+    reason="HTTPX 由 Hermes 宿主提供，当前独立 uv 环境未安装",
+)
 
 
 class _MilkyFixtureState:
@@ -246,7 +254,7 @@ class _RecordingPipeline:
 
 
 def test_local_sse_delivers_message_receive_to_adapter_pipeline() -> None:
-    """有效 message_receive 应从真实 urllib SSE 进入 adapter pipeline。"""
+    """有效 message_receive 应从真实 HTTPX SSE 进入 adapter pipeline。"""
 
     event_payload = json.loads(
         (_FIXTURE_ROOT / "events/message_receive.friend.json").read_text(encoding="utf-8")
@@ -308,7 +316,7 @@ def test_local_chunked_sse_delivers_message_receive_to_adapter_pipeline() -> Non
 
 
 def test_local_http_lifecycle_outbound_refresh_and_upload(tmp_path: Path) -> None:
-    """真实 urllib transport 应串起初始化、SSE、group/dm 和独立上传。"""
+    """真实 HTTPX transport 应串起初始化、SSE、group/dm 和独立上传。"""
 
     with _MilkyFixtureServer() as server:
         config = _config(server)
@@ -400,13 +408,13 @@ def test_local_http_lifecycle_outbound_refresh_and_upload(tmp_path: Path) -> Non
 
 
 def test_local_sse_reconnects_and_preserves_safe_contract() -> None:
-    """真实 urllib SSE transport 应处理多行 data、断线和第二次连接。"""
+    """真实 HTTPX SSE transport 应处理多行 data、断线和第二次连接。"""
 
     with _MilkyFixtureServer() as server:
         config = _config(server)
         stream = SseEventStream(
             config,
-            transport=UrllibSseTransport(),
+            transport=HttpxSseTransport(),
             initial_backoff=0,
             max_backoff=0,
         )

@@ -1,8 +1,8 @@
 """Milky HTTP Action 客户端。
 
 本模块只负责 HTTP 传输、通用 envelope 和 Action 的最小协议校验，不负责事件排序、
-Gate、Will 或 Hermes 业务。默认 transport 使用 Python 标准库，测试可以注入 fake
-transport 而不建立真实连接。
+Gate、Will 或 Hermes 业务。默认 transport 延迟使用 Hermes 提供的 HTTPX，测试可以
+注入 fake transport 而不建立真实连接。
 """
 
 from __future__ import annotations
@@ -15,8 +15,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, Self
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from config import MilkyConfig
 
@@ -57,8 +55,27 @@ class HttpTransport(Protocol):
         """释放 transport 资源。"""
 
 
-class UrllibTransport:
-    """使用标准库执行请求，并在返回前关闭 HTTP 响应。"""
+class HttpxTransportError(OSError):
+    """表示 HTTPX transport 不可用或网络请求结果未知。"""
+
+
+def _import_httpx() -> Any:
+    """延迟导入 Hermes 核心提供的 HTTPX。"""
+
+    try:
+        import httpx
+    except ImportError:
+        raise HttpxTransportError("httpx dependency is unavailable") from None
+    return httpx
+
+
+class HttpxTransport:
+    """使用可复用的 HTTPX 异步客户端执行请求。"""
+
+    def __init__(self, client: Any | None = None) -> None:
+        self._client = client
+        self._closed = False
+        self._close_lock = asyncio.Lock()
 
     async def request(
         self,
@@ -68,32 +85,56 @@ class UrllibTransport:
         body: bytes,
         timeout: float,
     ) -> TransportResponse:
-        """在线程池中执行阻塞的标准库 HTTP 请求。"""
+        """使用有限的连接、写入、读取和连接池超时执行请求。"""
 
-        return await asyncio.to_thread(self._request_sync, method, url, headers, body, timeout)
-
-    @staticmethod
-    def _request_sync(
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes,
-        timeout: float,
-    ) -> TransportResponse:
-        """执行同步请求并读取完整响应体。"""
-
-        request = Request(url, data=body, headers=headers, method=method)
+        if self._closed:
+            raise HttpxTransportError("transport is closed")
+        httpx = _import_httpx()
+        if self._client is None:
+            self._client = httpx.AsyncClient()
+        request_timeout = httpx.Timeout(
+            timeout,
+            connect=timeout,
+            read=timeout,
+            write=timeout,
+            pool=timeout,
+        )
         try:
-            with urlopen(request, timeout=timeout) as response:
-                response_body = response.read()
-                return TransportResponse(response.status, response_body, dict(response.headers))
-        except HTTPError as error:
-            # HTTP 状态本身已经足以分类；不读取或回显错误 body，避免泄露敏感内容。
-            error.close()
-            return TransportResponse(error.code, b"", {})
+            response = await self._client.request(
+                method,
+                url,
+                headers=headers,
+                content=body,
+                timeout=request_timeout,
+            )
+            try:
+                return TransportResponse(
+                    response.status_code,
+                    response.content,
+                    dict(response.headers),
+                )
+            finally:
+                await response.aclose()
+        except asyncio.CancelledError:
+            raise
+        except httpx.HTTPError:
+            raise HttpxTransportError("request outcome is unknown") from None
 
     async def close(self) -> None:
-        """标准库 transport 没有需要长期持有的连接池。"""
+        """幂等关闭 HTTPX 连接池。"""
+
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            if self._client is None:
+                return
+            try:
+                await self._client.aclose()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - 关闭失败统一归类为 transport 错误
+                raise HttpxTransportError("transport close failed") from None
 
 
 class ActionError(Exception):
@@ -130,7 +171,7 @@ class MilkyClient:
         if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
             raise ValueError("timeout must be a positive number")
         self._config = config
-        self._transport = transport or UrllibTransport()
+        self._transport = transport or HttpxTransport()
         self._timeout = float(timeout)
         self._closed = False
 
@@ -170,7 +211,7 @@ class MilkyClient:
             )
         except asyncio.CancelledError:
             raise
-        except (TimeoutError, OSError, URLError):
+        except (TimeoutError, OSError):
             raise ActionError("transport_unknown", action, "request outcome is unknown") from None
 
         if not isinstance(response, TransportResponse):
@@ -686,9 +727,10 @@ def _local_file_as_base64_uri(file_path: object, action: str) -> str:
 __all__ = [
     "ActionError",
     "HttpTransport",
+    "HttpxTransport",
+    "HttpxTransportError",
     "MilkyActionError",
     "MilkyClient",
     "SendResult",
     "TransportResponse",
-    "UrllibTransport",
 ]

@@ -19,7 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config import ConfigError, MilkyConfig, load_config
 from milky.client import ActionError, MilkyClient
-from milky.event_stream import SseEventStream, UrllibSseTransport
+from milky.event_stream import HttpxSseTransport, SseEventStream
 from outbound.sender import (
     MilkyOutboundSender,
     OutboundSendResult,
@@ -113,10 +113,10 @@ async def _probe_event_stream(config: MilkyConfig, timeout: float) -> dict[str, 
 
 
 class _CountingSseTransport:
-    """包裹标准 SSE transport，只统计连接次数，不保存 URL 或响应。"""
+    """包裹 HTTPX SSE transport，只统计连接次数，不保存 URL 或响应。"""
 
     def __init__(self) -> None:
-        self._transport = UrllibSseTransport()
+        self._transport = HttpxSseTransport()
         self.attempts = 0
 
     async def connect(self, url: str, headers: dict[str, str], timeout: float) -> object:
@@ -126,7 +126,7 @@ class _CountingSseTransport:
         return await self._transport.connect(url, headers, timeout)
 
     async def close(self) -> None:
-        """释放标准 SSE transport。"""
+        """释放 HTTPX SSE transport。"""
 
         await self._transport.close()
 

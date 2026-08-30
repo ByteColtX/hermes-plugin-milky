@@ -13,8 +13,8 @@ import pytest
 from config import load_config
 from milky.event_stream import (
     EventStreamError,
+    HttpxSseTransport,
     SseEventStream,
-    UrllibSseTransport,
     decode_sse_frame,
 )
 
@@ -493,44 +493,93 @@ def test_direct_run_task_cancellation_releases_resources() -> None:
     assert transport.close_calls == 1
 
 
-def test_urllib_transport_opens_sse_with_get(monkeypatch: pytest.MonkeyPatch) -> None:
-    """标准库 transport 应以 GET 打开流且不读取完整响应。"""
+def test_httpx_transport_opens_sse_with_get_and_unlimited_read_timeout() -> None:
+    """HTTPX transport 应使用 GET、Bearer 和无固定读取超时。"""
 
+    httpx = pytest.importorskip("httpx")
     seen: dict[str, object] = {}
 
-    class Response:
-        status = 200
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b": heartbeat\n\n"
 
-        def readline(self) -> bytes:
-            return b""
+    def handler(request):
+        seen["method"] = request.method
+        seen["url"] = str(request.url)
+        seen["headers"] = request.headers
+        seen["timeout"] = request.extensions["timeout"]
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Stream())
 
-        def close(self) -> None:
-            seen["closed"] = True
-
-    def fake_urlopen(request, timeout: float) -> Response:
-        seen["method"] = request.get_method()
-        seen["url"] = request.full_url
-        seen["headers"] = dict(request.headers)
-        seen["timeout"] = timeout
-        return Response()
-
-    monkeypatch.setattr("milky.event_stream.urlopen", fake_urlopen)
-    transport = UrllibSseTransport()
+    transport = HttpxSseTransport(client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
     async def scenario() -> None:
-        response = await transport.connect(
-            CONFIG.event_url,
-            CONFIG.auth_headers,
-            3.5,
-        )
+        response = await transport.connect(CONFIG.event_url, CONFIG.auth_headers, 3.5)
+        assert await response.readline() == b": heartbeat\n"
+        assert await response.readline() == b"\n"
         await response.close()
+        await transport.close()
+        await transport.close()
 
     asyncio.run(scenario())
 
-    assert seen == {
-        "method": "GET",
-        "url": "https://host.example/milky/event",
-        "headers": {"Authorization": "Bearer stream-test-secret"},
-        "timeout": 3.5,
-        "closed": True,
+    assert seen["method"] == "GET"
+    assert seen["url"] == "https://host.example/milky/event"
+    assert seen["headers"]["authorization"] == "Bearer stream-test-secret"
+    assert seen["timeout"] == {
+        "connect": 3.5,
+        "read": None,
+        "write": None,
+        "pool": 3.5,
     }
+
+
+def test_httpx_reconnect_does_not_send_unconfirmed_recovery_headers() -> None:
+    """重连只使用已确认的 /event 请求，不伪造 Last-Event-ID。"""
+
+    httpx = pytest.importorskip("httpx")
+    requests: list[object] = []
+    received: list[object] = []
+    received_twice = asyncio.Event()
+    payload = {
+        "event_type": "bot_offline",
+        "time": 1700000087,
+        "self_id": 900000001,
+        "data": {"reason": "恢复边界"},
+    }
+    frame = (
+        b"event: milky_event\n" + f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+    )
+
+    class EventStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield frame
+
+    def handler(request):
+        requests.append(dict(request.headers))
+        return httpx.Response(200, stream=EventStream())
+
+    transport = HttpxSseTransport(client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    stream = SseEventStream(
+        CONFIG,
+        transport=transport,
+        initial_backoff=0.01,
+        max_backoff=0.01,
+    )
+
+    async def on_event(event) -> None:
+        received.append(event)
+        if len(received) >= 2:
+            received_twice.set()
+
+    async def scenario() -> None:
+        task = asyncio.create_task(stream.run(on_event))
+        await asyncio.wait_for(received_twice.wait(), 1)
+        await stream.close()
+        await asyncio.wait_for(task, 1)
+
+    asyncio.run(scenario())
+
+    assert len(requests) >= 2
+    assert all(item["authorization"] == "Bearer stream-test-secret" for item in requests)
+    assert all("last-event-id" not in item for item in requests)
+    assert all("event-id" not in item for item in requests)

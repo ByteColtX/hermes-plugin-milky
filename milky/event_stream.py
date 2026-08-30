@@ -13,8 +13,6 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, Self
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from config import MilkyConfig
 
@@ -67,61 +65,149 @@ class SseTransport(Protocol):
         """释放 transport 级资源。"""
 
 
-class _UrllibSseResponse:
-    """把阻塞的 urllib 响应包装成异步逐行响应。"""
+class HttpxSseTransportError(OSError):
+    """表示 HTTPX SSE transport 不可用或读取结果未知。"""
 
-    def __init__(self, response: Any) -> None:
+
+def _import_httpx() -> Any:
+    """延迟导入 Hermes 核心提供的 HTTPX。"""
+
+    try:
+        import httpx
+    except ImportError:
+        raise HttpxSseTransportError("httpx dependency is unavailable") from None
+    return httpx
+
+
+class _HttpxSseResponse:
+    """把 HTTPX 异步响应包装成可取消的逐行响应。"""
+
+    def __init__(self, response: Any, stream_context: Any, httpx: Any) -> None:
         self._response = response
+        self._stream_context = stream_context
+        self._httpx = httpx
+        self._chunks = response.aiter_bytes().__aiter__()
+        self._buffer = bytearray()
         self._closed = False
+        self._close_lock = asyncio.Lock()
 
     async def readline(self) -> bytes:
-        """在线程池中读取一行，避免阻塞事件循环。"""
-
-        return await asyncio.to_thread(self._response.readline)
-
-    async def close(self) -> None:
-        """在线程池中关闭响应，重复关闭保持安全。"""
+        """从原生异步字节流中读取一行，保留 UTF-8 校验边界。"""
 
         if self._closed:
-            return
-        self._closed = True
-        await asyncio.to_thread(self._response.close)
-
-
-class UrllibSseTransport:
-    """使用标准库建立 GET SSE 连接。"""
-
-    async def connect(self, url: str, headers: dict[str, str], timeout: float) -> SseResponse:
-        """建立响应流，不读取完整响应体。"""
-
-        try:
-            response = await asyncio.to_thread(self._open, url, headers, timeout)
-        except asyncio.CancelledError:
-            raise
-        except EventStreamError:
-            raise
-        except (TimeoutError, OSError, URLError):
-            raise EventStreamError("transport_unknown", "event stream connection failed") from None
-        return _UrllibSseResponse(response)
-
-    @staticmethod
-    def _open(url: str, headers: dict[str, str], timeout: float) -> Any:
-        """同步打开并返回仍保持打开的 HTTP 响应。"""
-
-        request = Request(url, headers=headers, method="GET")
-        try:
-            response = urlopen(request, timeout=timeout)
-        except HTTPError as error:
-            error.close()
-            raise EventStreamError("http_error", "event stream returned an HTTP error") from None
-        status = getattr(response, "status", None)
-        if not isinstance(status, int) or not 200 <= status < 300:
-            response.close()
-            raise EventStreamError("http_error", "event stream returned an invalid status")
-        return response
+            return b""
+        while True:
+            newline = self._buffer.find(b"\n")
+            if newline >= 0:
+                end = newline + 1
+                line = bytes(self._buffer[:end])
+                del self._buffer[:end]
+                return line
+            try:
+                chunk = await anext(self._chunks)
+            except StopAsyncIteration:
+                if not self._buffer:
+                    return b""
+                line = bytes(self._buffer)
+                self._buffer.clear()
+                return line
+            except asyncio.CancelledError:
+                raise
+            except self._httpx.HTTPError:
+                raise HttpxSseTransportError("event stream read failed") from None
+            if not isinstance(chunk, bytes):
+                raise HttpxSseTransportError("event stream returned an invalid chunk")
+            self._buffer.extend(chunk)
 
     async def close(self) -> None:
-        """标准库 transport 没有独立的长期资源。"""
+        """关闭响应上下文，重复关闭保持安全。"""
+
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                await self._response.aclose()
+            finally:
+                await self._stream_context.__aexit__(None, None, None)
+
+
+class HttpxSseTransport:
+    """使用 HTTPX 异步 stream 建立 GET SSE 连接。"""
+
+    def __init__(self, client: Any | None = None) -> None:
+        self._client = client
+        self._response: _HttpxSseResponse | None = None
+        self._closed = False
+        self._close_lock = asyncio.Lock()
+
+    async def connect(self, url: str, headers: dict[str, str], timeout: float) -> SseResponse:
+        """只限制连接建立阶段，读取阶段保持无限时长。"""
+
+        if self._closed:
+            raise EventStreamError("transport_unknown", "event stream transport is closed")
+        try:
+            httpx = _import_httpx()
+        except HttpxSseTransportError:
+            raise EventStreamError(
+                "transport_unknown", "event stream transport dependency is unavailable"
+            ) from None
+        if self._client is None:
+            self._client = httpx.AsyncClient()
+        request_timeout = httpx.Timeout(None, connect=timeout, pool=timeout)
+        stream_context = self._client.stream(
+            "GET",
+            url,
+            headers=headers,
+            timeout=request_timeout,
+        )
+        try:
+            response = await stream_context.__aenter__()
+        except asyncio.CancelledError:
+            raise
+        except httpx.HTTPError:
+            raise EventStreamError("transport_unknown", "event stream connection failed") from None
+        except (TimeoutError, OSError):
+            raise EventStreamError("transport_unknown", "event stream connection failed") from None
+
+        status = getattr(response, "status_code", None)
+        if not isinstance(status, int) or not 200 <= status < 300:
+            try:
+                await response.aclose()
+            finally:
+                await stream_context.__aexit__(None, None, None)
+            raise EventStreamError("http_error", "event stream returned an HTTP error")
+        wrapped = _HttpxSseResponse(response, stream_context, httpx)
+        self._response = wrapped
+        return wrapped
+
+    async def close(self) -> None:
+        """幂等关闭当前响应和 HTTPX 连接池。"""
+
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            response = self._response
+            self._response = None
+            first_error: BaseException | None = None
+            if response is not None:
+                try:
+                    await response.close()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:  # noqa: BLE001 - 继续关闭连接池
+                    first_error = error
+            if self._client is not None:
+                try:
+                    await self._client.aclose()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:  # noqa: BLE001 - 记录第一个关闭错误
+                    if first_error is None:
+                        first_error = error
+            if first_error is not None:
+                raise first_error
 
 
 Handler = Callable[[Event], Awaitable[object] | object]
@@ -156,7 +242,7 @@ class SseEventStream:
         ):
             raise ValueError("max_backoff must not be less than initial_backoff")
         self._config = config
-        self._transport = transport or UrllibSseTransport()
+        self._transport = transport or HttpxSseTransport()
         self._timeout = float(timeout)
         self._initial_backoff = float(initial_backoff)
         self._max_backoff = float(max_backoff)
@@ -199,7 +285,7 @@ class SseEventStream:
                     break
                 except EventStreamError as error:
                     self._record(error.classification, error.reason)
-                except (TimeoutError, OSError, URLError):
+                except (TimeoutError, OSError):
                     self._record("transport_unknown", "event stream connection failed")
                 except Exception:  # noqa: BLE001
                     self._record("stream_error", "event stream processing failed")
@@ -415,11 +501,12 @@ def decode_sse_frame(lines: Sequence[str]) -> SseFrame:
 
 __all__ = [
     "EventStreamError",
+    "HttpxSseTransport",
+    "HttpxSseTransportError",
     "SseEventStream",
     "SseFrame",
     "SseResponse",
     "SseTransport",
     "StreamDiagnostic",
-    "UrllibSseTransport",
     "decode_sse_frame",
 ]
