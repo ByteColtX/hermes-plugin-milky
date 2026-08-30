@@ -80,6 +80,18 @@ class MilkyOutboundSender:
         self._mute_tracker = mute_tracker
         self._max_text_length = max_text_length
         self._uploader = FileUploader(client)  # type: ignore[arg-type]
+        self._refresh_tasks: set[asyncio.Task[None]] = set()
+
+    async def close(self) -> None:
+        """取消由发送失败触发、尚未结束的群状态刷新任务。"""
+
+        tasks = tuple(self._refresh_tasks)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._refresh_tasks.clear()
 
     async def send(
         self,
@@ -262,12 +274,12 @@ class MilkyOutboundSender:
         except (ActionError, OSError, TypeError, ValueError) as error:
             result = _failure(_error_classification(error), _safe_reason(error))
             if _is_remote_failure(error):
-                await self._notify_group_failure(target if "target" in locals() else None)
+                self._schedule_group_failure(target if "target" in locals() else None)
             _log_upload_result(target if "target" in locals() else None, result)
             return result
         except Exception:  # noqa: BLE001
             result = _failure("malformed", "file upload failed")
-            await self._notify_group_failure(target if "target" in locals() else None)
+            self._schedule_group_failure(target if "target" in locals() else None)
             _log_upload_result(target if "target" in locals() else None, result)
             return result
 
@@ -336,11 +348,11 @@ class MilkyOutboundSender:
         except (ActionError, TypeError, ValueError) as error:
             result = _failure(_error_classification(error), _safe_reason(error))
             if "parsed" in locals() and parsed.scene == "group" and _is_remote_failure(error):
-                await self._notify_group_failure(parsed)
+                self._schedule_group_failure(parsed)
             return result
         except Exception:  # noqa: BLE001
             if "parsed" in locals() and parsed.scene == "group":
-                await self._notify_group_failure(parsed)
+                self._schedule_group_failure(parsed)
             return _failure("malformed", "nudge failed")
 
     async def recall_group_message(self, target: object, message_seq: object) -> OutboundSendResult:
@@ -362,11 +374,11 @@ class MilkyOutboundSender:
         except (ActionError, TypeError, ValueError) as error:
             result = _failure(_error_classification(error), _safe_reason(error))
             if _is_remote_failure(error) and "parsed" in locals():
-                await self._notify_group_failure(parsed)
+                self._schedule_group_failure(parsed)
             return result
         except Exception:  # noqa: BLE001
             if "parsed" in locals():
-                await self._notify_group_failure(parsed)
+                self._schedule_group_failure(parsed)
             return _failure("malformed", "recall failed")
 
     def _message_parts(self, content: object, reply_to: object) -> tuple[list[dict[str, Any]], ...]:
@@ -397,7 +409,7 @@ class MilkyOutboundSender:
                 )
             message_id = getattr(raw_result, "message_id", None)
             if not isinstance(message_id, str) or not message_id:
-                await self._notify_group_failure(target)
+                self._schedule_group_failure(target)
                 return _failure("malformed", "send result has no message id")
             return _success(message_id)
         except asyncio.CancelledError:
@@ -405,10 +417,10 @@ class MilkyOutboundSender:
         except (ActionError, TypeError, ValueError) as error:
             result = _failure(_error_classification(error), _safe_reason(error))
             if _is_remote_failure(error):
-                await self._notify_group_failure(target)
+                self._schedule_group_failure(target)
             return result
         except Exception:  # noqa: BLE001
-            await self._notify_group_failure(target)
+            self._schedule_group_failure(target)
             return _failure("malformed", f"{action} failed")
 
     async def _send_media(
@@ -453,16 +465,26 @@ class MilkyOutboundSender:
             parent_folder_id=parent_folder_id,
         )
 
-    async def _notify_group_failure(self, target: OutboundTarget | None) -> None:
-        """在群远端失败后尽力触发受控禁言刷新。"""
+    def _schedule_group_failure(self, target: OutboundTarget | None) -> None:
+        """独立调度群失败后的只读刷新，不阻塞原始发送结果。"""
 
         if target is None or target.scene != "group" or self._mute_tracker is None:
             return
         callback = getattr(self._mute_tracker, "refresh_after_send_failure", None)
         if not callable(callback):
             return
+        task = asyncio.create_task(
+            self._notify_group_failure(callback, target),
+            name="milky-mute-refresh-after-send-failure",
+        )
+        self._refresh_tasks.add(task)
+        task.add_done_callback(self._refresh_tasks.discard)
+
+    async def _notify_group_failure(self, callback: object, target: OutboundTarget) -> None:
+        """执行已调度的群失败刷新，并隔离刷新异常。"""
+
         try:
-            await _maybe_await(callback(f"group:{target.peer_id}"))
+            await _maybe_await(callback(f"group:{target.peer_id}"))  # type: ignore[operator]
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -588,6 +610,7 @@ def _failure(classification: str, reason: str) -> OutboundSendResult:
     return _make_result(
         success=False,
         error=f"{classification}: {reason}",
+        retryable=False,
         error_kind=classification,
     )
 
@@ -605,6 +628,7 @@ def _with_partial(
         message_id=sent_ids[-1],
         error=result.error,
         raw_response=raw_response,
+        retryable=False,
         continuation_message_ids=tuple(sent_ids[:-1]),
         error_kind=result.error_kind,
     )

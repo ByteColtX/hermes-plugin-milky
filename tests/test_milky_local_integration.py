@@ -356,13 +356,17 @@ def test_local_http_lifecycle_outbound_refresh_and_upload(tmp_path: Path) -> Non
             )
             failed_group = await adapter.send("group:700000001", "失败 smoke")
             assert failed_group.error_kind == "rejected"
-            member_calls_after = len(
-                [
-                    item
-                    for item in server.state.request_snapshot()
-                    if "get_group_member_info" in item["path"]
-                ]
-            )
+            for _ in range(100):
+                member_calls_after = len(
+                    [
+                        item
+                        for item in server.state.request_snapshot()
+                        if "get_group_member_info" in item["path"]
+                    ]
+                )
+                if member_calls_after == member_calls_before + 1:
+                    break
+                await asyncio.sleep(0.01)
             assert member_calls_after == member_calls_before + 1
 
             server.state.fail_private_message = True

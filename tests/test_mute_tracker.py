@@ -16,6 +16,7 @@ from milky.models import (
     GroupMemberInfo,
     LoginInfo,
 )
+from outbound.sender import MilkyOutboundSender
 from state import MuteTracker
 
 
@@ -51,6 +52,7 @@ class FakeMuteClient:
         self.login = LoginInfo(900000001, "合成机器人")
         self.inflight = 0
         self.max_inflight = 0
+        self.send_calls: list[tuple[str, int]] = []
 
     async def get_login_info(self) -> LoginInfo:
         """返回合成登录身份。"""
@@ -82,6 +84,20 @@ class FakeMuteClient:
             return result
         finally:
             self.inflight -= 1
+
+    async def send_group_message(self, group_id: int, message: list[dict[str, object]]) -> object:
+        """模拟已进入网络边界但结果未知的群发送。"""
+
+        del message
+        self.send_calls.append(("group", group_id))
+        raise ActionError("transport_unknown", "send_group_message", "synthetic detail")
+
+    async def send_private_message(self, user_id: int, message: list[dict[str, object]]) -> object:
+        """模拟已进入网络边界但结果未知的私聊发送。"""
+
+        del message
+        self.send_calls.append(("dm", user_id))
+        raise ActionError("transport_unknown", "send_private_message", "synthetic detail")
 
 
 def test_tracker_fails_closed_before_ordered_initial_sync() -> None:
@@ -416,6 +432,48 @@ def test_tracker_limits_same_group_refresh_and_never_refreshes_dm() -> None:
     member_calls_after = len([call for call in client.calls if call[0] == "member"])
     assert member_calls_after == member_calls_before + 1
     assert client.member_no_cache[-1] is True
+
+
+def test_sender_concurrent_failures_use_one_refresh_and_keep_dm_isolated() -> None:
+    """并发群发送失败只触发一次刷新，私聊未知结果不扫描群成员。"""
+
+    now = 100
+    client = FakeMuteClient([700000001], delay=0.01)
+    tracker = MuteTracker(
+        client,
+        clock=lambda: now,
+        refresh_cooldown=0,
+        max_concurrent_refreshes=1,
+    )
+    asyncio.run(tracker.initialize())
+    initial_member_calls = len([call for call in client.calls if call[0] == "member"])
+    sender = MilkyOutboundSender(client, mute_tracker=tracker)
+
+    async def scenario() -> None:
+        results = await asyncio.gather(
+            *(sender.send("group:700000001", f"失败 {index}") for index in range(20))
+        )
+        assert all(result.error_kind == "transport_unknown" for result in results)
+        for _ in range(100):
+            member_calls = len([call for call in client.calls if call[0] == "member"])
+            if member_calls >= initial_member_calls + 1:
+                break
+            await asyncio.sleep(0.001)
+        await sender.close()
+
+    asyncio.run(scenario())
+
+    member_calls = len([call for call in client.calls if call[0] == "member"])
+    assert member_calls == initial_member_calls + 1
+    assert client.member_no_cache[-1] is True
+    assert len(client.send_calls) == 20
+
+    before_dm = member_calls
+    dm_sender = MilkyOutboundSender(client, mute_tracker=tracker)
+    dm_result = asyncio.run(dm_sender.send("dm:800000001", "私聊失败"))
+    asyncio.run(dm_sender.close())
+    assert dm_result.error_kind == "transport_unknown"
+    assert len([call for call in client.calls if call[0] == "member"]) == before_dm
 
 
 def test_tracker_refreshes_different_groups_with_global_limit() -> None:

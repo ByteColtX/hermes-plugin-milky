@@ -77,6 +77,7 @@ ALLOWED_FIELDS = frozenset(
         "action",
         "reason",
         "classification",
+        "transport_phase",
         "decision",
         "attempt",
         "delay_seconds",
@@ -436,6 +437,12 @@ def _sanitize_field(name: str, value: object) -> object:
         return safe_classification(value)
     if name == "reason":
         return safe_reason(value)
+    if name == "transport_phase":
+        return _safe_choice(
+            value,
+            frozenset({"connect", "write", "read", "pool", "unknown"}),
+            "transport_phase",
+        )
     if name == "event_type":
         if not isinstance(value, str) or _SAFE_TOKEN_PATTERN.fullmatch(value) is None:
             raise ValueError("event_type is not safe")

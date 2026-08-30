@@ -29,6 +29,7 @@ _NON_NEGATIVE_INTEGER_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
 _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
 _MAX_SAFE_INTEGER = 9007199254740991
+_TRANSPORT_PHASES = frozenset({"connect", "write", "read", "pool", "unknown"})
 _MISSING = object()
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,15 @@ class HttpTransport(Protocol):
 
 class HttpxTransportError(OSError):
     """表示 HTTPX transport 不可用或网络请求结果未知。"""
+
+    def __init__(
+        self, reason: str = "request outcome is unknown", *, phase: str = "unknown"
+    ) -> None:
+        """保存安全的传输阶段，不保留底层异常文本。"""
+
+        del reason
+        self.phase = _safe_transport_phase(phase)
+        super().__init__("request outcome is unknown")
 
 
 def _import_httpx() -> Any:
@@ -122,8 +132,8 @@ class HttpxTransport:
                 await response.aclose()
         except asyncio.CancelledError:
             raise
-        except httpx.HTTPError:
-            raise HttpxTransportError("request outcome is unknown") from None
+        except httpx.HTTPError as error:
+            raise HttpxTransportError(phase=_httpx_transport_phase(httpx, error)) from None
 
     async def close(self) -> None:
         """幂等关闭 HTTPX 连接池。"""
@@ -145,10 +155,18 @@ class HttpxTransport:
 class ActionError(Exception):
     """表示 Action 输入、传输、HTTP 或协议结果不可用。"""
 
-    def __init__(self, classification: str, action: str, reason: str) -> None:
+    def __init__(
+        self,
+        classification: str,
+        action: str,
+        reason: str,
+        *,
+        phase: str | None = None,
+    ) -> None:
         self.classification = classification
         self.action = action
         self.reason = reason
+        self.phase = _safe_transport_phase(phase) if phase is not None else None
         super().__init__(f"{classification}: {action}: {reason}")
 
 
@@ -219,13 +237,16 @@ class MilkyClient:
                 )
             except asyncio.CancelledError:
                 raise
-            except (TimeoutError, OSError):
+            except (TimeoutError, OSError) as error:
                 raise ActionError(
-                    "transport_unknown", action, "request outcome is unknown"
+                    "transport_unknown",
+                    action,
+                    "request outcome is unknown",
+                    phase=_safe_transport_phase(getattr(error, "phase", "unknown")),
                 ) from None
             except Exception:  # noqa: BLE001 - transport details are never exposed
                 raise ActionError(
-                    "transport_unknown", action, "request outcome is unknown"
+                    "transport_unknown", action, "request outcome is unknown", phase="unknown"
                 ) from None
 
             if not isinstance(response, TransportResponse):
@@ -264,6 +285,8 @@ class MilkyClient:
             }
             if status_code is not None:
                 failure_fields["status_code"] = status_code
+            if error.phase is not None:
+                failure_fields["transport_phase"] = error.phase
             log_event(
                 logger,
                 "milky_action_failed",
@@ -716,6 +739,30 @@ def _safe_log_action(value: object) -> str:
     """将 Action 名称转换为日志允许的非空标识。"""
 
     return value if isinstance(value, str) and _ACTION_PATTERN.fullmatch(value) else "invalid"
+
+
+def _safe_transport_phase(value: object) -> str:
+    """将传输阶段收敛到固定的安全枚举。"""
+
+    return value if isinstance(value, str) and value in _TRANSPORT_PHASES else "unknown"
+
+
+def _httpx_transport_phase(httpx: Any, error: BaseException) -> str:
+    """按 HTTPX 异常类型推导安全传输阶段。"""
+
+    phase_types = (
+        ("pool", ("PoolTimeout",)),
+        ("connect", ("ConnectTimeout", "ConnectError", "ProxyError")),
+        ("write", ("WriteTimeout", "WriteError")),
+        ("read", ("ReadTimeout", "ReadError", "RemoteProtocolError")),
+    )
+    for phase, names in phase_types:
+        error_types = tuple(
+            candidate for name in names if isinstance(candidate := getattr(httpx, name, None), type)
+        )
+        if error_types and isinstance(error, error_types):
+            return phase
+    return "unknown"
 
 
 def _safe_action_classification(value: object) -> str:

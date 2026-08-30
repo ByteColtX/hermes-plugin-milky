@@ -1,0 +1,33 @@
+{
+  "case": "server_accepts_client_loses_response",
+  "events": [
+    {
+      "order": 1,
+      "component": "milky_action",
+      "action": "send_group_message",
+      "server_result": "accepted",
+      "client_result": "transport_unknown",
+      "transport_phase": "unknown"
+    },
+    {
+      "order": 2,
+      "component": "mute_tracker",
+      "action": "get_group_member_info",
+      "purpose": "refresh_after_send_failure",
+      "no_cache": true
+    },
+    {
+      "order": 3,
+      "component": "hermes_gateway",
+      "action": "send_group_message",
+      "purpose": "plain_text_fallback",
+      "duplicate_visible_message": true
+    }
+  ],
+  "conclusions": {
+    "duplicate_send_confirmed": true,
+    "transport_exception_type_confirmed": false,
+    "live_message_id_included": false,
+    "live_identity_included": false
+  }
+}

@@ -111,15 +111,26 @@ class FakePipeline:
 class FakeSender:
     """验证停止后 adapter 不再进入出站 sender。"""
 
-    def __init__(self) -> None:
+    def __init__(self, result: object | None = None) -> None:
         self.calls = 0
+        self.close_calls = 0
+        self.result = result
+        self.requests: list[tuple[object, ...]] = []
 
     async def send(self, *args: object, **kwargs: object) -> object:
         """记录发送调用。"""
 
-        del args, kwargs
         self.calls += 1
+        self.requests.append(args)
+        del kwargs
+        if self.result is not None:
+            return self.result
         return SimpleNamespace(success=True, message_id="1")
+
+    async def close(self) -> None:
+        """记录 adapter 对出站刷新任务的清理。"""
+
+        self.close_calls += 1
 
 
 def make_config() -> object:
@@ -240,11 +251,146 @@ def test_disconnect_is_idempotent_and_closes_all_owned_resources() -> None:
         assert stream.close_calls == 1
         assert pipeline.close_calls == 1
         assert client.close_calls == 1
+        assert sender.close_calls == 1
         assert sender.calls == 0
         assert result.success is False
         assert adapter.ready is False
 
     asyncio.run(scenario())
+
+
+def test_adapter_returns_unknown_send_outcome_without_host_fallback() -> None:
+    """Milky adapter 必须在宿主 fallback 前原样结束未知发送结果。"""
+
+    unknown_result = SimpleNamespace(
+        success=False,
+        error="transport_unknown: request outcome is unknown",
+        error_kind="transport_unknown",
+        retryable=False,
+    )
+
+    async def scenario() -> None:
+        sender = FakeSender(unknown_result)
+        adapter, _, stream, _, _, _ = make_adapter(sender=sender)
+        assert await adapter.connect() is True
+        await stream.started.wait()
+
+        result = await adapter._send_with_retry(
+            "group:700000001",
+            "原始回复",
+            max_retries=2,
+            base_delay=0,
+        )
+
+        assert result is unknown_result
+        assert sender.calls == 1
+        assert sender.requests == [("group:700000001", "原始回复", None, None)]
+        await adapter.disconnect()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("success", "error_kind"),
+    [
+        (True, None),
+        (False, "invalid_input"),
+        (False, "rejected"),
+        (False, "malformed"),
+    ],
+)
+def test_adapter_delegates_each_delivery_once(success: bool, error_kind: str | None) -> None:
+    """所有 Milky 发送终态都不得进入宿主 fallback 或重试。"""
+
+    result_from_sender = SimpleNamespace(
+        success=success,
+        error=None if success else f"{error_kind}: fixture failure",
+        error_kind=error_kind,
+        retryable=False,
+    )
+
+    async def scenario() -> None:
+        sender = FakeSender(result_from_sender)
+        adapter, _, stream, _, _, _ = make_adapter(sender=sender)
+        assert await adapter.connect() is True
+        await stream.started.wait()
+
+        result = await adapter._send_with_retry("dm:800000001", "原始回复")
+
+        assert result is result_from_sender
+        assert sender.calls == 1
+        assert sender.requests == [("dm:800000001", "原始回复", None, None)]
+        await adapter.disconnect()
+
+    asyncio.run(scenario())
+
+
+def test_actual_hermes_delivery_hook_returns_unknown_result_once() -> None:
+    """已安装 Hermes 时，真实基类必须分派到 Milky 的一次性 hook。"""
+
+    host_root = next(
+        (
+            Path(entry or ".").resolve()
+            for entry in sys.path
+            if (Path(entry or ".") / "gateway" / "platforms" / "base.py").is_file()
+        ),
+        None,
+    )
+    if host_root is None:
+        pytest.skip("Hermes host is unavailable")
+    original_path = list(sys.path)
+    original_tools = sys.modules.get("tools")
+    module_name = "_milky_adapter_actual_host_test"
+    try:
+        sys.path[:] = [
+            str(host_root),
+            *(entry for entry in original_path if Path(entry or ".").resolve() != host_root),
+            str(PROJECT_ROOT),
+        ]
+        loaded_tools = sys.modules.get("tools")
+        tools_path = getattr(loaded_tools, "__file__", None)
+        if isinstance(tools_path, str) and Path(tools_path).resolve() == PROJECT_ROOT / "tools.py":
+            sys.modules.pop("tools", None)
+        host_base = pytest.importorskip("gateway.platforms.base")
+        spec = importlib.util.spec_from_file_location(module_name, PROJECT_ROOT / "adapter.py")
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        actual_adapter_type = module.MilkyAdapter
+        unknown_result = host_base.SendResult(
+            success=False,
+            error="transport_unknown: request outcome is unknown",
+            error_kind="transport_unknown",
+            retryable=False,
+        )
+
+        async def scenario() -> None:
+            sender = FakeSender(unknown_result)
+            adapter = object.__new__(actual_adapter_type)
+            adapter._connected = True
+            adapter._closed = False
+            adapter._outbound = sender
+
+            result = await adapter._send_with_retry("group:700000001", "原始回复")
+
+            assert result is unknown_result
+            assert sender.calls == 1
+            assert sender.requests == [("group:700000001", "原始回复", None, None)]
+
+        assert issubclass(actual_adapter_type, host_base.BasePlatformAdapter)
+        assert (
+            actual_adapter_type._send_with_retry
+            is not host_base.BasePlatformAdapter._send_with_retry
+        )
+        asyncio.run(scenario())
+    finally:
+        sys.modules.pop(module_name, None)
+        if original_tools is not None:
+            sys.modules["tools"] = original_tools
+        else:
+            sys.modules.pop("tools", None)
+        sys.path[:] = original_path
 
 
 def _load_root_entry() -> object:

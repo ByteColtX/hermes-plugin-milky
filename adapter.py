@@ -308,6 +308,7 @@ class MilkyAdapter(BasePlatformAdapter):
                 await asyncio.gather(event_task, return_exceptions=True)
 
             await self._close_component(self._pipeline, "pipeline_close_failed")
+            await self._close_component(self._outbound, "outbound_close_failed")
             await self._close_component(self._mute_tracker, "mute_tracker_close_failed")
             await self._close_component(self._client, "client_close_failed")
             self._unbind_sender()
@@ -330,6 +331,20 @@ class MilkyAdapter(BasePlatformAdapter):
                 error_kind="unsupported",
             )
         return await self._outbound.send(chat_id, content, reply_to, metadata)
+
+    async def _send_with_retry(
+        self,
+        chat_id: str,
+        content: object,
+        reply_to: object = None,
+        metadata: object = None,
+        max_retries: int = 2,
+        base_delay: float = 2.0,
+    ) -> object:
+        """一次性发送 Milky 消息，不委托宿主的通用 fallback。"""
+
+        del max_retries, base_delay
+        return await self.send(chat_id, content, reply_to, metadata)
 
     async def get_chat_info(self, chat_id: str) -> dict[str, str]:
         """只根据 namespaced chat key 返回本地可确认的最小信息。"""

@@ -44,6 +44,7 @@
 - 当前会话没有可执行的 Milky Action MCP 时，必须明确记录该能力缺失；仅可在必要时使用只读 HTTP fallback 核对测试环境，并对请求、响应和命令输出脱敏。写入、发送、撤回、修改状态、上传文件以及会影响测试环境的 Action 必须先取得明确确认；不能把 OpenAPI 文档清单当成测试环境已经支持，也不能把 HTTP 200 当成协议成功。
 - 调试发现的字段差异、可省略字段、空值、未知 segment、版本差异和错误 envelope 必须记录为可复现的协议证据，并在未确认前标记为 `unknown`、`malformed`、`unsupported` 或 `blocked`；不得补默认值、静默改名、跨层级取值或把未知内容伪装成已支持字段。只有经过脱敏的字段形状和边界分类可以进入 fixture/spec，不得提交 live snapshot。
 - Milky 调试使用运行时环境变量或安全凭证注入 `MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN`；不得把 token、`Authorization`、真实 QQ/群 ID、完整敏感正文、媒体 URL/本地路径或原始 live 响应写入仓库、日志、异常、fixture、快照、OpenSpec artifact 或回复。真实环境结论必须同时注明使用的 MCP/fallback、Action、参数边界、响应分类和时间；无法确认的接口保持未实现或 `unsupported`。
+- Hermes core（包括相邻 checkout、已安装宿主代码和子模块）仅可只读诊断；本仓库不得修改、提交或将其改动作为 plugin 正确性的前提。若需阻止宿主的通用 retry 或 plain-text fallback，只能覆写已通过源码与 adapter 回归验证的 delivery hook；每次宿主 delivery invocation 至多委托一次 `send()` 并原样返回结果。不得 monkey patch 或替换 core，不得通过伪造成功、吞掉未知结果、改写为 timeout/其他错误文本、按内容或时间窗去重、静默丢弃或再次发送不同内容来影响宿主行为；对应回归必须覆盖实际 adapter 边界，而非把 fake core contract 当作宿主已修复的证据。
 - 每次工作开始时报告实际读取的指令/设计来源、当前任务范围和验证计划；结束时报告改动文件、命令结果、未解决风险和下一步任务。
 
 配置依据参见 OpenAI 官方文档：[AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)、[Config basics](https://learn.chatgpt.com/docs/config-file/config-basic)、[Environment variables](https://learn.chatgpt.com/docs/config-file/environment-variables)、[MCP](https://learn.chatgpt.com/docs/extend/mcp) 和 [Prompting Codex](https://learn.chatgpt.com/docs/prompting)。
