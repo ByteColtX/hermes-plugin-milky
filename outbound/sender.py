@@ -389,9 +389,7 @@ class MilkyOutboundSender:
             chunks = chunk_text(content, self._max_text_length)
             if not chunks:
                 return (format_message(content),)
-            return tuple(
-                format_message(chunk) for chunk in chunks
-            )
+            return tuple(format_message(chunk) for chunk in chunks)
         return (format_message(content),)
 
     async def _send_segments(
