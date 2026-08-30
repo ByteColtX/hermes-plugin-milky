@@ -290,6 +290,31 @@ def test_adapter_returns_unknown_send_outcome_without_host_fallback() -> None:
     asyncio.run(scenario())
 
 
+def test_adapter_drops_hermes_implicit_reply_anchor_before_delivery() -> None:
+    """adapter 交接不应把 Hermes 当前消息 anchor 传给 Milky sender。"""
+
+    result_from_sender = SimpleNamespace(success=True, message_id="fixture-send")
+
+    async def scenario() -> None:
+        sender = FakeSender(result_from_sender)
+        adapter, _, stream, _, _, _ = make_adapter(sender=sender)
+        assert await adapter.connect() is True
+        await stream.started.wait()
+
+        result = await adapter._send_with_retry(
+            "group:700000001",
+            "[CQ:reply,id=9001]显式引用",
+            reply_to="implicit-9002",
+        )
+
+        assert result is result_from_sender
+        assert sender.calls == 1
+        assert sender.requests == [("group:700000001", "[CQ:reply,id=9001]显式引用", None, None)]
+        await adapter.disconnect()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     ("success", "error_kind"),
     [

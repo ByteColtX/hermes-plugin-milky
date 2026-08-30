@@ -102,10 +102,10 @@ class MilkyOutboundSender:
     ) -> OutboundSendResult:
         """按 chat key 发送文本或 Milky outgoing segments。"""
 
-        del metadata
+        del metadata, reply_to
         try:
             target = parse_outbound_target(chat_id)
-            parts = self._message_parts(content, reply_to)
+            parts = self._message_parts(content, None)
         except (OutboundFormatError, ValueError) as error:
             result = _failure(_error_classification(error), _safe_reason(error))
             log_event(
@@ -382,15 +382,13 @@ class MilkyOutboundSender:
             return _failure("malformed", "recall failed")
 
     def _message_parts(self, content: object, reply_to: object) -> tuple[list[dict[str, Any]], ...]:
-        """格式化普通内容并仅在首个 chunk 添加 reply。"""
+        """格式化普通内容，并保持 CQ 片段不跨越分块边界。"""
 
+        del reply_to
         if isinstance(content, str):
             chunks = chunk_text(content, self._max_text_length)
-            return tuple(
-                format_message(chunk, reply_to=reply_to if index == 0 else None)
-                for index, chunk in enumerate(chunks)
-            )
-        return (format_message(content, reply_to=reply_to),)
+            return tuple(format_message(chunk) for chunk in chunks)
+        return (format_message(content),)
 
     async def _send_segments(
         self, target: OutboundTarget, segments: list[dict[str, Any]]
@@ -433,6 +431,7 @@ class MilkyOutboundSender:
     ) -> OutboundSendResult:
         """把可选 caption、reply 和单一媒体 segment 交给统一发送路径。"""
 
+        del reply_to
         try:
             content: list[dict[str, Any]] = []
             if caption is not None:
@@ -441,7 +440,7 @@ class MilkyOutboundSender:
                 if caption:
                     content.append(text_segment(caption))
             content.append(media)
-            return await self.send(chat_id, content, reply_to=reply_to)
+            return await self.send(chat_id, content)
         except (OutboundFormatError, ValueError) as error:
             return _failure(_error_classification(error), _safe_reason(error))
 

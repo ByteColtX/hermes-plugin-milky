@@ -324,13 +324,14 @@ class MilkyAdapter(BasePlatformAdapter):
     ) -> object:
         """把已连接 adapter 的出站调用委托给统一 sender。"""
 
+        del reply_to
         if not self._connected or self._closed:
             return OutboundSendResult(
                 success=False,
                 error="unsupported: adapter is disconnected",
                 error_kind="unsupported",
             )
-        return await self._outbound.send(chat_id, content, reply_to, metadata)
+        return await self._outbound.send(chat_id, content, None, metadata)
 
     async def _send_with_retry(
         self,
@@ -343,8 +344,8 @@ class MilkyAdapter(BasePlatformAdapter):
     ) -> object:
         """一次性发送 Milky 消息，不委托宿主的通用 fallback。"""
 
-        del max_retries, base_delay
-        return await self.send(chat_id, content, reply_to, metadata)
+        del max_retries, base_delay, reply_to
+        return await self.send(chat_id, content, None, metadata)
 
     async def get_chat_info(self, chat_id: str) -> dict[str, str]:
         """只根据 namespaced chat key 返回本地可确认的最小信息。"""

@@ -2,8 +2,11 @@
 
 from .chunking import DEFAULT_TEXT_LENGTH, chunk_text
 from .formatter import (
+    CQ_TYPE_REGISTRY,
+    CQ_TYPES,
     OutboundFormatError,
     face_segment,
+    format_cq_message,
     format_message,
     format_segment,
     format_segments,
@@ -12,6 +15,7 @@ from .formatter import (
     light_app_segment,
     mention_all_segment,
     mention_segment,
+    parse_cq_code,
     record_segment,
     reply_segment,
     text_segment,
@@ -25,6 +29,8 @@ from .sender import (
 )
 
 __all__ = [
+    "CQ_TYPES",
+    "CQ_TYPE_REGISTRY",
     "DEFAULT_TEXT_LENGTH",
     "MilkyOutboundSender",
     "OutboundFormatError",
@@ -32,6 +38,7 @@ __all__ = [
     "OutboundTarget",
     "chunk_text",
     "face_segment",
+    "format_cq_message",
     "format_message",
     "format_segment",
     "format_segments",
@@ -40,6 +47,7 @@ __all__ = [
     "light_app_segment",
     "mention_all_segment",
     "mention_segment",
+    "parse_cq_code",
     "parse_outbound_target",
     "record_segment",
     "reply_segment",
