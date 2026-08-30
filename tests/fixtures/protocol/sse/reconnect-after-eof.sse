@@ -1,0 +1,2 @@
+event: milky_event
+data: {"event_type":"bot_offline","time":1700000090,"self_id":900000001,"data":{"reason":"reconnect-test"}}

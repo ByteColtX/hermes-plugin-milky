@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,23 @@ CONFIG = load_config(
         "MILKY_ACCESS_TOKEN": "stream-test-secret",
     }
 )
+
+RECONNECT_LOG_EVENTS = {
+    "milky_event_stream_disconnected",
+    "milky_event_stream_reconnect_scheduled",
+    "milky_event_stream_reconnect_attempt",
+    "milky_event_stream_reconnected",
+    "milky_event_stream_cancelled",
+}
+SAFE_RECONNECT_REASONS = {
+    "eof",
+    "connection_error",
+    "timeout",
+    "http_error",
+    "protocol_error",
+    "stream_error",
+    "unknown",
+}
 
 
 @dataclass
@@ -49,6 +67,31 @@ class FakeResponse:
         """记录响应释放。"""
 
         self.close_calls += 1
+
+
+@dataclass
+class BlockingResponse(FakeResponse):
+    """提供一帧后等待关闭，用于稳定观察重连日志。"""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.read_started = asyncio.Event()
+        self.release_read = asyncio.Event()
+
+    async def readline(self) -> str | bytes | None:
+        """读取预置 frame，后续读取等待 close 释放。"""
+
+        if self.lines:
+            return await super().readline()
+        self.read_started.set()
+        await self.release_read.wait()
+        return None
+
+    async def close(self) -> None:
+        """记录关闭并解除阻塞读取。"""
+
+        self.close_calls += 1
+        self.release_read.set()
 
 
 @dataclass
@@ -82,6 +125,190 @@ def fixture_lines(name: str) -> list[str]:
     return (FIXTURE_ROOT / "sse" / name).read_text(encoding="utf-8").splitlines(keepends=True) + [
         None
     ]
+
+
+def lifecycle_log_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """返回事件流生命周期日志记录。"""
+
+    return [
+        record
+        for record in caplog.records
+        if record.name == "milky.event_stream"
+        and getattr(record, "event_name", None) in RECONNECT_LOG_EVENTS
+    ]
+
+
+def test_reconnect_log_contract_is_ordered_structured_and_safe(caplog) -> None:
+    """断连、退避、重连和取消日志应遵循固定标签与字段契约。"""
+
+    first_response = FakeResponse(fixture_lines("reconnect-after-eof.sse"))
+    second_response = BlockingResponse(fixture_lines("reconnect-after-eof.sse")[:-1])
+    transport = FakeTransport([first_response, second_response])
+    delays = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+        await asyncio.sleep(0)
+
+    stream = SseEventStream(
+        CONFIG,
+        transport=transport,
+        initial_backoff=0.25,
+        max_backoff=1,
+        sleep=fake_sleep,
+    )
+    received = []
+
+    async def scenario() -> None:
+        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+            task = asyncio.create_task(stream.run(received.append))
+            await asyncio.wait_for(second_response.read_started.wait(), 1)
+            await stream.close()
+            await asyncio.wait_for(task, 1)
+
+    asyncio.run(scenario())
+
+    records = lifecycle_log_records(caplog)
+    assert [record.event_name for record in records] == [
+        "milky_event_stream_disconnected",
+        "milky_event_stream_reconnect_scheduled",
+        "milky_event_stream_reconnect_attempt",
+        "milky_event_stream_reconnected",
+        "milky_event_stream_cancelled",
+    ]
+    assert records[0].reason == "eof"
+    assert records[1].attempt == 1
+    assert records[1].delay_seconds == 0.25
+    assert records[1].reason == "eof"
+    assert records[2].attempt == 1
+    assert records[2].reason == "eof"
+    assert records[3].attempt == 1
+    assert records[3].reason == "eof"
+    assert not hasattr(records[4], "reason")
+    assert delays == [0.25]
+    assert all(getattr(record, "reason", None) in SAFE_RECONNECT_REASONS for record in records[:-1])
+    rendered = " ".join(record.getMessage() for record in records)
+    assert "stream-test-secret" not in rendered
+    assert "Authorization" not in rendered
+    assert "https://host.example/milky/event" not in rendered
+
+
+def test_reconnect_attempt_resets_after_successful_recovery(caplog) -> None:
+    """成功恢复后新的断连周期应重新从 attempt 1 开始。"""
+
+    first_response = FakeResponse(fixture_lines("reconnect-after-eof.sse"))
+    second_response = FakeResponse(fixture_lines("reconnect-after-eof.sse"))
+    third_response = BlockingResponse(fixture_lines("reconnect-after-eof.sse")[:-1])
+    transport = FakeTransport([first_response, second_response, third_response])
+    stream = SseEventStream(CONFIG, transport=transport, initial_backoff=0, max_backoff=1)
+
+    async def scenario() -> None:
+        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+            task = asyncio.create_task(stream.run(lambda event: None))
+            await asyncio.wait_for(third_response.read_started.wait(), 1)
+            await stream.close()
+            await asyncio.wait_for(task, 1)
+
+    asyncio.run(scenario())
+
+    records = lifecycle_log_records(caplog)
+    attempts = [
+        record for record in records if record.event_name == "milky_event_stream_reconnect_attempt"
+    ]
+    scheduled = [
+        record
+        for record in records
+        if record.event_name == "milky_event_stream_reconnect_scheduled"
+    ]
+    recovered = [
+        record for record in records if record.event_name == "milky_event_stream_reconnected"
+    ]
+    assert [record.attempt for record in attempts] == [1, 1]
+    assert [record.attempt for record in scheduled] == [1, 1]
+    assert [record.attempt for record in recovered] == [1, 1]
+
+
+def test_failed_reconnects_log_safe_reason_and_max_backoff(caplog) -> None:
+    """连续连接失败应记录递增 attempt、封顶退避和安全 reason。"""
+
+    final_response = BlockingResponse(fixture_lines("reconnect-after-eof.sse")[:-1])
+    transport = FakeTransport(
+        [
+            OSError("secret socket detail"),
+            TimeoutError("secret timeout detail"),
+            RuntimeError("secret response detail"),
+            EventStreamError("http_error", "secret HTTP response detail"),
+            EventStreamError("malformed", "secret malformed response detail"),
+            final_response,
+        ]
+    )
+    delays = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+        await asyncio.sleep(0)
+
+    stream = SseEventStream(
+        CONFIG,
+        transport=transport,
+        initial_backoff=0.25,
+        max_backoff=0.5,
+        sleep=fake_sleep,
+    )
+
+    async def scenario() -> None:
+        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+            task = asyncio.create_task(stream.run(lambda event: None))
+            await asyncio.wait_for(final_response.read_started.wait(), 1)
+            await stream.close()
+            await asyncio.wait_for(task, 1)
+
+    asyncio.run(scenario())
+
+    records = lifecycle_log_records(caplog)
+    assert [record.event_name for record in records] == [
+        "milky_event_stream_reconnect_scheduled",
+        "milky_event_stream_reconnect_attempt",
+        "milky_event_stream_reconnect_scheduled",
+        "milky_event_stream_reconnect_attempt",
+        "milky_event_stream_reconnect_scheduled",
+        "milky_event_stream_reconnect_attempt",
+        "milky_event_stream_reconnect_scheduled",
+        "milky_event_stream_reconnect_attempt",
+        "milky_event_stream_reconnect_scheduled",
+        "milky_event_stream_reconnect_attempt",
+        "milky_event_stream_reconnected",
+        "milky_event_stream_cancelled",
+    ]
+    scheduled = [
+        record
+        for record in records
+        if record.event_name == "milky_event_stream_reconnect_scheduled"
+    ]
+    attempts = [
+        record for record in records if record.event_name == "milky_event_stream_reconnect_attempt"
+    ]
+    assert [record.attempt for record in scheduled] == [1, 2, 3, 4, 5]
+    assert [record.delay_seconds for record in scheduled] == [0.25, 0.5, 0.5, 0.5, 0.5]
+    assert [record.reason for record in scheduled] == [
+        "connection_error",
+        "timeout",
+        "stream_error",
+        "http_error",
+        "protocol_error",
+    ]
+    assert [record.attempt for record in attempts] == [1, 2, 3, 4, 5]
+    assert all(record.reason in SAFE_RECONNECT_REASONS for record in records[:-1])
+    assert not any(record.event_name == "milky_event_stream_disconnected" for record in records)
+    rendered = repr([(record.getMessage(), record.__dict__) for record in records])
+    assert "secret socket detail" not in rendered
+    assert "secret timeout detail" not in rendered
+    assert "secret response detail" not in rendered
+    assert "secret HTTP response detail" not in rendered
+    assert "secret malformed response detail" not in rendered
+    assert "stream-test-secret" not in rendered
+    assert "https://host.example/milky/event" not in rendered
+    assert delays == [0.25, 0.5, 0.5, 0.5, 0.5]
 
 
 def test_event_stream_gets_prefixed_event_url_and_bearer() -> None:
@@ -225,7 +452,7 @@ def test_slow_handler_does_not_block_receive_loop() -> None:
     asyncio.run(scenario())
 
 
-def test_disconnect_cancels_handlers_releases_response_and_transport() -> None:
+def test_disconnect_cancels_handlers_releases_response_and_transport(caplog) -> None:
     """主动取消应停止读取、取消 handler 并释放所有资源。"""
 
     payload = {
@@ -234,7 +461,7 @@ def test_disconnect_cancels_handlers_releases_response_and_transport() -> None:
         "self_id": 900000001,
         "data": {"reason": "合成观察"},
     }
-    response = FakeResponse(
+    response = BlockingResponse(
         [
             "event: milky_event\n",
             f"data: {json.dumps(payload, ensure_ascii=False)}\n",
@@ -255,16 +482,19 @@ def test_disconnect_cancels_handlers_releases_response_and_transport() -> None:
             raise
 
     async def scenario() -> None:
-        task = asyncio.create_task(stream.run(handler))
-        await asyncio.wait_for(started.wait(), 1)
-        await stream.close()
-        await asyncio.wait_for(task, 1)
+        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+            task = asyncio.create_task(stream.run(handler))
+            await asyncio.wait_for(started.wait(), 1)
+            await stream.close()
+            await asyncio.wait_for(task, 1)
 
     asyncio.run(scenario())
 
     assert cancelled.is_set()
     assert response.close_calls == 1
     assert transport.close_calls == 1
+    records = lifecycle_log_records(caplog)
+    assert [record.event_name for record in records] == ["milky_event_stream_cancelled"]
 
 
 def test_reconnect_applies_backoff_after_connection_failure() -> None:
@@ -387,7 +617,7 @@ def test_decoder_rejects_malformed_frames_without_echoing_data(lines: list[objec
     assert "内容" not in str(error_info.value)
 
 
-def test_close_interrupts_backoff_and_is_idempotent() -> None:
+def test_close_interrupts_backoff_and_is_idempotent(caplog) -> None:
     """停止应打断长退避，重复关闭不产生额外资源操作。"""
 
     response = FakeResponse([None])
@@ -408,19 +638,29 @@ def test_close_interrupts_backoff_and_is_idempotent() -> None:
     )
 
     async def scenario() -> None:
-        task = asyncio.create_task(stream.run(lambda event: None))
-        await asyncio.wait_for(sleep_started.wait(), 1)
-        await stream.close()
-        await stream.close()
-        await asyncio.wait_for(task, 1)
+        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+            task = asyncio.create_task(stream.run(lambda event: None))
+            await asyncio.wait_for(sleep_started.wait(), 1)
+            await stream.close()
+            await stream.close()
+            await asyncio.wait_for(task, 1)
 
     asyncio.run(scenario())
 
     assert response.close_calls == 1
     assert transport.close_calls == 1
+    records = lifecycle_log_records(caplog)
+    assert [record.event_name for record in records] == [
+        "milky_event_stream_disconnected",
+        "milky_event_stream_reconnect_scheduled",
+        "milky_event_stream_cancelled",
+    ]
+    assert records[0].reason == "eof"
+    assert records[1].attempt == 1
+    assert records[1].delay_seconds == 60.0
 
 
-def test_close_cancels_connection_attempt_without_reconnecting() -> None:
+def test_close_cancels_connection_attempt_without_reconnecting(caplog) -> None:
     """连接建立期间停止也应取消连接，不等待超时或发起新连接。"""
 
     class BlockingTransport(FakeTransport):
@@ -443,19 +683,22 @@ def test_close_cancels_connection_attempt_without_reconnecting() -> None:
     stream = SseEventStream(CONFIG, transport=transport)
 
     async def scenario() -> None:
-        task = asyncio.create_task(stream.run(lambda event: None))
-        await asyncio.wait_for(transport.started.wait(), 1)
-        await stream.close()
-        await asyncio.wait_for(task, 1)
+        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+            task = asyncio.create_task(stream.run(lambda event: None))
+            await asyncio.wait_for(transport.started.wait(), 1)
+            await stream.close()
+            await asyncio.wait_for(task, 1)
 
     asyncio.run(scenario())
 
     assert transport.cancelled.is_set()
     assert len(transport.connections) == 1
     assert transport.close_calls == 1
+    records = lifecycle_log_records(caplog)
+    assert [record.event_name for record in records] == ["milky_event_stream_cancelled"]
 
 
-def test_direct_run_task_cancellation_releases_resources() -> None:
+def test_direct_run_task_cancellation_releases_resources(caplog) -> None:
     """直接取消 receive loop 任务也应释放响应、handler 和 transport。"""
 
     payload = {
@@ -464,12 +707,11 @@ def test_direct_run_task_cancellation_releases_resources() -> None:
         "self_id": 900000001,
         "data": {"reason": "取消观察"},
     }
-    response = FakeResponse(
+    response = BlockingResponse(
         [
             "event: milky_event\n",
             f"data: {json.dumps(payload, ensure_ascii=False)}\n",
             "\n",
-            None,
         ]
     )
     transport = FakeTransport([response])
@@ -481,16 +723,19 @@ def test_direct_run_task_cancellation_releases_resources() -> None:
         await asyncio.Event().wait()
 
     async def scenario() -> None:
-        task = asyncio.create_task(stream.run(handler))
-        await asyncio.wait_for(started.wait(), 1)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+            task = asyncio.create_task(stream.run(handler))
+            await asyncio.wait_for(started.wait(), 1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
 
     asyncio.run(scenario())
 
     assert response.close_calls == 1
     assert transport.close_calls == 1
+    records = lifecycle_log_records(caplog)
+    assert [record.event_name for record in records] == ["milky_event_stream_cancelled"]
 
 
 def test_httpx_transport_opens_sse_with_get_and_unlimited_read_timeout() -> None:

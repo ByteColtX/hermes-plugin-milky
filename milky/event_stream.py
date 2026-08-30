@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -18,6 +19,60 @@ from config import MilkyConfig
 
 from .models import Event
 from .parser import ParseError, parse_event
+
+logger = logging.getLogger(__name__)
+
+_SAFE_RECONNECT_REASONS = frozenset(
+    {
+        "eof",
+        "connection_error",
+        "timeout",
+        "http_error",
+        "protocol_error",
+        "stream_error",
+        "unknown",
+    }
+)
+_LOG_REASON_BY_CLASSIFICATION = {
+    "transport_unknown": "connection_error",
+    "malformed": "protocol_error",
+    "http_error": "http_error",
+    "stream_error": "stream_error",
+}
+
+
+def _safe_reconnect_reason(classification: str) -> str:
+    """将内部错误分类转换为日志允许的固定 reason。"""
+
+    reason = _LOG_REASON_BY_CLASSIFICATION.get(classification, classification)
+    if reason not in _SAFE_RECONNECT_REASONS:
+        return "unknown"
+    return reason
+
+
+def _log_stream_event(
+    event_name: str,
+    level: int,
+    *,
+    reason: str | None = None,
+    attempt: int | None = None,
+    delay_seconds: float | None = None,
+) -> None:
+    """输出不含敏感内容的事件流生命周期日志。"""
+
+    fields: dict[str, object] = {"event_name": event_name}
+    message_parts = [event_name]
+    if reason is not None:
+        safe_reason = _safe_reconnect_reason(reason)
+        fields["reason"] = safe_reason
+        message_parts.append(f"reason={safe_reason}")
+    if attempt is not None:
+        fields["attempt"] = attempt
+        message_parts.append(f"attempt={attempt}")
+    if delay_seconds is not None:
+        fields["delay_seconds"] = delay_seconds
+        message_parts.append(f"delay_seconds={delay_seconds}")
+    logger.log(level, " ".join(message_parts), extra=fields)
 
 
 class EventStreamError(Exception):
@@ -253,6 +308,7 @@ class SseEventStream:
         self._diagnostics: deque[StreamDiagnostic] = deque(maxlen=128)
         self._stopping = False
         self._stop_event: asyncio.Event | None = None
+        self._cancellation_logged = False
 
     @property
     def diagnostics(self) -> tuple[StreamDiagnostic, ...]:
@@ -271,29 +327,84 @@ class SseEventStream:
         self._stop_event = asyncio.Event()
         self._run_task = asyncio.current_task()
         backoff = self._initial_backoff
+        reconnect_pending = False
+        reconnect_attempt = 0
+        reconnect_reason = "unknown"
+        run_cancelled = False
+        self._cancellation_logged = False
         try:
             while not self._stopping:
+                connection_established = False
+                disconnect_reason = "unknown"
+                if reconnect_pending:
+                    _log_stream_event(
+                        "milky_event_stream_reconnect_attempt",
+                        logging.INFO,
+                        reason=reconnect_reason,
+                        attempt=reconnect_attempt,
+                    )
                 try:
-                    self._connection = await self._connect()
-                    if self._connection is None:
+                    connection = await self._connect()
+                    if connection is None:
                         break
+                    self._connection = connection
+                    if self._stopping:
+                        break
+                    connection_established = True
+                    if reconnect_pending:
+                        _log_stream_event(
+                            "milky_event_stream_reconnected",
+                            logging.INFO,
+                            reason=reconnect_reason,
+                            attempt=reconnect_attempt,
+                        )
+                        reconnect_pending = False
+                        reconnect_attempt = 0
+                        reconnect_reason = "unknown"
                     backoff = self._initial_backoff
                     await self._consume_connection(handler)
+                    if not self._stopping:
+                        disconnect_reason = "eof"
                 except asyncio.CancelledError:
+                    run_cancelled = True
                     if not self._stopping:
                         raise
                     break
                 except EventStreamError as error:
                     self._record(error.classification, error.reason)
-                except (TimeoutError, OSError):
+                    disconnect_reason = _safe_reconnect_reason(error.classification)
+                except (TimeoutError, OSError) as error:
                     self._record("transport_unknown", "event stream connection failed")
+                    disconnect_reason = (
+                        "timeout" if isinstance(error, TimeoutError) else "connection_error"
+                    )
                 except Exception:  # noqa: BLE001
                     self._record("stream_error", "event stream processing failed")
+                    disconnect_reason = "stream_error"
                 finally:
+                    if connection_established and not self._stopping and not run_cancelled:
+                        _log_stream_event(
+                            "milky_event_stream_disconnected",
+                            logging.WARNING,
+                            reason=disconnect_reason,
+                        )
                     await self._close_connection()
 
                 if self._stopping:
                     break
+                if reconnect_pending:
+                    reconnect_attempt += 1
+                else:
+                    reconnect_pending = True
+                    reconnect_attempt = 1
+                reconnect_reason = disconnect_reason
+                _log_stream_event(
+                    "milky_event_stream_reconnect_scheduled",
+                    logging.WARNING,
+                    reason=reconnect_reason,
+                    attempt=reconnect_attempt,
+                    delay_seconds=backoff,
+                )
                 await self._wait_backoff(backoff)
                 backoff = min(self._max_backoff, max(self._initial_backoff, backoff * 2))
         finally:
@@ -306,6 +417,9 @@ class SseEventStream:
                 await self._transport.close()
             except Exception:  # noqa: BLE001
                 self._record("resource_error", "event stream transport close failed")
+            if not self._cancellation_logged:
+                _log_stream_event("milky_event_stream_cancelled", logging.INFO)
+                self._cancellation_logged = True
             self._run_task = None
 
     async def close(self) -> None:

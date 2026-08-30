@@ -48,6 +48,7 @@
     {"path": "sse/message_receive.multiline.sse", "classification": "accepted", "assertions": ["outer.milky_event", "inner.message_receive", "two_data_lines"]},
     {"path": "sse/system-and-unknown.sse", "classification": "observe_only", "assertions": ["outer.milky_event", "unknown_continues"]},
     {"path": "sse/malformed-then-valid.sse", "classification": "malformed", "assertions": ["first_frame_malformed", "later_frame_observable"]},
-    {"path": "sse/unknown-outer-then-valid.sse", "classification": "observe_only", "assertions": ["unknown_outer_ignored", "later_frame_observable"]}
+    {"path": "sse/unknown-outer-then-valid.sse", "classification": "observe_only", "assertions": ["unknown_outer_ignored", "later_frame_observable"]},
+    {"path": "sse/reconnect-after-eof.sse", "classification": "observe_only", "assertions": ["outer.milky_event", "eof_boundary"]}
   ]
 }
