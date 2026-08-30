@@ -177,9 +177,11 @@ class MilkyOutboundSender:
         caption: str | None = None,
         reply_to: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        **kwargs: Any,
     ) -> OutboundSendResult:
         """把本地图片路径转换为 Milky file URI 后发送。"""
 
+        del kwargs
         return await self.send_image(
             chat_id, image_path, caption=caption, reply_to=reply_to, metadata=metadata
         )

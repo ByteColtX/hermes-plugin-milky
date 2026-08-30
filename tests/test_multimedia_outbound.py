@@ -249,6 +249,22 @@ def test_sender_routes_remote_media_to_dm_without_download() -> None:
     }
 
 
+def test_sender_image_file_accepts_host_extension_kwargs(tmp_path: Path) -> None:
+    """图片文件 sender 应兼容 Hermes 宿主扩展参数。"""
+
+    media_path = tmp_path / "fixture-image.png"
+    media_path.write_bytes(b"synthetic-image")
+    client = MultimediaClient()
+    sender = MilkyOutboundSender(client)
+
+    result = asyncio.run(
+        sender.send_image_file("group:700000001", media_path, hermes_extension="fixture")
+    )
+
+    assert result.success is True
+    assert client.calls[0][1]["message"][0]["type"] == "image"
+
+
 @pytest.mark.parametrize("target", ["group:700000001", "dm:800000001"])
 def test_sender_uploads_local_file_with_explicit_file_uri(target: str, tmp_path: Path) -> None:
     """本地文档必须走独立 upload，并在 JSON 中只出现 file_uri/file_name。"""
@@ -356,7 +372,9 @@ def test_adapter_media_methods_delegate_without_base_text_fallback() -> None:
 
     async def scenario() -> None:
         await adapter.send_image("dm:800000001", "https://media.example.invalid/a.png")
-        await adapter.send_image_file("dm:800000001", "/fixture/image.png")
+        await adapter.send_image_file(
+            "dm:800000001", "/fixture/image.png", hermes_extension="fixture"
+        )
         await adapter.send_animation("dm:800000001", "https://media.example.invalid/a.gif")
         await adapter.send_voice("dm:800000001", "/fixture/audio.ogg")
         await adapter.send_video("dm:800000001", "/fixture/video.mp4")
@@ -372,6 +390,7 @@ def test_adapter_media_methods_delegate_without_base_text_fallback() -> None:
         "send_video",
         "send_document",
     ]
+    assert sender.calls[1][1]["hermes_extension"] == "fixture"
 
 
 def test_adapter_media_gate_prevents_read_and_sender_call_after_disconnect(tmp_path: Path) -> None:

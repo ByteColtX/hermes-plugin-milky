@@ -359,6 +359,7 @@ class MilkyAdapter(BasePlatformAdapter):
         caption: str | None = None,
         reply_to: str | None = None,
         metadata: object = None,
+        **kwargs: object,
     ) -> object:
         """将 Hermes 提供的图片路径交给统一 sender。"""
 
@@ -369,6 +370,7 @@ class MilkyAdapter(BasePlatformAdapter):
             caption=caption,
             reply_to=reply_to,
             metadata=metadata,
+            **kwargs,
         )
 
     async def send_animation(
