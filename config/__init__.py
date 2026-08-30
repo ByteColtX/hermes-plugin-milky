@@ -57,25 +57,6 @@ _DEFAULT_WILL_POLICY = {
     "priority": 1000,
 }
 
-_LEGACY_ENV_NAMES = frozenset(
-    {
-        "MILKY_ALLOWED_GROUPS",
-        "MILKY_ALLOWED_USERS",
-        "MILKY_MUTED_GROUPS",
-        "MILKY_REQUIRE_MENTION",
-        "MILKY_DM_POLICY",
-        "MILKY_HOME_CHANNEL",
-        "ALLOWED_GROUPS",
-        "ALLOWED_USERS",
-        "MUTED_GROUPS",
-        "REQUIRE_MENTION",
-        "DM_POLICY",
-        "HOME_CHANNEL",
-        "ONEBOT_V11_ALLOWED_CHATS",
-        "ONEBOT_V11_HOME_CHANNEL",
-    }
-)
-
 
 class ConfigError(ValueError):
     """表示启动配置缺失、类型错误或值域错误。"""
@@ -90,6 +71,7 @@ class MilkyConfig:
     allowed_chats: frozenset[str] = field(default_factory=frozenset, repr=False)
     will_policy: dict[str, Any] = field(default_factory=dict, repr=False)
     session_buffer_size: int = 20
+    home_channel: str | None = field(default=None, repr=False)
 
     @property
     def event_url(self) -> str:
@@ -119,6 +101,7 @@ class MilkyConfig:
             "will_engine": self.will_policy["engine"],
             "session_buffer_size": self.session_buffer_size,
             "has_access_token": bool(self.access_token),
+            "has_home_channel": self.home_channel is not None,
         }
 
 
@@ -126,7 +109,6 @@ def load_config(environment: Mapping[str, str] | None = None) -> MilkyConfig:
     """从环境映射一次性解析并校验 Milky 配置。"""
 
     values: Mapping[str, str] = os.environ if environment is None else environment
-    _reject_legacy_names(values)
 
     missing = [name for name in ("MILKY_BASE_URL", "MILKY_ACCESS_TOKEN") if not values.get(name)]
     if missing:
@@ -140,12 +122,14 @@ def load_config(environment: Mapping[str, str] | None = None) -> MilkyConfig:
         values.get("MILKY_SESSION_BUFFER_SIZE", "20"),
         "MILKY_SESSION_BUFFER_SIZE",
     )
+    home_channel = _parse_home_channel(values.get("MILKY_HOME_CHANNEL"))
     return MilkyConfig(
         base_url=base_url,
         access_token=access_token,
         allowed_chats=allowed_chats,
         will_policy=will_policy,
         session_buffer_size=session_buffer_size,
+        home_channel=home_channel,
     )
 
 
@@ -153,14 +137,6 @@ def parse_config(environment: Mapping[str, str] | None = None) -> MilkyConfig:
     """兼容调用方的配置解析命名。"""
 
     return load_config(environment)
-
-
-def _reject_legacy_names(values: Mapping[str, str]) -> None:
-    """拒绝会造成旧配置语义迁移歧义的环境变量。"""
-
-    legacy_names = sorted(_LEGACY_ENV_NAMES.intersection(values))
-    if legacy_names:
-        raise ConfigError(f"legacy configuration is unsupported: {', '.join(legacy_names)}")
 
 
 def _required_text(value: object, name: str) -> str:
@@ -212,6 +188,21 @@ def _normalize_chat_key(value: str) -> str:
     if match is None:
         raise ConfigError("MILKY_ALLOWED_CHATS contains an invalid chat key")
     return f"{match.group(1)}:{int(match.group(2))}"
+
+
+def _parse_home_channel(value: object) -> str | None:
+    """解析可选的出站 home channel chat key。"""
+
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ConfigError("MILKY_HOME_CHANNEL contains an invalid chat key")
+    if not value.strip():
+        raise ConfigError("MILKY_HOME_CHANNEL contains an invalid chat key")
+    try:
+        return _normalize_chat_key(value.strip())
+    except ConfigError:
+        raise ConfigError("MILKY_HOME_CHANNEL contains an invalid chat key") from None
 
 
 def _parse_will_policy(value: object) -> dict[str, Any]:

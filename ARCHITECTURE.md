@@ -29,6 +29,7 @@ hermes-plugin-milky/
 ├── session/                    # chat key、admission 和 wait buffer
 ├── state/                      # Bot 群禁言状态
 ├── outbound/                   # segment 格式化、路由和拆分
+│   └── standalone.py           # 独立 cron 的一次性文本投递
 ├── tests/
 │   ├── fixtures/               # 脱敏协议 fixture
 │   ├── unit/
@@ -64,11 +65,15 @@ Python package entry point。`pyproject.toml` 只用于 uv 开发环境和质量
           ^                                                  ^
           |                                                  |
    Milky SSE /event  <-------------------------->  milky/client
+          ^
+          |
+   Hermes core / cron 受信系统消息
 ```
 
 Milky 的 HTTP Action 和 SSE 事件流是两个独立的传输边界：Action 使用 HTTP `POST`，事件
 流使用 SSE `GET /event`。不使用 OneBot 的 echo、pending response map 或 WebSocket RPC
-模型。
+模型。Hermes core/cron 的受信系统消息只进入 outbound sender，不会反向进入 SSE 入站
+pipeline。
 
 ## 4. 入口和生命周期
 
@@ -85,7 +90,10 @@ Milky 的 HTTP Action 和 SSE 事件流是两个独立的传输边界：Action �
 生命周期和少量委托，不承载协议解析、Will 公式或大量 Action 编排。
 
 `tools.py` 只注册显式设计的 Agent 工具。v0.1 不暴露任意 Milky Action catalog；未实现
-的工具不得出现在 manifest 中。
+的工具不得出现在 manifest 中。注册时还会声明 MILKY_HOME_CHANNEL 的 cron delivery
+变量、无网络的 env_enablement_fn 和一次性 standalone_sender_fn。home metadata 使用
+启动时解析的完整 group:/dm: chat key，显示名固定为 Milky Home；这些 hook 不启动
+HTTP/SSE，也不改变普通消息的初始化就绪门槛。
 
 ### 4.2 生命周期
 
@@ -211,6 +219,10 @@ message ID 时不得伪造 ID，可以处理当前帧一次，但必须记录 `n
 follow-up、interrupt 或 pending 逻辑。交接失败只能重试同一 batch 或记录不可恢复失败，
 不能无条件回填 buffer。
 
+Hermes core/cron 产生的启动、重启、告警和 cron 结果走反向的受信出站路径：
+Hermes 先解析 home channel 或显式目标，再调用同一个 outbound sender；该路径不创建
+canonical、Gate、Will、wait buffer 或 Agent turn。
+
 ## 8. Gate、Will 和状态
 
 ### 8.1 Gate
@@ -300,6 +312,12 @@ wait 阶段只保留资源引用，不下载。trigger 阶段才允许查询图�
 v0.1 只允许显式设计的 Agent 工具。工具必须独立校验类型、范围和目标，再调用同一个
 Milky client；入站正文、mention 或 Will 分数不能赋予工具权限。
 
+网关内的系统消息复用已连接 adapter 的 MilkyOutboundSender。独立 cron 通过
+outbound/standalone.py 为每次调用创建并关闭临时 client，支持同一文本、分块、目标路由、
+SendResult 和错误分类；没有 Hermes 安全附件输入 seam 时，附件/线程参数返回
+unsupported，不会自行下载 URL 或把本地路径塞进消息 segment。两条路径都不自动 retry
+未知执行结果，也不改投其他目标。
+
 ## 11. 数据存储和所有权
 
 v0.1 不使用插件自有持久化数据库。插件内只有进程内、可丢失的运行时状态：
@@ -311,17 +329,21 @@ v0.1 不使用插件自有持久化数据库。插件内只有进程内、可丢
 
 Hermes 拥有 Agent turn、session/transcript、媒体下载、缓存、路径和权限。Milky client
 拥有 URL、认证和 HTTP envelope；event stream 拥有 SSE 生命周期；outbound 拥有 Milky
-segment 格式。
+segment 格式。standalone sender 只拥有一次调用的临时 client 生命周期，不拥有持久化
+连接、cron 状态或媒体缓存。
 
 ## 12. 配置与安全
 
 配置入口只有：
 
 - 必需：`MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN`；
-- 可选：`MILKY_ALLOWED_CHATS`、`MILKY_WILL_POLICY`、`MILKY_SESSION_BUFFER_SIZE`。
+- 可选：`MILKY_ALLOWED_CHATS`、`MILKY_WILL_POLICY`、`MILKY_SESSION_BUFFER_SIZE`、
+  `MILKY_HOME_CHANNEL`。
 
-配置只在启动时解析一次，并输出脱敏摘要。不使用旧的 allowed groups/users、muted groups、
-require mention、扁平 dm policy 或 `MILKY_HOME_CHANNEL`。
+配置只在启动时解析一次，并输出只包含 has_home_channel 的脱敏摘要。
+MILKY_HOME_CHANNEL 是出站系统/cron 默认目标，不加入入站 allowlist；未配置时
+deliver=milky 不回退到默认频道、origin、群聊或私聊。仍不使用旧的 allowed
+groups/users、muted groups、require mention 或扁平 dm policy。
 
 所有日志、异常、SendResult、fixture、快照和执行记录不得包含 token、Authorization
 header、个人 QQ、真实媒体路径或敏感正文。诊断优先使用 chat key、message ID、reason 和
@@ -350,10 +372,12 @@ smoke 只能从运行时环境读取凭证。新增行为先补 OpenSpec 对应�
 ## 14. 非目标和扩展边界
 
 v0.1 不复制 OneBot v11 的 Action、CQ 码、echo 或 WebSocket 回包模型；不实现 WebHook，
-不注册任意 Action catalog，不管理插件自己的媒体缓存，也不处理 temp 会话。
+不注册任意 Action catalog，不管理插件自己的媒体缓存，也不处理 temp 会话。standalone
+cron 目前只承诺无 thread 的文本/已格式化内容投递；缺少 Hermes 安全附件 seam 时不做
+独立媒体或文件投递。
 
-WebSocket fallback、standalone/cron sender 和更多 Agent 工具必须先通过独立 OpenSpec
-契约、Hermes 扩展点确认和测试，再加入本架构。
+WebSocket fallback 和更多 Agent 工具必须先通过独立 OpenSpec 契约、Hermes 扩展点确认和
+测试，再加入本架构。
 
 ## 15. 术语
 

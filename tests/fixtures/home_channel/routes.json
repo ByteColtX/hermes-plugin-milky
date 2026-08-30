@@ -1,0 +1,21 @@
+{
+  "home_targets": {
+    "group": "group:700000001",
+    "dm": "dm:800000001"
+  },
+  "invalid_targets": [
+    "",
+    "home",
+    "temp:700000001",
+    "group:-1",
+    "group:700000001:extra",
+    "private:800000001"
+  ],
+  "cron": {
+    "delivery": "milky",
+    "explicit_group": "milky:group:700000002",
+    "explicit_dm": "milky:dm:800000002",
+    "message_kinds": ["success", "failure"]
+  },
+  "system_message_kinds": ["startup", "restart", "alert"]
+}

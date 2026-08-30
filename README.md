@@ -12,7 +12,8 @@ hermes plugins install ByteColtX/hermes-plugin-milky
 安装器读取仓库根目录的 `plugin.yaml`，并加载根目录
 `__init__.py::register(ctx)`。`tools.py::register_tools(ctx)` 是显式 Agent 工具的发现
 边界；Milky 适配器的协议、入站、出站和生命周期能力按 active OpenSpec change 的任务
-顺序交付。
+顺序交付。当前 change 同时覆盖 home channel 的配置、Hermes registry、live 和 standalone
+cron 出站边界。
 
 ## 入口布局
 
@@ -36,8 +37,9 @@ T01–T16 和 T18 的协议、canonical/dedup、Gate/Will、wait buffer、Hermes
 和 adapter 生命周期已有自动化测试；T19 另有脱敏本地 HTTP/SSE 集成 fixture 和默认只读
 Milky smoke。写入 smoke 必须显式使用 `--allow-write`，且目标必须命中运行时 allowlist。
 
-standalone/cron sender、WebHook、WebSocket fallback、任意 Action catalog 和其他未声明
-能力仍保持 `unsupported`，需先补充独立 OpenSpec 契约与 Hermes 扩展点确认。
+home channel 的网关 live 投递和无附件 standalone 文本投递已接入 Hermes registry；没有
+Hermes 安全附件 seam 的 standalone 媒体/文件、WebHook、WebSocket fallback、任意
+Action catalog 和其他未声明能力仍保持 `unsupported`。
 
 ## 配置指南
 
@@ -57,6 +59,7 @@ standalone/cron sender、WebHook、WebSocket fallback、任意 Action catalog �
 | `MILKY_ALLOWED_CHATS` | 逗号分隔的完整 chat key 白名单，例如 `group:123456789,dm:987654321`；为空时放行。 |
 | `MILKY_WILL_POLICY` | JSON 格式的嵌套 Will policy，支持 `engine`、`routing`、`willingness` 和 `priority`。 |
 | `MILKY_SESSION_BUFFER_SIZE` | Will 等待消息的插件侧历史缓冲上限，默认 `20`；设为 `0` 禁用历史缓冲。 |
+| `MILKY_HOME_CHANNEL` | 可选的系统/cron 默认投递目标，只接受完整 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>`；未设置时不创建默认目标。 |
 
 例如，在启动 Hermes 前注入连接配置：
 
@@ -64,6 +67,7 @@ standalone/cron sender、WebHook、WebSocket fallback、任意 Action catalog �
 export MILKY_BASE_URL="http://127.0.0.1:3000"
 export MILKY_ACCESS_TOKEN="<从安全凭证存储注入>"
 export MILKY_ALLOWED_CHATS="group:123456789,dm:987654321"
+export MILKY_HOME_CHANNEL="group:123456789"
 hermes
 ```
 
@@ -71,6 +75,18 @@ hermes
 不会回退到群聊或私聊目标。完整 Will policy 的默认值和字段约束以
 `plugin.yaml` 及 `openspec/changes/` 中的配置契约为准；不要使用旧的 allowed groups、
 allowed users、muted groups、require mention 或扁平 dm policy 配置名。
+
+`MILKY_HOME_CHANNEL` 只在启动时解析一次，并且不参与入站 allowlist、Gate 或 Will。
+Hermes 网关启动/重启通知、系统告警以及 `deliver=milky` 且没有显式目标的 cron 结果
+会投递到该目标；显式的 `milky:group:<id>` 或 `milky:dm:<id>` 目标优先。未配置 home
+channel 时不会猜测目标或回退到 origin、默认频道、群聊或私聊。网关 live 投递复用已连接
+adapter；独立 cron 为单次文本投递创建并关闭临时 Milky client，返回远端 `message_seq`
+对应的稳定消息 ID。
+
+standalone cron 没有经过 Hermes 安全 materialization 的媒体/文件输入 seam 时会返回
+`unsupported`，不会直传本地路径、下载 URL 或把 file 放入普通消息 segment。真实 Milky
+写入 smoke 仍必须使用运行时注入的凭证，并在执行前取得明确授权；本文示例中的目标仅为
+合成占位。
 
 ### Hermes Agent 推荐配置
 

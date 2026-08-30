@@ -386,6 +386,8 @@ class MilkyOutboundSender:
 
         if isinstance(content, str):
             chunks = chunk_text(content, self._max_text_length)
+            if not chunks:
+                return (format_message(content, reply_to=reply_to),)
             return tuple(
                 format_message(chunk, reply_to=reply_to if index == 0 else None)
                 for index, chunk in enumerate(chunks)

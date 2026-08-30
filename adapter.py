@@ -332,6 +332,133 @@ class MilkyAdapter(BasePlatformAdapter):
             )
         return await self._outbound.send(chat_id, content, reply_to, metadata)
 
+    async def send_image(
+        self,
+        chat_id: str,
+        image_url: str,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: object = None,
+    ) -> object:
+        """将图片交给统一 Milky segment sender。"""
+
+        return await self._delegate_outbound(
+            "send_image",
+            chat_id,
+            image_url,
+            caption=caption,
+            reply_to=reply_to,
+            metadata=metadata,
+        )
+
+    async def send_image_file(
+        self,
+        chat_id: str,
+        image_path: str,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: object = None,
+    ) -> object:
+        """将 Hermes 提供的图片路径交给统一 sender。"""
+
+        return await self._delegate_outbound(
+            "send_image_file",
+            chat_id,
+            image_path,
+            caption=caption,
+            reply_to=reply_to,
+            metadata=metadata,
+        )
+
+    async def send_animation(
+        self,
+        chat_id: str,
+        animation_url: str,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: object = None,
+    ) -> object:
+        """将动画交给统一 Milky segment sender。"""
+
+        return await self._delegate_outbound(
+            "send_animation",
+            chat_id,
+            animation_url,
+            caption=caption,
+            reply_to=reply_to,
+            metadata=metadata,
+        )
+
+    async def send_voice(
+        self,
+        chat_id: str,
+        audio_path: str,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: object = None,
+        **kwargs: object,
+    ) -> object:
+        """将语音交给统一 Milky segment sender。"""
+
+        return await self._delegate_outbound(
+            "send_voice",
+            chat_id,
+            audio_path,
+            caption=caption,
+            reply_to=reply_to,
+            metadata=metadata,
+            **kwargs,
+        )
+
+    async def send_video(
+        self,
+        chat_id: str,
+        video_path: str,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: object = None,
+        **kwargs: object,
+    ) -> object:
+        """将视频交给统一 Milky segment sender。"""
+
+        return await self._delegate_outbound(
+            "send_video",
+            chat_id,
+            video_path,
+            caption=caption,
+            reply_to=reply_to,
+            metadata=metadata,
+            **kwargs,
+        )
+
+    async def send_document(
+        self,
+        chat_id: str,
+        file_path: object,
+        caption: str | None = None,
+        file_name: str | None = None,
+        reply_to: str | None = None,
+        metadata: object = None,
+        **kwargs: object,
+    ) -> object:
+        """将文件交给独立 Milky upload Action。"""
+
+        return await self._delegate_outbound(
+            "send_document",
+            chat_id,
+            file_path,
+            caption=caption,
+            file_name=file_name,
+            reply_to=reply_to,
+            metadata=metadata,
+            **kwargs,
+        )
+
+    async def send_file(self, *args: object, **kwargs: object) -> object:
+        """兼容 Hermes 的旧式文件发送名称。"""
+
+        return await self._delegate_outbound("send_file", *args, **kwargs)
+
     async def _send_with_retry(
         self,
         chat_id: str,
@@ -345,6 +472,27 @@ class MilkyAdapter(BasePlatformAdapter):
 
         del max_retries, base_delay
         return await self.send(chat_id, content, reply_to, metadata)
+
+    async def _delegate_outbound(self, method_name: str, *args: object, **kwargs: object) -> object:
+        """在不触发宿主 fallback 的前提下调用 sender 方法。"""
+
+        if not self._connected or self._closed:
+            return OutboundSendResult(
+                success=False,
+                error="unsupported: adapter is disconnected",
+                error_kind="unsupported",
+            )
+        method = getattr(self._outbound, method_name, None)
+        if not callable(method):
+            return OutboundSendResult(
+                success=False,
+                error="unsupported: outbound capability is unavailable",
+                error_kind="unsupported",
+            )
+        result = method(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     async def get_chat_info(self, chat_id: str) -> dict[str, str]:
         """只根据 namespaced chat key 返回本地可确认的最小信息。"""
