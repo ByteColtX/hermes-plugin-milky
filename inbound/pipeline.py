@@ -24,7 +24,8 @@ from session import (
 from will import WillInput
 
 from .canonical import CanonicalMessage, canonicalize_event
-from .hermes_mapper import build_source, map_message_event
+from .commands import recognize_slash_command
+from .hermes_mapper import build_source, map_command_event, map_message_event
 
 Observer = Callable[[Event], Awaitable[object] | object]
 
@@ -212,6 +213,10 @@ class InboundPipeline:
                     reason=_safe_gate_reason(gate_result.reason),
                 )
                 return PipelineResult("denied", canonical=canonical, reason=gate_result.reason)
+            command = recognize_slash_command(canonical)
+            if command is not None:
+                self._start_command(canonical)
+                return PipelineResult("command", canonical=canonical)
             if canonical.will_input is None:
                 self._record("malformed:missing_will_input")
                 log_event(
@@ -364,6 +369,49 @@ class InboundPipeline:
         task = asyncio.create_task(self._process_batch(batch))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+
+    def _start_command(self, message: CanonicalMessage) -> None:
+        """启动不经过资源、buffer 和 Will 的 Hermes 命令交接。"""
+
+        task = asyncio.create_task(self._process_command(message))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _process_command(self, message: CanonicalMessage) -> None:
+        """将命令事件提交给 Hermes，并隔离宿主执行异常。"""
+
+        try:
+            source_builder = getattr(self._hermes, "build_source", None)
+            if not callable(source_builder):
+                raise TypeError("Hermes source builder is unavailable")
+            source = build_source(message, source_builder)
+            event = map_command_event(
+                message,
+                source=source,
+                message_event_cls=self._message_event_cls,
+                message_type_cls=self._message_type_cls,
+            )
+            handle_message = getattr(self._hermes, "handle_message", None)
+            if not callable(handle_message):
+                raise TypeError("Hermes handle_message is unavailable")
+            result = handle_message(event)
+            if inspect.isawaitable(result):
+                await result
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - 命令边界只记录安全分类
+            self._record(f"command_failed:{_error_category(error)}")
+            log_event(
+                logger,
+                "milky_inbound_handoff_failed",
+                logging.WARNING,
+                stage="handoff",
+                chat_key=message.chat_key,
+                message_id=message.message_id,
+                scene=message.scene,
+                classification=_error_classification(error),
+                reason="handoff_failed",
+            )
 
     def _gate_context(self, message: CanonicalMessage) -> GateContext:
         member_mute = "muted"

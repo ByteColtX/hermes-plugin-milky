@@ -31,6 +31,30 @@ adapter.py        # Milky platform adapter 生命周期薄层
 `milky_recall_group_message`。三者的参数校验、目标校验和错误分类已由出站边界统一处理；
 `tools.py` 继续保持安全的发现边界。
 
+### Hermes 斜杠命令
+
+Milky 的纯文本斜杠命令在 canonical、TTL dedup 和 Gate 之后、Will 之前进入 Hermes
+gateway control 通道。friend 使用 `dm:<QQ号>`，group 使用 `group:<群号>`；命令不进入
+Will、wait buffer、资源补全或 Agent 普通正文。Hermes 继续拥有内置命令、未知命令、权限
+和 Agent 忙碌时的分发语义，插件不复制命令队列。
+
+当前唯一注册的插件命令是 `/milky`。无参数时，它通过已连接 adapter 所拥有的唯一
+Milky client 调用 `get_impl_info`，成功回复直接使用完整原始 JSON envelope（包括未知扩展
+字段），不添加说明或 Markdown 围栏。带参数、未连接、多个活动 client、rejected、
+malformed、HTTP 或 transport unknown 结果均安全返回分类；不会临时创建 client，也不会
+注册任意 Milky Action catalog。注册阶段不建立网络连接。
+
+### 能力矩阵
+
+| 能力 | 当前边界 | 失败或降级 |
+| --- | --- | --- |
+| Hermes 内置斜杠命令 | 交由 Hermes registry/dispatcher | 沿用 Hermes 既有结果 |
+| `/milky` | 单一活动 adapter client 的只读 `get_impl_info` | `unsupported`、`rejected`、`malformed`、`http_error` 或 `transport_unknown` |
+| 未知斜杠命令 | 交由 Hermes unknown-command 路径 | 不进入 Agent 普通正文 |
+| 混合 segment、普通正文 | 继续普通 Will/Agent 路径 | 不扩大 gateway control |
+| temp、系统和未知事件 | 沿用 observe-only 或 `ignored_temp` | 不创建命令或 Agent turn |
+| 任意 Milky Action catalog | 不支持 | `unsupported` |
+
 ### 当前实现状态
 
 T01–T16 和 T18 的协议、canonical/dedup、Gate/Will、wait buffer、Hermes mapping、出站

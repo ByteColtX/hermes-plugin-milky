@@ -1,0 +1,10 @@
+{
+  "status": "ok",
+  "retcode": 0,
+  "data": {
+    "impl_name": "Synthetic Milky",
+    "impl_version": "fixture-1",
+    "milky_version": "1.3",
+    "qq_protocol_type": "synthetic"
+  }
+}

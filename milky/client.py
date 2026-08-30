@@ -218,6 +218,16 @@ class MilkyClient:
         params: Mapping[str, Any] | None = None,
     ) -> MilkyEnvelope:
         """发送一次 Action 并返回已校验的成功 envelope。"""
+        envelope, _ = await self._call_raw(action, params)
+        return envelope
+
+    async def _call_raw(
+        self,
+        action: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> tuple[MilkyEnvelope, bytes]:
+        """发送 Action 并保留已校验响应的 UTF-8 字节。"""
+
         started = time.perf_counter()
         status_code: int | None = None
         safe_action = _safe_log_action(action)
@@ -277,6 +287,8 @@ class MilkyClient:
                 raise ActionError("rejected", action, "Milky Action envelope rejected")
             if not isinstance(envelope.data, Mapping):
                 raise ActionError("malformed", action, "response data is malformed")
+            if action == "get_impl_info":
+                _validate_impl_info_data(envelope.data, action)
             log_event(
                 logger,
                 "milky_action_succeeded",
@@ -286,7 +298,7 @@ class MilkyClient:
                 status_code=status_code,
                 duration_ms=_duration_ms(started),
             )
-            return envelope
+            return envelope, _response_body_bytes(response.body, action)
         except asyncio.CancelledError:
             raise
         except ActionError as error:
@@ -317,6 +329,17 @@ class MilkyClient:
         """以兼容名称调用通用 Action。"""
 
         return await self.call(action, params)
+
+    async def get_impl_info(self) -> str:
+        """获取并原样返回已校验的 ``get_impl_info`` JSON 响应。"""
+
+        _, body = await self._call_raw("get_impl_info", {})
+        try:
+            return body.decode("utf-8")
+        except UnicodeDecodeError:
+            # ``_call_raw`` 已经完成 JSON 解码；此分支只防止未来 transport 改变
+            # body 类型后把底层解码细节泄漏给命令调用方。
+            raise ActionError("malformed", "get_impl_info", "response is not valid UTF-8") from None
 
     async def get_login_info(self) -> LoginInfo:
         """获取登录身份并校验 ``data.uin``。"""
@@ -848,6 +871,32 @@ def _parse_upload_result(envelope: MilkyEnvelope, action: str) -> MilkyEnvelope:
     if not isinstance(envelope.data, Mapping) or not isinstance(envelope.data.get("file_id"), str):
         raise ActionError("malformed", action, "response is missing file_id")
     return envelope
+
+
+def _validate_impl_info_data(data: Mapping[str, Any], action: str) -> None:
+    """校验 ``get_impl_info`` 成功响应的五个稳定字符串字段。"""
+
+    required_fields = (
+        "impl_name",
+        "impl_version",
+        "milky_version",
+        "qq_protocol_type",
+        "qq_protocol_version",
+    )
+    if any(not isinstance(data.get(field), str) for field in required_fields):
+        raise ActionError("malformed", action, "response data is missing implementation info")
+
+
+def _response_body_bytes(body: object, action: str) -> bytes:
+    """将已验证的响应正文转换为可原样交付的 UTF-8 字节。"""
+
+    if isinstance(body, bytes):
+        return body
+    if isinstance(body, bytearray):
+        return bytes(body)
+    if isinstance(body, str):
+        return body.encode("utf-8")
+    raise ActionError("malformed", action, "response body is not JSON text")
 
 
 def _materialize_media_uri(value: object, action: str) -> str:

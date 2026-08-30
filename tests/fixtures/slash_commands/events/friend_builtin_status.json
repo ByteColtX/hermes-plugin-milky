@@ -1,0 +1,24 @@
+{
+  "event_type": "message_receive",
+  "time": 1700000100,
+  "self_id": 900000001,
+  "data": {
+    "message_scene": "friend",
+    "peer_id": 800000001,
+    "message_seq": 1101,
+    "sender_id": 800000001,
+    "time": 1700000100,
+    "segments": [
+      {
+        "type": "text",
+        "data": {
+          "text": "   /status"
+        }
+      }
+    ],
+    "friend": {
+      "user_id": 800000001,
+      "nickname": "合成好友"
+    }
+  }
+}

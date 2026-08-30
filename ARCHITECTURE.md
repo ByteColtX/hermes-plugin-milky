@@ -95,6 +95,11 @@ pipeline。
 启动时解析的完整 group:/dm: chat key，显示名固定为 Milky Home；这些 hook 不启动
 HTTP/SSE，也不改变普通消息的初始化就绪门槛。
 
+根入口还通过 Hermes `ctx.register_command()` 登记唯一首批插件命令 `/milky`。该阶段只
+登记 handler 和静态元数据，不建立网络连接或后台任务；adapter factory 将同一个
+`SlashCommandService` 注入每个 adapter，只有 connect 完成后才绑定其生命周期拥有的
+Milky client。插件不修改 Hermes 内置命令 registry、不注册任意 Action catalog。
+
 ### 4.2 生命周期
 
 ```text
@@ -177,6 +182,7 @@ SSE /event
   -> SelfMessageGate
   -> ChatAllowlistGate
   -> MutedGroupGate
+  -> 纯文本斜杠命令？ -> Hermes gateway control / command mapper
   -> wait buffer
   -> WillEngine
   -> wait 或 trigger
@@ -196,6 +202,20 @@ SSE /event
 
 friend 使用 `dm:`，group 使用 `group:`。`temp` 在协议边界记录 `ignored_temp` 后丢弃，
 不创建 canonical、buffer、Will、Hermes turn 或出站目标。
+
+纯文本斜杠命令必须在 Gate 通过后、Will 运行前分流。命令正文去除允许的前导空白后仍
+保留 `/command args`，专用 `MessageEvent` 使用 `MessageType.COMMAND` 和
+`allow_gateway_control=True`，不添加 sender header 或 channel context。普通消息继续使用
+既有正文映射和 `allow_gateway_control=False`。命令分支不补全资源、不写入 wait buffer、
+不修改 Will，也不扣 reply cost；Hermes 负责内置、插件、未知命令以及 busy/follow-up/
+interrupt 语义。
+
+插件命令中当前只登记 `/milky`。无参数调用复用 adapter 生命周期绑定的唯一 Milky
+client 请求 `get_impl_info`，成功正文是服务端完整原始 JSON envelope（包含未知扩展字段）；
+带参数、未连接或存在多个无法由 source/profile 唯一选择的活动 client 时返回安全的
+`invalid_input` 或 `unsupported` 分类。rejected、malformed、HTTP 和 transport unknown
+结果不回显原始响应或异常文本。该命令不扩大 manifest 的 ToolSpec，也不提供任意 Milky
+Action catalog。
 
 canonical 至少包含平台、Bot 身份、场景、chat key、peer/sender、Milky message ID、时间、
 typed segments、正文、mention/quote 信号、媒体引用、raw 和安全 metadata。

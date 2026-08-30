@@ -114,6 +114,7 @@ class MilkyAdapter(BasePlatformAdapter):
         outbound_sender: object | None = None,
         hermes_media_helpers: HermesMediaHelpers | None = None,
         url_to_bytes: Callable[[str], Awaitable[bytes]] | None = None,
+        slash_command_service: object | None = None,
     ) -> None:
         """组装进程内依赖；构造阶段不建立网络连接或后台任务。"""
 
@@ -149,6 +150,11 @@ class MilkyAdapter(BasePlatformAdapter):
             if outbound_sender is not None
             else MilkyOutboundSender(self._client, mute_tracker=self._mute_tracker)
         )
+        if slash_command_service is None:
+            from slash_commands import SlashCommandService
+
+            slash_command_service = SlashCommandService()
+        self._slash_command_service = slash_command_service
         self._pipeline = pipeline
         self._self_id: int | None = None
         self._event_task: asyncio.Task[None] | None = None
@@ -258,6 +264,7 @@ class MilkyAdapter(BasePlatformAdapter):
                     self._pipeline_started = True
                 self._mark_connected()
                 self._connected = True
+                self._bind_command_service()
                 self._bind_sender()
                 self._event_task = asyncio.create_task(
                     self._run_event_stream(),
@@ -276,6 +283,7 @@ class MilkyAdapter(BasePlatformAdapter):
             except Exception as error:  # noqa: BLE001 - 连接边界必须 fail-closed
                 self._connected = False
                 self._mark_disconnected()
+                self._unbind_command_service()
                 self._unbind_sender()
                 self._record(f"connect_failed:{_safe_error_category(error)}")
                 log_event(
@@ -310,6 +318,7 @@ class MilkyAdapter(BasePlatformAdapter):
             await self._close_component(self._pipeline, "pipeline_close_failed")
             await self._close_component(self._outbound, "outbound_close_failed")
             await self._close_component(self._mute_tracker, "mute_tracker_close_failed")
+            self._unbind_command_service()
             await self._close_component(self._client, "client_close_failed")
             self._unbind_sender()
             self._mark_disconnected()
@@ -557,6 +566,7 @@ class MilkyAdapter(BasePlatformAdapter):
             if not self._closed:
                 self._connected = False
                 self._record("event_stream_stopped")
+                self._unbind_command_service()
                 self._mark_disconnected()
         except asyncio.CancelledError:
             raise
@@ -564,6 +574,7 @@ class MilkyAdapter(BasePlatformAdapter):
             self._record(f"event_stream_failed:{_safe_error_category(error)}")
             if not self._closed:
                 self._connected = False
+                self._unbind_command_service()
                 self._mark_disconnected()
 
     def _bind_sender(self) -> None:
@@ -575,6 +586,20 @@ class MilkyAdapter(BasePlatformAdapter):
 
         bind_sender(self._outbound)
         self._sender_bound = True
+
+    def _bind_command_service(self) -> None:
+        """将已连接的同一 Milky client 交给命令 service。"""
+
+        bind = getattr(self._slash_command_service, "bind_client", None)
+        if callable(bind):
+            bind(self._client)
+
+    def _unbind_command_service(self) -> None:
+        """在连接失败或停止后解除命令 service 的 client 绑定。"""
+
+        unbind = getattr(self._slash_command_service, "unbind_client", None)
+        if callable(unbind):
+            unbind(self._client)
 
     def _unbind_sender(self) -> None:
         """在生命周期停止后撤销显式工具的 sender。"""

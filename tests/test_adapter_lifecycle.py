@@ -13,6 +13,7 @@ import pytest
 
 from adapter import MilkyAdapter
 from config import load_config
+from slash_commands import SlashCommandService
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -151,6 +152,7 @@ def make_adapter(
     pipeline: FakePipeline | None = None,
     sender: FakeSender | None = None,
     client: FakeClient | None = None,
+    slash_command_service: SlashCommandService | None = None,
 ) -> tuple[MilkyAdapter, FakeMuteTracker, FakeEventStream, FakePipeline, FakeSender, FakeClient]:
     """创建只使用 fake 依赖的 adapter。"""
 
@@ -167,6 +169,7 @@ def make_adapter(
         mute_tracker=resolved_tracker,
         pipeline=resolved_pipeline,
         outbound_sender=resolved_sender,
+        slash_command_service=slash_command_service,
     )
     return (
         adapter,
@@ -196,6 +199,24 @@ def test_connect_syncs_state_before_starting_event_stream() -> None:
 
         await adapter.disconnect()
         assert tracker.close_calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_slash_command_service_follows_adapter_client_lifecycle() -> None:
+    """命令 service 必须绑定连接中的 client，停止后解除绑定。"""
+
+    async def scenario() -> None:
+        service = SlashCommandService()
+        adapter, _, stream, _, _, _ = make_adapter(slash_command_service=service)
+
+        assert service.active_client_count == 0
+        assert await adapter.connect() is True
+        await stream.started.wait()
+        assert service.active_client_count == 1
+
+        await adapter.disconnect()
+        assert service.active_client_count == 0
 
     asyncio.run(scenario())
 
@@ -231,6 +252,43 @@ def test_initial_sync_failure_keeps_message_entry_not_ready() -> None:
         assert stream.run_calls == 0
         assert pipeline.start_calls == 0
 
+        await adapter.disconnect()
+
+    asyncio.run(scenario())
+
+
+def test_failed_connect_never_leaves_a_command_client_binding() -> None:
+    """初始同步失败时命令 service 不得观察到半连接 client。"""
+
+    async def scenario() -> None:
+        service = SlashCommandService()
+        adapter, _, stream, _, _, _ = make_adapter(
+            tracker=FakeMuteTracker(fail=True),
+            slash_command_service=service,
+        )
+
+        assert await adapter.connect() is False
+        assert service.active_client_count == 0
+        assert stream.run_calls == 0
+        await adapter.disconnect()
+
+    asyncio.run(scenario())
+
+
+def test_event_stream_stop_unbinds_command_client_before_reconnect() -> None:
+    """事件流结束后命令调用必须先进入未连接边界。"""
+
+    async def scenario() -> None:
+        service = SlashCommandService()
+        adapter, _, stream, _, _, _ = make_adapter(slash_command_service=service)
+
+        assert await adapter.connect() is True
+        await stream.started.wait()
+        stream.stopped.set()
+        event_task = adapter._event_task
+        assert event_task is not None
+        await event_task
+        assert service.active_client_count == 0
         await adapter.disconnect()
 
     asyncio.run(scenario())

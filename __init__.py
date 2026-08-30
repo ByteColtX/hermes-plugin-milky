@@ -40,11 +40,21 @@ def register(ctx: Any) -> None:
     from outbound.standalone import make_standalone_sender
 
     from .config import load_config
+    from .slash_commands import SlashCommandService
     from .tools import register_tools
 
     milky_config = load_config()
+    command_service = SlashCommandService()
     _register_bundled_skill(ctx)
     register_tools(ctx)
+    register_command = getattr(ctx, "register_command", None)
+    if callable(register_command):
+        register_command(
+            "milky",
+            command_service.handle,
+            description="Show Milky implementation information",
+            args_hint="",
+        )
     standalone_sender = make_standalone_sender(milky_config)
 
     register_platform = getattr(ctx, "register_platform", None)
@@ -59,6 +69,7 @@ def register(ctx: Any) -> None:
         adapter_factory=lambda platform_config: MilkyAdapter(
             platform_config,
             milky_config=milky_config,
+            slash_command_service=command_service,
         ),
         check_fn=lambda: True,
         validate_config=lambda _platform_config: True,

@@ -23,6 +23,8 @@ from milky.models import (
 from milky.resources import ResolvedMessage, ResourceDiagnostic
 from session.buffer import render_message_record
 
+from .commands import recognize_slash_command
+
 
 @dataclass(frozen=True, slots=True)
 class _MappedRecord:
@@ -97,6 +99,49 @@ def map_message_event(
         metadata=metadata,
         timestamp=datetime.fromtimestamp(_required_int(message, "timestamp"), tz=UTC),
         allow_gateway_control=False,
+    )
+
+
+def map_command_event(
+    message: object,
+    *,
+    source: object,
+    message_event_cls: type | None = None,
+    message_type_cls: type | None = None,
+) -> object:
+    """将纯文本斜杠命令映射为允许 Hermes gateway control 的事件。"""
+
+    command = recognize_slash_command(message)
+    if command is None:
+        raise ValueError("message is not a pure text slash command")
+    event_cls, type_cls = _resolve_hermes_types(message_event_cls, message_type_cls)
+    sender_name = _required_text(message, "sender_name")
+    sender_id = _required_int(message, "sender_id")
+    chat_key = _required_text(message, "chat_key")
+    return event_cls(
+        text=command.text,
+        message_type=getattr(type_cls, "COMMAND", "command"),
+        user_id=str(sender_id),
+        user_name=sender_name,
+        source=source,
+        raw_message=getattr(message, "raw", None),
+        message_id=_optional_text(message, "message_id"),
+        media_urls=[],
+        media_types=[],
+        reply_to_message_id=None,
+        reply_to_text=None,
+        reply_to_author_id=None,
+        reply_to_author_name=None,
+        reply_to_is_own_message=False,
+        channel_context=None,
+        metadata={
+            "source": "milky",
+            "scene": _required_text(message, "scene"),
+            "chat_key": chat_key,
+            "command": command.name,
+        },
+        timestamp=datetime.fromtimestamp(_required_int(message, "timestamp"), tz=UTC),
+        allow_gateway_control=True,
     )
 
 
@@ -230,4 +275,4 @@ def _required_int(value: object, field_name: str) -> int:
     return result
 
 
-__all__ = ["build_source", "map_message_event"]
+__all__ = ["build_source", "map_command_event", "map_message_event"]

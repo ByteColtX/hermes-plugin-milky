@@ -1,0 +1,1 @@
+synthetic response is not JSON
