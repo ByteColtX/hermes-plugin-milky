@@ -1,0 +1,45 @@
+{
+  "requests": [
+    {
+      "method": "POST",
+      "action": "send_group_message",
+      "body": {
+        "group_id": 700000001,
+        "message": [
+          {"type": "text", "data": {"text": "合成说明"}},
+          {"type": "image", "data": {"uri": "base64://fixture-image"}}
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "action": "send_private_message",
+      "body": {
+        "user_id": 800000001,
+        "message": [
+          {"type": "record", "data": {"uri": "base64://fixture-audio"}},
+          {"type": "video", "data": {"uri": "base64://fixture-video"}}
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "action": "upload_group_file",
+      "body": {
+        "group_id": 700000001,
+        "file_uri": "base64://fixture-file",
+        "file_name": "fixture-report.txt"
+      }
+    },
+    {
+      "method": "POST",
+      "action": "upload_private_file",
+      "body": {
+        "user_id": 800000001,
+        "file_uri": "base64://fixture-file",
+        "file_name": "fixture-report.txt"
+      }
+    }
+  ],
+  "outcomes": ["accepted", "protocol_rejected", "malformed", "transport_unknown"]
+}

@@ -7,11 +7,9 @@ import inspect
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlsplit
 
-from milky.client import ActionError
+from milky.client import ActionError, materialize_media_uri
 from milky.models import MilkyEnvelope
 from milky.observability import log_event
 from session.identity import CanonicalError, normalize_chat_key
@@ -157,7 +155,7 @@ class MilkyOutboundSender:
     async def send_image(
         self,
         chat_id: str,
-        image_url: str,
+        image_url: object,
         caption: str | None = None,
         reply_to: str | None = None,
         metadata: Mapping[str, Any] | None = None,
@@ -166,15 +164,16 @@ class MilkyOutboundSender:
 
         del metadata
         try:
-            media = image_segment(image_url)
-        except OutboundFormatError as error:
+            uri = await materialize_media_uri(image_url, action="send_image")
+            media = image_segment(uri)
+        except (ActionError, OutboundFormatError) as error:
             return _failure(error.classification, _safe_reason(error))
         return await self._send_media(chat_id, media, caption=caption, reply_to=reply_to)
 
     async def send_image_file(
         self,
         chat_id: str,
-        image_path: str,
+        image_path: object,
         caption: str | None = None,
         reply_to: str | None = None,
         metadata: Mapping[str, Any] | None = None,
@@ -182,13 +181,13 @@ class MilkyOutboundSender:
         """把本地图片路径转换为 Milky file URI 后发送。"""
 
         return await self.send_image(
-            chat_id, _path_to_uri(image_path), caption=caption, reply_to=reply_to, metadata=metadata
+            chat_id, image_path, caption=caption, reply_to=reply_to, metadata=metadata
         )
 
     async def send_animation(
         self,
         chat_id: str,
-        animation_url: str,
+        animation_url: object,
         caption: str | None = None,
         reply_to: str | None = None,
         metadata: Mapping[str, Any] | None = None,
@@ -212,8 +211,9 @@ class MilkyOutboundSender:
 
         del metadata, kwargs
         try:
-            media = record_segment(_path_to_uri(audio_path))
-        except (OutboundFormatError, ValueError) as error:
+            uri = await materialize_media_uri(audio_path, action="send_voice")
+            media = record_segment(uri)
+        except (ActionError, OutboundFormatError, ValueError) as error:
             return _failure(_error_classification(error), _safe_reason(error))
         return await self._send_media(chat_id, media, caption=caption, reply_to=reply_to)
 
@@ -230,8 +230,9 @@ class MilkyOutboundSender:
 
         del metadata, kwargs
         try:
-            media = video_segment(_path_to_uri(video_path))
-        except (OutboundFormatError, ValueError) as error:
+            uri = await materialize_media_uri(video_path, action="send_video")
+            media = video_segment(uri)
+        except (ActionError, OutboundFormatError, ValueError) as error:
             return _failure(_error_classification(error), _safe_reason(error))
         return await self._send_media(chat_id, media, caption=caption, reply_to=reply_to)
 
@@ -514,36 +515,6 @@ async def _maybe_await(value: object) -> Any:
     if inspect.isawaitable(value):
         return await value
     return value
-
-
-def _path_to_uri(value: object) -> str:
-    """将已有 URI 或本地路径转换为 Milky 可识别的 URI。"""
-
-    if not isinstance(value, str) or not value.strip():
-        raise OutboundFormatError("invalid_input", "media URI is invalid")
-    value = value.strip()
-    parsed = urlsplit(value)
-    if parsed.scheme in {"http", "https"}:
-        if not parsed.netloc:
-            raise OutboundFormatError("invalid_input", "media URI is invalid")
-        return value
-    if parsed.scheme == "base64":
-        if not parsed.netloc and not parsed.path:
-            raise OutboundFormatError("invalid_input", "media URI is invalid")
-        return value
-    if parsed.scheme == "file":
-        if parsed.netloc not in {"", "localhost"} or not parsed.path:
-            raise OutboundFormatError("invalid_input", "media URI is invalid")
-        return value
-    try:
-        path = Path(value).expanduser()
-        if not path.is_file():
-            raise OutboundFormatError("invalid_input", "media file is unavailable")
-        return path.resolve().as_uri()
-    except OutboundFormatError:
-        raise
-    except (OSError, RuntimeError, ValueError):
-        raise OutboundFormatError("invalid_input", "media URI is invalid") from None
 
 
 def _file_id(envelope: object) -> str:

@@ -18,7 +18,7 @@ from adapter import MilkyAdapter
 from config import load_config
 from milky.client import ActionError, MilkyClient
 from milky.event_stream import HttpxSseTransport, SseEventStream
-from outbound.sender import OutboundSendResult
+from outbound.sender import MilkyOutboundSender, OutboundSendResult
 
 _TOKEN = "integration-test-token"
 _SELF_ID = 900000001
@@ -409,6 +409,61 @@ def test_local_http_lifecycle_outbound_refresh_and_upload(tmp_path: Path) -> Non
         assert upload["body"]["file_uri"].startswith("base64://")
         assert "file" not in upload["body"]
         assert all("?" not in item["path"] for item in requests)
+
+
+def test_local_http_media_actions_receive_native_segments_and_base64_upload(
+    tmp_path: Path,
+) -> None:
+    """本地 HTTP fixture 应验证媒体 segment 和文件 upload 的实际 JSON 边界。"""
+
+    with _MilkyFixtureServer() as server:
+        config = _config(server)
+        client = MilkyClient(config, timeout=2)
+        sender = MilkyOutboundSender(client)
+        image_path = tmp_path / "fixture-image.png"
+        audio_path = tmp_path / "fixture-audio.ogg"
+        video_path = tmp_path / "fixture-video.mp4"
+        document_path = tmp_path / "fixture-document.txt"
+        for path in (image_path, audio_path, video_path, document_path):
+            path.write_bytes(b"synthetic-local-media")
+
+        async def scenario() -> None:
+            results = await asyncio.gather(
+                sender.send_image_file("group:700000001", image_path, caption="图片"),
+                sender.send_voice("dm:800000001", audio_path, caption="语音"),
+                sender.send_video("group:700000001", video_path, caption="视频"),
+                sender.send_document("dm:800000001", document_path),
+            )
+            assert all(result.success for result in results)
+            await sender.close()
+            await client.close()
+
+        asyncio.run(scenario())
+
+        requests = server.state.request_snapshot()
+        message_requests = [
+            item
+            for item in requests
+            if item["path"].endswith(("send_group_message", "send_private_message"))
+        ]
+        upload_requests = [
+            item
+            for item in requests
+            if item["path"].endswith(("upload_group_file", "upload_private_file"))
+        ]
+        assert len(message_requests) == 3
+        assert len(upload_requests) == 1
+        assert {item["body"]["message"][1]["type"] for item in message_requests} == {
+            "image",
+            "record",
+            "video",
+        }
+        assert all(
+            item["body"]["message"][1]["data"]["uri"].startswith("base64://")
+            for item in message_requests
+        )
+        assert upload_requests[0]["body"]["file_uri"].startswith("base64://")
+        assert all(str(path) not in repr(requests) for path in (image_path, audio_path, video_path))
 
 
 def test_local_sse_reconnects_and_preserves_safe_contract() -> None:

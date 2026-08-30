@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import unquote, urlsplit
 
-from milky.client import ActionError
+from milky.client import ActionError, materialize_media_uri
 from milky.models import MilkyEnvelope
 
 _MISSING = object()
@@ -29,21 +29,6 @@ class FileUploadClient(Protocol):
         self, user_id: object, file_uri: object, file_name: object
     ) -> MilkyEnvelope:
         """使用显式 Milky file URI 上传私聊文件。"""
-
-    async def upload_group_file_from_path(
-        self,
-        group_id: object,
-        file_path: object,
-        file_name: object,
-        *,
-        parent_folder_id: object = None,
-    ) -> MilkyEnvelope:
-        """把本地文件交给已确认的 client path seam。"""
-
-    async def upload_private_file_from_path(
-        self, user_id: object, file_path: object, file_name: object
-    ) -> MilkyEnvelope:
-        """把本地文件交给已确认的 client path seam。"""
 
 
 class FileUploader:
@@ -86,68 +71,18 @@ class FileUploader:
     ) -> MilkyEnvelope:
         """执行群文件上传。"""
 
-        uri = _explicit_uri(value)
-        if uri is not None and not uri.startswith("file://"):
-            if parent_folder_id is _MISSING:
-                return await self._client.upload_group_file(group_id, uri, name)
-            return await self._client.upload_group_file(
-                group_id, uri, name, parent_folder_id=parent_folder_id
-            )
-        path = _local_path(value, "upload_group_file")
+        uri = await materialize_media_uri(value, action="upload_group_file")
         if parent_folder_id is _MISSING:
-            return await self._client.upload_group_file_from_path(group_id, path, name)
-        return await self._client.upload_group_file_from_path(
-            group_id, path, name, parent_folder_id=parent_folder_id
+            return await self._client.upload_group_file(group_id, uri, name)
+        return await self._client.upload_group_file(
+            group_id, uri, name, parent_folder_id=parent_folder_id
         )
 
     async def _upload_private(self, user_id: int, value: object, name: str) -> MilkyEnvelope:
         """执行私聊文件上传。"""
 
-        uri = _explicit_uri(value)
-        if uri is not None and not uri.startswith("file://"):
-            return await self._client.upload_private_file(user_id, uri, name)
-        path = _local_path(value, "upload_private_file")
-        return await self._client.upload_private_file_from_path(user_id, path, name)
-
-
-def _explicit_uri(value: object) -> str | None:
-    """返回协议明确支持的非本地 URI。"""
-
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    parsed = urlsplit(normalized)
-    if parsed.scheme in {"http", "https"}:
-        if not parsed.netloc:
-            raise ActionError("invalid_input", "file_upload", "file URI is invalid")
-        return normalized
-    if parsed.scheme == "base64":
-        if not parsed.netloc and not parsed.path:
-            raise ActionError("invalid_input", "file_upload", "file URI is invalid")
-        return normalized
-    return None
-
-
-def _local_path(value: object, action: str) -> Path:
-    """将本地路径转换为 client path seam 的输入且不回显路径。"""
-
-    if not isinstance(value, (str, Path)):
-        raise ActionError("invalid_input", action, "file path is invalid")
-    raw = str(value)
-    if raw.startswith("file://"):
-        parsed = urlsplit(raw)
-        if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
-            raise ActionError("invalid_input", action, "file path is invalid")
-        raw = unquote(parsed.path)
-    if not raw.strip():
-        raise ActionError("invalid_input", action, "file path is invalid")
-    path = Path(raw)
-    try:
-        if not path.is_file():
-            raise ActionError("invalid_input", action, "file path is unavailable")
-    except OSError:
-        raise ActionError("invalid_input", action, "file path is unavailable") from None
-    return path
+        uri = await materialize_media_uri(value, action="upload_private_file")
+        return await self._client.upload_private_file(user_id, uri, name)
 
 
 def _file_name(value: object, file_path: object) -> str:
@@ -158,6 +93,8 @@ def _file_name(value: object, file_path: object) -> str:
             name = file_path.name
         elif isinstance(file_path, str):
             parsed = urlsplit(file_path)
+            if parsed.scheme == "base64":
+                raise ActionError("invalid_input", "file_upload", "file name is required")
             name = Path(unquote(parsed.path or file_path)).name
         else:
             name = ""
