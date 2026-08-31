@@ -30,7 +30,7 @@ optional_env:
     prompt: "Milky allowed chats"
     password: false
   - name: MILKY_WILL_POLICY
-    description: 'Optional nested YesImBot-inspired JSON Will policy, e.g. {"engine":"routing","routing":{"direct":"trigger","mention":"trigger","mentionAll":"wait","mentionHere":"wait","quote":"wait","image":"wait","poke":"wait","group":"wait"},"willingness":{"maxScore":100,"initialScore":0,"decayHalfLifeSeconds":600,"probabilityThreshold":55,"probabilityAmplifier":0.04,"replyCost":35,"textGain":12,"mentionGain":100,"quoteGain":15,"directGain":40,"imageGain":8,"pokeGain":80,"keywords":[],"keywordMultiplier":1.2,"defaultMultiplier":1,"hotWindowSeconds":15,"warmWindowSeconds":60,"hotDecayWeight":0.3,"warmDecayWeight":0.7,"mentionForce":false,"quoteForce":false,"directForce":false},"priority":1000}'
+    description: 'Optional nested YesImBot-inspired JSON Will policy. routing supports direct, mention, mentionAll, quote, poke, allMessage and keywords; allMessage defaults to wait and keywords defaults to an empty array.'
     prompt: "Milky Will policy"
     password: false
   - name: MILKY_SESSION_BUFFER_SIZE

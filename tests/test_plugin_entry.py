@@ -305,6 +305,28 @@ def test_root_register_rejects_missing_startup_configuration(monkeypatch) -> Non
                 sys.modules.pop(name, None)
 
 
+def test_root_rejects_removed_routing_before_network_access(monkeypatch) -> None:
+    """旧 routing 字段应在注册创建 client 前被拒绝。"""
+
+    def fail_network(*args, **kwargs):
+        raise AssertionError("配置拒绝前不应创建网络 socket")
+
+    monkeypatch.setattr(socket, "socket", fail_network)
+    set_valid_environment(monkeypatch)
+    monkeypatch.setenv(
+        "MILKY_WILL_POLICY",
+        '{"engine":"routing","routing":{"group":"wait"}}',
+    )
+    entry, module_name = load_plugin_entry()
+    try:
+        with pytest.raises(ValueError, match="unsupported fields"):
+            entry.register(object())
+    finally:
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(f"{module_name}."):
+                sys.modules.pop(name, None)
+
+
 def test_target_source_package_layout_is_present() -> None:
     """目标源码包目录都应存在独立的 Python package 边界。"""
 

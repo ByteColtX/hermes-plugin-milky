@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Literal
 
 from .input import WillInput
@@ -13,16 +13,15 @@ Decision = Literal["wait", "trigger"]
 
 @dataclass(frozen=True, slots=True)
 class RoutingConfig:
-    """保存八类 routing 动作的独立配置。"""
+    """保存 routing 动作和确定性关键词的独立配置。"""
 
     direct: Decision = "trigger"
     mention: Decision = "trigger"
     mention_all: Decision = "wait"
-    mention_here: Decision = "wait"
     quote: Decision = "wait"
-    image: Decision = "wait"
     poke: Decision = "wait"
-    group: Decision = "wait"
+    all_message: Decision = "wait"
+    keywords: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         """拒绝未纳入 routing 契约的动作值。"""
@@ -31,14 +30,16 @@ class RoutingConfig:
             "direct",
             "mention",
             "mention_all",
-            "mention_here",
             "quote",
-            "image",
             "poke",
-            "group",
+            "all_message",
         ):
             if getattr(self, name) not in {"wait", "trigger"}:
                 raise ValueError(f"routing.{name} must be wait or trigger")
+        if not isinstance(self.keywords, tuple) or any(
+            not isinstance(keyword, str) or not keyword.strip() for keyword in self.keywords
+        ):
+            raise ValueError("routing.keywords must contain non-empty strings")
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, object] | None = None) -> RoutingConfig:
@@ -52,16 +53,20 @@ class RoutingConfig:
             "direct": "direct",
             "mention": "mention",
             "mentionAll": "mention_all",
-            "mentionHere": "mention_here",
             "quote": "quote",
-            "image": "image",
             "poke": "poke",
-            "group": "group",
+            "allMessage": "all_message",
+            "keywords": "keywords",
         }
         unknown = sorted(set(value) - set(aliases))
         if unknown:
             raise ValueError("routing contains unsupported fields")
-        values = {aliases[key]: value[key] for key in value}
+        values: dict[str, object] = {aliases[key]: value[key] for key in value}
+        if "keywords" in values:
+            keywords = values["keywords"]
+            if not isinstance(keywords, Sequence) or isinstance(keywords, (str, bytes)):
+                raise TypeError("routing.keywords must be an array")
+            values["keywords"] = tuple(keywords)
         return cls(**values)  # type: ignore[arg-type]
 
     @property
@@ -71,14 +76,14 @@ class RoutingConfig:
         return self.mention_all
 
     @property
-    def mentionHere(self) -> Decision:
-        """返回外部 schema 使用的 here 提及动作名。"""
+    def allMessage(self) -> Decision:
+        """返回外部 schema 使用的全消息动作名。"""
 
-        return self.mention_here
+        return self.all_message
 
 
 class RoutingWillEngine:
-    """按固定优先级将一个规范化输入路由为 wait 或 trigger。"""
+    """按所有命中规则的 OR 结果将输入路由为 wait 或 trigger。"""
 
     def __init__(self, config: RoutingConfig | Mapping[str, object] | None = None) -> None:
         """创建不执行任何外部操作的 routing engine。"""
@@ -91,25 +96,24 @@ class RoutingWillEngine:
             raise TypeError("config must be a RoutingConfig or object")
 
     def decide(self, input_value: WillInput) -> Decision:
-        """按 direct、mention、quote、image、group 顺序返回消息动作。"""
+        """合并普通消息的所有适用 routing 规则。"""
 
         if not isinstance(input_value, WillInput):
             raise TypeError("input_value must be a WillInput")
         if input_value.event_type != "message_receive":
             return "wait"
+        matched_actions: list[Decision] = [self.config.all_message]
         if input_value.is_direct:
-            return self.config.direct
+            matched_actions.append(self.config.direct)
         if input_value.mention_self:
-            return self.config.mention
+            matched_actions.append(self.config.mention)
         if input_value.mention_all:
-            return self.config.mention_all
-        if input_value.mention_here:
-            return self.config.mention_here
+            matched_actions.append(self.config.mention_all)
         if input_value.has_reply:
-            return self.config.quote
-        if input_value.has_image:
-            return self.config.image
-        return self.config.group
+            matched_actions.append(self.config.quote)
+        if any(keyword in input_value.text for keyword in self.config.keywords):
+            matched_actions.append("trigger")
+        return "trigger" if "trigger" in matched_actions else "wait"
 
     def route(self, input_value: WillInput) -> Decision:
         """提供语义化的 routing 调用入口。"""

@@ -407,7 +407,7 @@ def test_inbound_wait_trigger_and_handoff_logs_are_correlatable(caplog) -> None:
         pipeline = make_pipeline(
             hermes,
             FakeResolver(),
-            routing=RoutingConfig(group="wait"),
+            routing=RoutingConfig(all_message="wait"),
         )
         first = load_fixture("events/message_receive.group.all_segments.json")
         first["data"]["message_seq"] = 2001

@@ -200,7 +200,7 @@ def test_wait_history_is_context_only_and_current_message_is_not_repeated() -> N
         pipeline = make_pipeline(
             hermes,
             FakeResolver(),
-            routing=RoutingConfig(direct="trigger", mention="trigger", group="wait"),
+            routing=RoutingConfig(direct="trigger", mention="trigger", all_message="wait"),
         )
         first = load_fixture("events/message_receive.group.all_segments.json")
         first["data"]["message_seq"] = 2001
@@ -288,6 +288,42 @@ def test_materialization_finishes_before_mapping_and_submit_does_not_wait_for_ag
     assert event.media_types == ["image/png"]
 
 
+def test_image_segment_waits_without_image_route_and_triggers_by_keyword() -> None:
+    """图片仍进入规范化和延迟补全，但不再通过独立 image route 触发。"""
+
+    async def scenario() -> tuple[list[tuple[str, str]], FakeMessageEvent]:
+        hermes = FakeHermes()
+        resolver = FakeResolver()
+        pipeline = make_pipeline(
+            hermes,
+            resolver,
+            routing=RoutingConfig(all_message="wait", keywords=("提醒",)),
+        )
+        image_only = load_fixture("events/message_receive.group.all_segments.json")
+        image_only["data"]["message_seq"] = 4001
+        image_only["data"]["segments"] = [
+            {"type": "image", "data": {"resource_id": "fixture-image-resource"}}
+        ]
+        assert (await pipeline.handle_event(image_only)).classification == "wait"
+        assert resolver.calls == []
+
+        keyword_trigger = load_fixture("events/message_receive.group.all_segments.json")
+        keyword_trigger["data"]["message_seq"] = 4002
+        keyword_trigger["data"]["segments"] = [
+            {"type": "image", "data": {"resource_id": "fixture-image-resource"}},
+            {"type": "text", "data": {"text": "请提醒我"}},
+        ]
+        assert (await pipeline.handle_event(keyword_trigger)).classification == "trigger"
+        await pipeline.wait_idle()
+        return resolver.calls, hermes.events[0]
+
+    calls, event = asyncio.run(scenario())
+
+    assert calls == [("group:700000001", "4002")]
+    assert event.message_id == "4002"
+    assert event.media_types == ["image/png"]
+
+
 def test_reply_cost_runs_once_only_after_successful_handle_submission() -> None:
     """只有提交成功才扣费，mapper 或 Hermes 异常不扣费。"""
 
@@ -333,7 +369,7 @@ def test_group_gate_defaults_fail_closed_without_a_confirmed_mute_snapshot() -> 
             hermes=hermes,
             resource_resolver=resolver,
             gate_registry=GateRegistry(),
-            will_engine=RoutingWillEngine(RoutingConfig(group="trigger")),
+            will_engine=RoutingWillEngine(RoutingConfig(all_message="trigger")),
             wait_buffer=WaitBuffer(),
             admission=ChatAdmissionCoordinator(),
             deduplicator=TtlDeduplicator(),
@@ -361,7 +397,7 @@ def test_same_chat_triggers_do_not_wait_for_the_previous_hermes_agent() -> None:
         pipeline = make_pipeline(
             hermes,
             resolver,
-            routing=RoutingConfig(group="wait", mention="trigger"),
+            routing=RoutingConfig(all_message="wait", mention="trigger"),
         )
         first = load_fixture("events/message_receive.group.all_segments.json")
         first["data"]["message_seq"] = 3001

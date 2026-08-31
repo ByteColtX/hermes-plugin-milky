@@ -73,7 +73,7 @@ def test_build_engine_selects_the_nested_policy_engine() -> None:
     engine = build_engine(
         {
             "engine": "willingness",
-            "routing": {"group": "trigger"},
+            "routing": {"allMessage": "trigger"},
             "willingness": {"textGain": 7},
             "priority": 1000,
         },

@@ -22,11 +22,10 @@ FULL_WILL_POLICY = {
         "direct": "trigger",
         "mention": "trigger",
         "mentionAll": "wait",
-        "mentionHere": "wait",
         "quote": "wait",
-        "image": "wait",
         "poke": "wait",
-        "group": "wait",
+        "allMessage": "wait",
+        "keywords": [],
     },
     "willingness": {
         "maxScore": 100,
@@ -157,11 +156,30 @@ def test_load_config_preserves_complete_nested_will_policy() -> None:
     assert config.session_buffer_size == 0
 
 
+def test_load_config_accepts_routing_keywords_and_preserves_nested_schema() -> None:
+    """routing 关键词应作为独立数组保留在嵌套策略中。"""
+
+    policy = {
+        "engine": "routing",
+        "routing": {"allMessage": "wait", "keywords": ["项目", "提醒"]},
+    }
+
+    config = load_config(DEFAULT_ENV | {"MILKY_WILL_POLICY": json.dumps(policy)})
+
+    assert config.will_policy["routing"]["allMessage"] == "wait"
+    assert config.will_policy["routing"]["keywords"] == ["项目", "提醒"]
+
+
 @pytest.mark.parametrize(
     "policy",
     [
         {"engine": "unknown"},
         {"engine": "routing", "routing": {"direct": "maybe"}},
+        {"engine": "routing", "routing": {"group": "wait"}},
+        {"engine": "routing", "routing": {"image": "wait"}},
+        {"engine": "routing", "routing": {"mentionHere": "wait"}},
+        {"engine": "routing", "routing": {"keywords": "项目"}},
+        {"engine": "routing", "routing": {"keywords": [""]}},
         {"engine": "routing", "willingness": {"maxScore": True}},
         {"engine": "routing", "willingness": {"keywords": [1]}},
         {"direct": "trigger"},

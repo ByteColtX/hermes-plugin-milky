@@ -124,6 +124,33 @@ Hermes 负责从 Agent 输出中解析并校验 `MEDIA:<path>`，再调用 adapt
 | `MILKY_SESSION_BUFFER_SIZE` | Will 等待消息的插件侧历史缓冲上限，默认 `20`；设为 `0` 禁用历史缓冲。 |
 | `MILKY_HOME_CHANNEL` | 可选的系统/cron 默认投递目标，只接受完整 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>`；未设置时不创建默认目标。 |
 
+### Will routing schema 与迁移
+
+`MILKY_WILL_POLICY.routing` 支持 `direct`、`mention`、`mentionAll`、`quote`、`poke`、
+`allMessage` 和 `keywords`。动作值只能是 `wait` 或 `trigger`；`allMessage` 对每条普通
+friend/group 消息生效，默认是 `wait`。`keywords` 是非空字符串数组，正文直接包含任意
+关键词时确定性触发；空数组不产生关键词命中。图片仍按普通 segment 进入延迟媒体处理，
+不再拥有独立 routing 动作。
+
+```json
+{
+  "engine": "routing",
+  "routing": {
+    "direct": "trigger",
+    "mention": "trigger",
+    "mentionAll": "wait",
+    "quote": "wait",
+    "poke": "wait",
+    "allMessage": "wait",
+    "keywords": []
+  }
+}
+```
+
+这是一次 breaking schema 迁移：将旧的群聊兜底设置改为 `allMessage`，移除图片和 here
+专用 routing 设置，再按需填写关键词。旧字段会在启动配置校验阶段拒绝，不会建立网络
+连接或静默转换为新规则；未确认的 here 信号仍只保留在底层安全扩展边界。
+
 例如，在启动 Hermes 前注入连接配置：
 
 ```bash
