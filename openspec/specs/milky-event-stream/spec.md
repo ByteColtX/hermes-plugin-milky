@@ -9,7 +9,7 @@
 
 ### Requirement: 事件流使用正确的 SSE 端点
 
-事件消费者 MUST 通过同一 scheme、host、port 和 path prefix 的 GET `/event` 建立 SSE 连接，并使用 Bearer 认证；事件流 SHALL NOT 追加 `/api` 或重复 `/event`。
+事件消费者 MUST 通过同一 scheme、host、port 和 path prefix 的 GET `/event` 建立 SSE 连接，并使用 Bearer 认证；事件流 SHALL NOT 追加 `/api` 或重复 `/event`。Milky v1.3 的 SSE 外层事件名通常为 `milky_event`，业务事件类型 SHALL 以 JSON data 内的 `event_type` 为准。
 
 #### Scenario: 建立带 prefix 的 SSE 连接
 
@@ -22,6 +22,12 @@
 - **WHEN** HTTP Action 收到响应
 - **THEN** 该响应 SHALL 只完成对应的 Action 调用
 - **AND** SHALL NOT 被当作 SSE 事件或用于唤醒 WebSocket echo pending 请求
+
+#### Scenario: milky_event 外层包装
+
+- **WHEN** SSE 帧的外层字段为 `event: milky_event` 且 data JSON 的 `event_type` 为 `message_receive`
+- **THEN** 消费者 SHALL 解析 data 内的事件类型并交给对应事件 parser
+- **AND** SHALL 不把固定的外层 `milky_event` 当成业务事件类型或依赖 OneBot echo
 
 ### Requirement: SSE 帧按标准边界解码
 
@@ -41,7 +47,11 @@
 
 ### Requirement: 事件 handler 不阻塞 receive loop
 
-事件消费者 MUST 将每个合法事件交给独立的可观察处理任务或等价的非阻塞边界；单个 handler 的慢处理或异常 SHALL 不终止后续帧读取。
+事件消费者 MUST 将每个合法事件交给独立的可观察处理任务或等价的非阻塞边界；单个 handler
+的慢处理或异常 SHALL 不终止后续帧读取。合法帧交付后发生的 handler 失败 MUST 记录固定的
+`milky_event_stream_handler_failed` 事件；该失败不得复用表示帧解析或事件类型拒绝的
+`milky_event_stream_frame_ignored` 事件。handler 日志 SHALL 只包含安全分类和固定 reason，不得包含
+事件 payload、正文、凭证、URL 或路径。
 
 #### Scenario: handler 慢于下一帧
 
@@ -51,20 +61,21 @@
 
 #### Scenario: handler 抛出异常
 
-- **WHEN** 一个事件 handler 失败
-- **THEN** 失败 SHALL 被观察并分类
+- **WHEN** 一个合法事件的 handler 失败
+- **THEN** 失败 SHALL 被分类并记录 `milky_event_stream_handler_failed`
+- **AND** SHALL NOT 记录 `milky_event_stream_frame_ignored`
 - **AND** 后续事件 SHALL 仍可被接收
 
 ### Requirement: 断线重连和取消可控
 
-事件流 MUST 在连接建立、持续读取和主动停止之间保持可区分的超时与状态语义；连接建立超时、EOF 或传输错误发生后 MUST 按既有退避策略重连，但已建立的 SSE 在正常空闲期间 MUST 保持打开。适配器停止时 MUST 支持取消，并释放 reader、HTTP response、事件流 client 和定时器资源。每次已建立的 SSE 连接意外终止时，系统 MUST 记录一条英文 `milky_event_stream_disconnected` 日志；每次退避重连前 MUST 记录一条英文 `milky_event_stream_reconnect_scheduled` 日志，退避结束后 MUST 记录一条英文 `milky_event_stream_reconnect_attempt` 日志，重连成功后 MUST 记录一条英文 `milky_event_stream_reconnected` 日志。重连日志 MUST 提供 1-based 尝试序号、实际退避等待秒数（适用于 scheduled）和安全原因类别；断连日志至少 MUST 提供安全原因类别。日志中的原因只能使用预定义的 `eof`、`connection_error`、`timeout`、`http_error`、`protocol_error`、`stream_error` 或 `unknown` 分类值，不得包含 token、Authorization、完整 URL、原始异常文本、消息正文、媒体 URL 或本地媒体路径。
+事件流 MUST 在可重试断线后按既有退避策略重连，并支持取消；断开时 SHALL 释放 reader、HTTP response、客户端和定时器资源。每次已建立的 SSE 连接意外终止时，系统 MUST 记录一条以 `[Milky] ` 开头的英文 `milky_event_stream_disconnected` 日志；每次退避重连前 MUST 记录一条以 `[Milky] ` 开头的英文 `milky_event_stream_reconnect_scheduled` 日志，退避结束后 MUST 记录一条以 `[Milky] ` 开头的英文 `milky_event_stream_reconnect_attempt` 日志，重连成功后 MUST 记录一条以 `[Milky] ` 开头的英文 `milky_event_stream_reconnected` 日志。日志消息 SHALL 使用 Hermes-agent 风格的短句和 `info`/`warning` 级别；如宿主保留结构化字段，`event_name`、`reason`、`attempt` 和 `delay_seconds` SHALL 使用固定白名单值。重连日志 MUST 提供 1-based 尝试序号、实际退避等待秒数（适用于 scheduled）和安全原因类别；断连日志至少 MUST 提供安全原因类别。日志中的原因只能使用预定义的 `eof`、`connection_error`、`timeout`、`http_error`、`protocol_error`、`stream_error` 或 `unknown` 分类值，不得包含 token、Authorization、完整 URL、原始异常文本、消息正文、媒体 URL 或本地媒体路径。
 
-`reconnect_attempt` 序号 MUST 从一次连接异常结束或连接建立失败后的第一轮新连接开始按 1 递增；`delay_seconds` MUST 表示对应重连尝试前实际采用的退避等待秒数。主动停止或取消时 MUST 记录一次英文取消日志，不得将取消误报为异常断连，不得继续等待退避或发起新的连接请求。
+`reconnect_attempt` 序号 MUST 从一次连接异常结束或连接建立失败后的第一轮新连接开始按 1 递增；`delay_seconds` MUST 表示对应重连尝试前实际采用的退避等待秒数。主动停止或取消时 MUST 记录一次以 `[Milky] ` 开头的英文取消日志，不得将取消误报为异常断连，不得继续等待退避或发起新的连接请求。
 
 #### Scenario: 可恢复断线
 
 - **WHEN** 已建立的 SSE 连接意外以 EOF、读取连接错误、持续读取传输错误或协议级连接错误结束
-- **THEN** 消费者 SHALL 记录 `milky_event_stream_disconnected` 英文日志和安全 `reason`
+- **THEN** 消费者 SHALL 记录带 `[Milky] ` 前缀的 `milky_event_stream_disconnected` 英文日志和安全 `reason`
 - **AND** SHALL 按配置退避后重新建立 `/event` 连接
 - **AND** SHALL 不假设断线期间丢失事件会被服务端恢复
 
@@ -84,21 +95,21 @@
 #### Scenario: 退避等待和实际重连可观测
 
 - **WHEN** 消费者为第 1 次或后续重连安排退避
-- **THEN** SHALL 在等待前记录 `milky_event_stream_reconnect_scheduled`，包含 1-based `attempt`、`delay_seconds` 和安全 `reason`
-- **AND** 退避结束后 SHALL 记录 `milky_event_stream_reconnect_attempt`，包含相同的 `attempt`
+- **THEN** SHALL 在等待前记录带 `[Milky] ` 前缀的 `milky_event_stream_reconnect_scheduled`，包含 1-based `attempt`、`delay_seconds` 和安全 `reason`
+- **AND** 退避结束后 SHALL 记录带 `[Milky] ` 前缀的 `milky_event_stream_reconnect_attempt`，包含相同的 `attempt`
 - **AND** SHALL 使用该重连尝试建立同一 `/event` 端点，不得在日志或请求中新增 `/api` 或重复 `/event`
 
 #### Scenario: 重连成功
 
 - **WHEN** 一次断连或连接失败后的重连尝试成功建立 SSE 连接
-- **THEN** SHALL 记录 `milky_event_stream_reconnected` 英文日志
+- **THEN** SHALL 记录带 `[Milky] ` 前缀的 `milky_event_stream_reconnected` 英文日志
 - **AND** 日志 SHALL 包含本次恢复对应的 1-based `attempt`
 - **AND** SHALL 使用新的事件流继续消费可见事件而不恢复断线期间丢失的事件、wait buffer 或 Will 分数
 
 #### Scenario: 主动取消
 
 - **WHEN** 适配器停止、取消事件消费者，或取消正在进行的退避等待
-- **THEN** receive loop SHALL 结束并记录一次 `milky_event_stream_cancelled` 英文日志
+- **THEN** receive loop SHALL 结束并记录一次带 `[Milky] ` 前缀的 `milky_event_stream_cancelled` 英文日志
 - **AND** SHALL 不记录 `milky_event_stream_disconnected` 异常日志
 - **AND** SHALL 不再生成新 handler、等待剩余退避或发起重连请求
 

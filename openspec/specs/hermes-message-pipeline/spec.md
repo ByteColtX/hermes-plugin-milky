@@ -9,7 +9,7 @@ MessageEvent，同时严格区分历史上下文、当前正文、系统观察�
 
 ### Requirement: friend 和 group 映射到明确 MessageEvent
 
-正常 friend 消息 MUST 映射为 private message，正常 group 消息 MUST 映射为 group message，并保留 sender ID/name、Milky message ID 字符串、`source=milky`、正文、raw、timestamp、reply、媒体结果、channel_context 和安全 metadata。
+正常 friend 消息 MUST 映射为 private message，正常 group 消息 MUST 映射为 group message，并保留 sender ID/name、Milky message ID 字符串、`source=milky`、正文、raw、timestamp、reply、已 materialize 的附件路径/MIME、channel_context 和安全 metadata。原始 `media_resource_references` 与 `file_attachment_references` 不得直接写入 `MessageEvent.media_urls`。
 
 #### Scenario: friend 消息交接
 
@@ -26,7 +26,7 @@ MessageEvent，同时严格区分历史上下文、当前正文、系统观察�
 
 ### Requirement: pipeline 顺序不可越过门禁和去重
 
-普通消息 MUST 按 message_receive → tolerant parse/normalize → canonical/dedup → per-chat admission → Gate → wait buffer → Will → drain → per-chat ordered handoff（资源补全与 mapper）→ Hermes `handle_message()` 的顺序处理。ordered handoff MUST 按 ingress sequence 提交同 chat 的 trigger，且 MUST NOT 等待 Agent turn 执行；提交正常返回后立即释放。Agent 忙碌、follow-up、interrupt 和 Hermes 单槽 pending 行为 MUST 由 Hermes Gateway 处理。
+普通消息 MUST 按 message_receive → tolerant parse/normalize → canonical/dedup → per-chat admission → Gate → wait buffer → Will → drain → detached trigger 的分类引用查询与 Hermes attachment materialization → mapper → Hermes `handle_message()` 的顺序处理。resolver 必须在 mapper 前 await 所有实际使用的异步资源 helper；插件 MUST NOT 为同 chat 的 Agent turn 建立 ordered handoff 或其他执行队列，也 MUST NOT 等待 Agent turn 执行；`handle_message()` 提交正常返回后 detached 处理即可结束。Agent 忙碌时的 `queue`、`steer`、`interrupt`、follow-up 和 pending/FIFO 行为 MUST 由 Hermes Gateway 根据 `busy_input_mode` 处理。
 
 #### Scenario: 重复消息
 
@@ -38,6 +38,18 @@ MessageEvent，同时严格区分历史上下文、当前正文、系统观察�
 
 - **WHEN** Self、allowlist 或 mute gate 拒绝消息
 - **THEN** 消息 SHALL 不进入 wait buffer、Will、资源补全或 Hermes
+
+#### Scenario: Hermes 忙碌策略接管后续消息
+
+- **WHEN** 一个 trigger 已调用 Hermes `handle_message()` 且 Agent 尚未完成，后续消息通过插件 admission
+- **THEN** 插件 SHALL 不等待前一个 Agent turn 或创建插件侧 Agent 执行队列
+- **AND** 后续 MessageEvent SHALL 交给 Hermes Gateway 按 `busy_input_mode` 的 queue、steer 或 interrupt 语义处理
+
+#### Scenario: 资源 materialization 与 Agent turn 解耦
+
+- **WHEN** trigger 的 `media_resource_references` 需要异步 Hermes URL helper
+- **THEN** mapper SHALL 只在 helper 返回本地路径后构造 MessageEvent，并将该路径放入 Hermes media 字段
+- **AND** `handle_message()` 返回后插件 SHALL 结束本次提交等待，不得继续等待 Agent turn 完成
 
 ### Requirement: 历史上下文和当前正文不得重复
 

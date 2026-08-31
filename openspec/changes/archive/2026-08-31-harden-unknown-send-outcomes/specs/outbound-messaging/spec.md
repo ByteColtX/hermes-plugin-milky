@@ -16,6 +16,12 @@
 - **THEN** SendResult SHALL 返回原始安全错误类别
 - **AND** MAY 通知 MuteTracker 刷新对应群，但 SHALL 不把所有错误都伪装成禁言
 
+#### Scenario: 媒体或文件发送失败
+
+- **WHEN** 图片、语音、视频或文件发送失败
+- **THEN** SendResult SHALL 返回原始安全错误类别
+- **AND** SHALL 不伪造成功、不发送包含路径的 fallback 文本或盲目重复可能产生副作用的 Action
+
 #### Scenario: 未知发送结果不得降级重发
 
 - **WHEN** 一个群或私聊消息的发送 Action 已进入网络边界并返回 `transport_unknown`

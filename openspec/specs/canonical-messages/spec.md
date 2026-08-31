@@ -40,7 +40,7 @@ Hermes 映射都基于同一份可审计的 canonical message，而不是各自�
 
 ### Requirement: canonical record 包含完整稳定身份
 
-每条可处理消息 MUST 提供 `platform`、`self_id`、`scene`、`chat_key`、`peer_id`、`sender_id`、字符串形式的 `message_id`、Unix 秒时间戳、typed segments、正文、mention/quote 信号、媒体引用、raw 和安全 metadata。
+每条可处理消息 MUST 提供 `platform`、`self_id`、`scene`、`chat_key`、`peer_id`、`sender_id`、字符串形式的 `message_id`、Unix 秒时间戳、typed segments、正文、mention/quote 信号、分类后的 `media_resource_references`、`file_attachment_references`、forward/reply references、raw 和安全 metadata。`self_id` SHALL 来自事件的 `self_id` 并与启动时 `get_login_info.data.uin` 的身份一致；Milky `message_seq` 是 canonical `message_id` 的来源。
 
 #### Scenario: 时间和序号规范化
 
@@ -48,11 +48,23 @@ Hermes 映射都基于同一份可审计的 canonical message，而不是各自�
 - **THEN** record SHALL 保存规范化 Unix 秒和 Milky 序号字符串
 - **AND** SHALL 保留足以诊断未知扩展的 raw 信息而不暴露凭证
 
+#### Scenario: 登录身份使用 uin
+
+- **WHEN** `get_login_info` 成功返回 `data.uin` 和 `data.nickname`
+- **THEN** 适配器 SHALL 将 `data.uin` 作为后续 canonical 的 self ID
+- **AND** SHALL NOT 等待或臆造名为 `user_id` 的登录字段
+
 #### Scenario: 身份字段缺失
 
 - **WHEN** 无法确认场景、peer 或 sender 身份
 - **THEN** 规范化 SHALL 分类拒绝该消息
 - **AND** SHALL NOT 创建空或伪造身份的 Hermes turn
+
+#### Scenario: group 交叉身份不一致
+
+- **WHEN** group 消息的 `peer_id`、`group.group_id` 或 `group_member.group_id` 不能相互确认
+- **THEN** 规范化 SHALL 分类拒绝该消息
+- **AND** SHALL NOT 使用其中任意一个字段猜测 chat key
 
 ### Requirement: sender 显示名按场景使用稳定 fallback
 
@@ -90,7 +102,7 @@ MUST 按 `friend.nickname` → `sender_id` 的顺序选择。空字符串和只�
 
 - **WHEN** 同一 self、chat 和 message ID 的事件因重连再次到达 TTL 窗口
 - **THEN** 第二帧 SHALL 被判定为重复并停止
-- **AND** SHALL 不再次下载资源、改变 Will 或创建 Hermes turn
+- **AND** SHALL 不再次查询或 materialize 附件、改变 Will 或创建 Hermes turn
 
 #### Scenario: 相同正文不同序号
 
@@ -100,7 +112,7 @@ MUST 按 `friend.nickname` → `sender_id` 的顺序选择。空字符串和只�
 
 ### Requirement: 缺少消息 ID 时显式降级
 
-消息缺少 `message_id` 时 MUST NOT 伪造稳定去重 key；系统可以处理一次，但 MUST 记录 `no_stable_message_id` 诊断。
+消息缺少 Milky `message_seq` 时 MUST NOT 伪造稳定去重 key；尽管 v1.3 OpenAPI 将其列为消息必填字段，tolerant parser MAY 将字段缺失的单帧交给 canonical 降级路径，但 MUST 记录 `no_stable_message_id`，且不得把缺失值写入 TTL dedup key。
 
 #### Scenario: 无消息 ID 的一次处理
 

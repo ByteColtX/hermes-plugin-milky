@@ -12,6 +12,24 @@ MUST 按 Milky segment schema 生成；图片、语音和视频等媒体 MUST �
 - **THEN** 请求 body SHALL 包含按原语义生成的 Milky segments
 - **AND** adapter SHALL 不在生命周期代码中手工拼接不透明 Action body
 
+#### Scenario: CQ-compatible 控制码
+
+- **WHEN** Hermes 提供含有可确认转换的 at 或 reply CQ-compatible 控制码的文本
+- **THEN** 请求 body SHALL 包含对应的 Milky mention 或 reply segment
+- **AND** CQ-compatible 控制码本身 SHALL 不作为普通文本发送
+
+#### Scenario: 全部文档 CQ 类型进入解析路径
+
+- **WHEN** Hermes 提供 NapCat 文档列出的任一 CQ 类型
+- **THEN** 系统 SHALL 识别该 CQ 类型并尝试形成 Milky outgoing segment
+- **AND** 系统 SHALL 保留该 CQ 类型在消息中的原始顺序
+
+#### Scenario: CQ 类型转换失败
+
+- **WHEN** 已识别的 CQ 类型没有确认的 Milky 映射或转换过程失败
+- **THEN** 系统 SHALL 使用完整原始 CQ 字符串生成 text segment
+- **AND** SHALL 不静默丢弃该 CQ 内容或调用未确认的 Action
+
 #### Scenario: 图片、语音或视频消息
 
 - **WHEN** Hermes 向合法的 group 或 dm 目标投递图片、语音或视频
@@ -116,6 +134,24 @@ MUST 分别报告，未实现的编辑、撤回、reaction 等能力 MUST 返回
 - **WHEN** 群文本、媒体或文件发送失败
 - **THEN** SendResult SHALL 返回原始安全错误类别
 - **AND** MAY 通知 MuteTracker 刷新对应群，但 SHALL 不把所有错误都伪装成禁言
+
+#### Scenario: 未知发送结果不得降级重发
+
+- **WHEN** 一个群或私聊消息的发送 Action 已进入网络边界并返回 `transport_unknown`
+- **THEN** 系统 SHALL 返回 `transport_unknown`，不得报告发送失败为“未执行”或假成功
+- **AND** SHALL NOT 调用 plain-text fallback、再次调用对应 send Action 或改变原始消息内容后重发
+
+#### Scenario: 宿主通用发送包装
+
+- **WHEN** Hermes Gateway 通过 Milky adapter 的发送包装交付消息
+- **THEN** Milky adapter SHALL 只调用一次自身 sender 并原样返回该结果
+- **AND** SHALL NOT 委托给会 retry、发送用户可见失败通知或 plain-text fallback 的通用宿主实现
+
+#### Scenario: 本地格式化失败
+
+- **WHEN** 消息在发送 Action 之前因空白、非法目标或不支持的出站内容被本地拒绝
+- **THEN** 系统 SHALL 在网络访问前返回对应错误
+- **AND** SHALL NOT 使用 fallback 发送一个可能不同或带诊断文本的用户可见消息
 
 #### Scenario: 未实现 Action
 

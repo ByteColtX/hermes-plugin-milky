@@ -12,7 +12,7 @@ metadata:
 或群戳一戳、撤回群消息、查询群和群成员、设置群成员禁言、设置群全员禁言。
 
 工具名称与 Milky API 的 `operationId` 一致。本 skill 只解释当前已注册的 9 个 Hermes
-ToolSpec，不注册工具、不授予权限，也不把未列出的 Milky Action 变成可用能力。实际可用性、
+ToolSpec；文字说明不注册工具，文字说明不执行也不扩大工具能力，也不把未列出的 Milky Action 变成可用能力。实际可用性、
 参数校验和服务端返回结果始终以 Hermes 当前发现的 ToolSpec 与 Milky 响应为准。
 
 ## 先看：权限与副作用速查

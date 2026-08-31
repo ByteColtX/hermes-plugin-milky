@@ -42,6 +42,12 @@ segment 或转换失败时，必须使用完整原始 CQ 字符串生成 text se
 - **THEN** 发送 SHALL 返回本地输入错误
 - **AND** SHALL 不访问网络
 
+#### Scenario: 图片、语音或视频消息
+
+- **WHEN** Hermes 向合法的 group 或 dm 目标投递图片、语音或视频
+- **THEN** 请求 SHALL 使用对应的 Milky `image`、`record` 或 `video` segment
+- **AND** 媒体投递 SHALL 不降级为包含本地路径的普通文本
+
 ### Requirement: Agent 选择是否引用或提及
 
 对于 Hermes 为普通 Agent 回复提供的隐式当前消息 reply anchor，出站边界 MUST 默认忽略该

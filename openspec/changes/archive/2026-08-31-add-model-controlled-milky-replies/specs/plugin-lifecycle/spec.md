@@ -55,6 +55,13 @@
 - **THEN** 适配器 SHALL 使用新的事件流继续消费可见事件
 - **AND** SHALL 保留去重保护但 SHALL NOT 假设服务端补发断线期间事件或恢复进程内会话策略状态
 
+#### Scenario: 组件关闭和 fatal report 失败
+
+- **WHEN** 生命周期清理某个组件失败，或 adapter 向 Hermes 报告 fatal error 的本地调用失败
+- **THEN** 前者 SHALL 记录 `milky_adapter_component_close_failed`，后者 SHALL 记录 `milky_adapter_fatal_error_report_failed`
+- **AND** 两者 SHALL 使用固定的组件字段或固定 reason，且不得输出异常正文、路径或凭证
+- **AND** fatal report 失败 SHALL NOT 再伪造 component close 或第二条 connect failure 终态
+
 ## ADDED Requirements
 
 ### Requirement: bundled QQ reference skill 按插件命名空间只读提供
