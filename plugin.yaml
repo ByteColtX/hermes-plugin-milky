@@ -1,8 +1,14 @@
 name: hermes-plugin-milky
-label: qq
+label: Milky QQ
 kind: platform
 version: 0.1.0
-description: Hermes 的 Milky QQ 平台适配器；媒体安全下载由 Hermes 管理
+description: >-
+  将 Milky QQ 的 HTTP Action 和 SSE `/event` 接入 Hermes Gateway：接收
+  friend/group 的 `message_receive`，完成规范化、去重、Gate、Will 和 Agent 交接；
+  出站支持文本、CQ-compatible `at`/`reply`、原生媒体、独立文件上传以及
+  系统/cron home channel。同时注册只读 `/milky` 命令和 9 个显式 QQ ToolSpec。
+  temp 会话及非消息事件不会进入普通 Agent 流程；媒体下载、缓存、SSRF 和
+  本地路径安全由 Hermes 负责。
 author: ByteColtX
 provides_tools:
   - send_profile_like
@@ -16,28 +22,87 @@ provides_tools:
   - set_group_whole_mute
 requires_env:
   - name: MILKY_BASE_URL
-    description: "Milky HTTP base URL, e.g. http://127.0.0.1:3000; the event SSE endpoint is derived by the protocol layer"
-    prompt: "Milky HTTP base URL"
+    description: >-
+      Milky HTTP(S) 服务基址，例如 `http://127.0.0.1:3000`；保留 path prefix，
+      Action 使用 `<base>/api/{action}`，SSE 使用 `<base>/event`。
+    prompt: Milky 服务地址
     password: false
   - name: MILKY_ACCESS_TOKEN
-    description: "Milky access token"
-    prompt: "Milky access token"
+    description: >-
+      Milky access token；请通过安全凭证存储或运行时环境注入，仅用于
+      `Authorization: Bearer <token>`，不会写入日志、错误或发送结果。
+    prompt: Milky access token
     password: true
 
 optional_env:
   - name: MILKY_ALLOWED_CHATS
-    description: "Optional comma-separated chat whitelist, e.g. group:123456789,dm:987654321; empty means allow all"
-    prompt: "Milky allowed chats"
+    description: >-
+      可选的入站 chat key 白名单，逗号分隔完整的 `group:<十进制群号>` 或
+      `dm:<十进制 QQ 号>`。留空表示不因该白名单拒绝 friend/group 消息；仅控制
+      入站 Gate，不影响系统消息或 cron 的 home channel。
+    prompt: 入站 chat 白名单
     password: false
   - name: MILKY_WILL_POLICY
-    description: 'Optional nested YesImBot-inspired JSON Will policy. routing supports direct, mention, mentionAll, quote, poke, allMessage and keywords; allMessage defaults to wait and keywords defaults to an empty array.'
-    prompt: "Milky Will policy"
+    description: |-
+      可选的 JSON Will policy，决定 Gate 通过后的消息等待（`wait`）或触发
+      （`trigger`）。顶层支持 `engine`、`routing`、`willingness` 和 `priority`；
+      `engine` 可选 `routing` 或 `willingness`。
+
+      `routing` 支持 `direct`、`mention`、`mentionAll`、`quote`、`poke`、`allMessage`
+      和 `keywords`；动作值为 `wait` 或 `trigger`，命中关键词时确定性触发。
+      `willingness` 使用独立的分数、衰减、概率、增益、时间窗口和 force
+      字段。下面是包含全部字段和默认值的完整示例：
+
+      {
+        "engine": "routing",
+        "routing": {
+          "direct": "trigger",
+          "mention": "trigger",
+          "mentionAll": "wait",
+          "quote": "wait",
+          "poke": "wait",
+          "allMessage": "wait",
+          "keywords": []
+        },
+        "willingness": {
+          "maxScore": 100,
+          "initialScore": 0,
+          "decayHalfLifeSeconds": 600,
+          "probabilityThreshold": 55,
+          "probabilityAmplifier": 0.04,
+          "replyCost": 35,
+          "textGain": 12,
+          "mentionGain": 100,
+          "quoteGain": 15,
+          "directGain": 40,
+          "imageGain": 8,
+          "pokeGain": 80,
+          "keywords": [],
+          "keywordMultiplier": 1.2,
+          "defaultMultiplier": 1,
+          "hotWindowSeconds": 15,
+          "warmWindowSeconds": 60,
+          "hotDecayWeight": 0.3,
+          "warmDecayWeight": 0.7,
+          "mentionForce": false,
+          "quoteForce": false,
+          "directForce": false
+        },
+        "priority": 1000
+      }
+
+    prompt: Milky Will 策略
     password: false
   - name: MILKY_SESSION_BUFFER_SIZE
-    description: "Optional plugin-side pending-message buffer size for Will wait messages, default 20; this is not the Hermes session context"
-    prompt: "Milky session buffer size"
+    description: >-
+      插件侧 Will wait 历史消息缓冲上限，默认 `20`；设为 `0` 禁用历史缓冲。
+      它独立于 Hermes session context 和 Agent 队列。
+    prompt: Will 历史缓冲上限
     password: false
   - name: MILKY_HOME_CHANNEL
-    description: "Optional system and cron destination as a complete group:<id> or dm:<id> chat key; unset means no default destination"
-    prompt: "Milky home channel"
+    description: >-
+      可选的 Hermes 系统消息和 cron 默认目标，只接受完整的
+      `group:<十进制群号>` 或 `dm:<十进制 QQ 号>` chat key。它不参与入站
+      allowlist；未配置时不创建隐式目标，cron 显式目标优先。
+    prompt: 系统和 cron 默认目标
     password: false
