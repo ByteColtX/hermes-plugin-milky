@@ -6,7 +6,6 @@ import asyncio
 import inspect
 import logging
 from collections import deque
-from collections.abc import Awaitable, Callable
 
 from config import MilkyConfig, load_config
 from gates import GateRegistry
@@ -74,25 +73,6 @@ class _HermesMediaHelperBridge:
 
         return await cache_audio_from_url(url, ext=ext, retries=retries)
 
-    def cache_media_bytes(
-        self,
-        data: bytes,
-        *,
-        filename: str = "",
-        mime_type: str = "",
-        default_kind: str | None = None,
-    ) -> object:
-        """把已由确认 seam 提供的 bytes 交给 Hermes cache helper。"""
-
-        from gateway.platforms.base import cache_media_bytes
-
-        return cache_media_bytes(
-            data,
-            filename=filename,
-            mime_type=mime_type,
-            default_kind=default_kind,
-        )
-
 
 class MilkyAdapter(BasePlatformAdapter):
     """连接 Milky client、事件流、状态和 Hermes 入站/出站边界。"""
@@ -113,7 +93,6 @@ class MilkyAdapter(BasePlatformAdapter):
         pipeline: object | None = None,
         outbound_sender: object | None = None,
         hermes_media_helpers: HermesMediaHelpers | None = None,
-        url_to_bytes: Callable[[str], Awaitable[bytes]] | None = None,
         slash_command_service: object | None = None,
     ) -> None:
         """组装进程内依赖；构造阶段不建立网络连接或后台任务。"""
@@ -135,7 +114,6 @@ class MilkyAdapter(BasePlatformAdapter):
             else ResourceResolver(
                 self._client,
                 hermes_media_helpers or _HermesMediaHelperBridge(),
-                url_to_bytes=url_to_bytes,
             )
         )
         self._will_engine = (

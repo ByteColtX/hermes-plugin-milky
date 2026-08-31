@@ -90,22 +90,11 @@ class FakeResourceClient:
         return self.message_response
 
 
-@dataclass
-class FakeCachedMedia:
-    """模拟 Hermes base.cache_media_bytes 的返回值。"""
-
-    path: str
-    media_type: str
-    kind: str
-    display_name: str
-
-
 class FakeHermesMedia:
-    """提供可观察的 Hermes URL 和 bytes helper seam。"""
+    """提供可观察的 Hermes 远端 URL helper seam。"""
 
     def __init__(self) -> None:
         self.url_calls: list[tuple[str, str]] = []
-        self.bytes_calls: list[tuple[bytes, str, str, str]] = []
 
     async def cache_image_from_url(self, url: str, ext: str = ".jpg") -> str:
         """记录并异步返回合成的本地图片路径。"""
@@ -120,25 +109,6 @@ class FakeHermesMedia:
         self.url_calls.append(("audio", url))
         await asyncio.sleep(0)
         return "/synthetic/hermes/audio.ogg"
-
-    def cache_media_bytes(
-        self,
-        data: bytes,
-        *,
-        filename: str = "",
-        mime_type: str = "",
-        default_kind: str | None = None,
-    ) -> FakeCachedMedia:
-        """记录已由安全 seam 提供的 bytes，并归类为对应 kind。"""
-
-        self.bytes_calls.append((data, filename, mime_type, default_kind or ""))
-        suffix = "document" if default_kind == "document" else "video"
-        return FakeCachedMedia(
-            f"/synthetic/hermes/{suffix}",
-            mime_type,
-            default_kind or "document",
-            filename,
-        )
 
 
 def make_envelope(data: object) -> MilkyEnvelope:
@@ -171,41 +141,28 @@ def make_client() -> FakeResourceClient:
     )
 
 
-async def fake_url_to_bytes(url: str) -> bytes:
-    """模拟由外部安全组件提供的 URL-to-bytes seam。"""
-
-    await asyncio.sleep(0)
-    return b"synthetic bytes"
-
-
 def test_trigger_resolves_media_file_and_forward_with_separate_actions() -> None:
-    """trigger 应分别解析三类媒体、群文件和 forward，且 await URL helper。"""
+    """trigger 应分类查询资源，并只把已确认的图片/语音交给 Hermes。"""
 
     result = canonicalize_event(load_fixture("events/message_receive.group.all_segments.json"))
     assert result.value is not None
     client = make_client()
     hermes = FakeHermesMedia()
 
-    resolved = asyncio.run(
-        ResourceResolver(client, hermes, url_to_bytes=fake_url_to_bytes).resolve(result.value)
-    )
+    resolved = asyncio.run(ResourceResolver(client, hermes).resolve(result.value))
 
-    assert resolved.body == result.value.body
-    assert len(resolved.hermes_attachment_materializations) == 4
+    assert "[视频不可用]" in resolved.body
+    assert "[文件不可用]" in resolved.body
+    assert len(resolved.hermes_attachment_materializations) == 2
     assert [item.kind for item in resolved.hermes_attachment_materializations] == [
         "image",
         "audio",
-        "video",
-        "document",
     ]
     assert [item.reference_kind for item in resolved.hermes_attachment_materializations] == [
         "image",
         "record",
-        "video",
-        "file",
-    ][: len(resolved.hermes_attachment_materializations)]
+    ]
     assert [name for name, _ in hermes.url_calls] == ["image", "audio"]
-    assert len(hermes.bytes_calls) == 2
     assert [name for name, _ in client.calls].count("get_resource_temp_url") == 3
     assert [name for name, _ in client.calls].count("get_group_file_download_url") == 1
     assert [name for name, _ in client.calls].count("get_forwarded_messages") == 1
@@ -240,19 +197,15 @@ def test_missing_private_file_hash_is_unsupported_before_action() -> None:
     assert result.value is not None
     client = make_client()
 
-    resolved = asyncio.run(
-        ResourceResolver(client, FakeHermesMedia(), url_to_bytes=fake_url_to_bytes).resolve(
-            result.value
-        )
-    )
+    resolved = asyncio.run(ResourceResolver(client, FakeHermesMedia()).resolve(result.value))
 
     assert resolved.body == "[文件不可用]"
     assert resolved.diagnostics[0].classification == "unsupported"
     assert not any(name == "get_private_file_download_url" for name, _ in client.calls)
 
 
-def test_file_without_url_to_bytes_seam_never_downloads_or_exposes_url() -> None:
-    """没有安全 bytes seam 时只保留占位，不能把远端 URL 当本地路径。"""
+def test_file_without_hermes_resource_entry_never_downloads_or_exposes_url() -> None:
+    """没有 Hermes 文件资源入口时只保留占位，不能把远端 URL 当本地路径。"""
 
     payload = load_fixture("events/message_receive.group.all_segments.json")
     result = canonicalize_event(payload)
@@ -271,8 +224,8 @@ def test_file_without_url_to_bytes_seam_never_downloads_or_exposes_url() -> None
     )
 
 
-def test_group_file_materialization_only_exposes_hermes_local_result() -> None:
-    """群文件成功后只交付 Hermes materialization，不交付远端 URL。"""
+def test_group_file_without_hermes_entry_keeps_file_placeholder() -> None:
+    """群文件查询成功但没有 Hermes 入口时保留不可用占位。"""
 
     payload = load_fixture("events/message_receive.group.all_segments.json")
     result = canonicalize_event(payload)
@@ -280,20 +233,15 @@ def test_group_file_materialization_only_exposes_hermes_local_result() -> None:
     client = make_client()
     hermes = FakeHermesMedia()
 
-    resolved = asyncio.run(
-        ResourceResolver(client, hermes, url_to_bytes=fake_url_to_bytes).resolve(result.value)
-    )
+    resolved = asyncio.run(ResourceResolver(client, hermes).resolve(result.value))
 
     file_materializations = [
         item
         for item in resolved.hermes_attachment_materializations
         if item.reference_kind == "file"
     ]
-    assert len(file_materializations) == 1
-    assert file_materializations[0].kind == "document"
-    assert file_materializations[0].path == "/synthetic/hermes/document"
-    assert "cdn.example.invalid" not in file_materializations[0].path
-    assert hermes.bytes_calls[-1][3] == "document"
+    assert file_materializations == []
+    assert any(item.reference_kind == "file" for item in resolved.diagnostics)
 
 
 def test_private_file_with_hash_uses_peer_as_user_id() -> None:
@@ -315,17 +263,14 @@ def test_private_file_with_hash_uses_peer_as_user_id() -> None:
     assert result.value is not None
     client = make_client()
 
-    resolved = asyncio.run(
-        ResourceResolver(client, FakeHermesMedia(), url_to_bytes=fake_url_to_bytes).resolve(
-            result.value
-        )
-    )
+    resolved = asyncio.run(ResourceResolver(client, FakeHermesMedia()).resolve(result.value))
 
     assert (
         "get_private_file_download_url",
         (800000001, "fixture-private-file", "fixture-hash"),
     ) in client.calls
-    assert resolved.hermes_attachment_materializations[0].kind == "document"
+    assert resolved.hermes_attachment_materializations == ()
+    assert resolved.diagnostics[0].classification == "unsupported"
 
 
 def test_inline_temp_url_skips_resource_action() -> None:

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Protocol
 from urllib.parse import unquote, urlsplit
 
-from milky.client import ActionError, materialize_media_uri
+from milky.client import ActionError, validate_media_uri
 from milky.models import MilkyEnvelope
 
 _MISSING = object()
@@ -32,7 +31,7 @@ class FileUploadClient(Protocol):
 
 
 class FileUploader:
-    """选择安全的显式 URI 或 client 本地文件入口，不把路径直接发给 Milky。"""
+    """只上传 Hermes 已 materialize 的显式 URI，不读取主机文件。"""
 
     def __init__(self, client: FileUploadClient) -> None:
         self._client = client
@@ -48,17 +47,17 @@ class FileUploader:
     ) -> MilkyEnvelope:
         """按 friend/group scene 上传文件，并返回已校验的 envelope。"""
 
-        name = _file_name(file_name, file_path)
         if scene == "group":
-            return await self._upload_group(
-                peer_id, file_path, name, parent_folder_id=parent_folder_id
-            )
+            uri = validate_media_uri(file_path, action="upload_group_file")
+            name = _file_name(file_name, uri)
+            return await self._upload_group(peer_id, uri, name, parent_folder_id=parent_folder_id)
         if scene == "dm":
             if parent_folder_id is not _MISSING:
                 raise ActionError(
                     "invalid_input", "upload_private_file", "parent_folder_id is unsupported"
                 )
-            return await self._upload_private(peer_id, file_path, name)
+            uri = validate_media_uri(file_path, action="upload_private_file")
+            return await self._upload_private(peer_id, uri, _file_name(file_name, uri))
         raise ActionError("unsupported", "file_upload", "target scene is unsupported")
 
     async def _upload_group(
@@ -71,37 +70,33 @@ class FileUploader:
     ) -> MilkyEnvelope:
         """执行群文件上传。"""
 
-        uri = await materialize_media_uri(value, action="upload_group_file")
         if parent_folder_id is _MISSING:
-            return await self._client.upload_group_file(group_id, uri, name)
+            return await self._client.upload_group_file(group_id, value, name)
         return await self._client.upload_group_file(
-            group_id, uri, name, parent_folder_id=parent_folder_id
+            group_id, value, name, parent_folder_id=parent_folder_id
         )
 
     async def _upload_private(self, user_id: int, value: object, name: str) -> MilkyEnvelope:
         """执行私聊文件上传。"""
 
-        uri = await materialize_media_uri(value, action="upload_private_file")
-        return await self._client.upload_private_file(user_id, uri, name)
+        return await self._client.upload_private_file(user_id, value, name)
 
 
 def _file_name(value: object, file_path: object) -> str:
-    """确定用户可见文件名，拒绝空值和目录穿越片段。"""
+    """从显式文件名或远端 URI 确定上传名称。"""
 
     if value is None:
-        if isinstance(file_path, Path):
-            name = file_path.name
-        elif isinstance(file_path, str):
+        if not isinstance(file_path, str):
+            name = ""
+        else:
             parsed = urlsplit(file_path)
             if parsed.scheme == "base64":
                 raise ActionError("invalid_input", "file_upload", "file name is required")
-            name = Path(unquote(parsed.path or file_path)).name
-        else:
-            name = ""
+            name = unquote(parsed.path.rsplit("/", 1)[-1])
     elif isinstance(value, str):
         if "/" in value or "\\" in value:
             raise ActionError("invalid_input", "file_upload", "file name is invalid")
-        name = Path(value).name
+        name = value
     else:
         name = ""
     if not name or name in {".", ".."}:

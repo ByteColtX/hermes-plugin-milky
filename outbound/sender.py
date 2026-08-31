@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from milky.client import ActionError, materialize_media_uri
-from milky.models import GroupEntity, GroupMemberInfo, GroupMemberList, MilkyEnvelope
+from milky.client import ActionError, validate_media_uri
+from milky.models import MilkyEnvelope
 from milky.observability import log_event
 from session.identity import CanonicalError, normalize_chat_key
 
@@ -164,7 +164,7 @@ class MilkyOutboundSender:
 
         del metadata
         try:
-            uri = await materialize_media_uri(image_url, action="send_image")
+            uri = validate_media_uri(image_url, action="send_image")
             media = image_segment(uri)
         except (ActionError, OutboundFormatError) as error:
             return _failure(error.classification, _safe_reason(error))
@@ -183,7 +183,7 @@ class MilkyOutboundSender:
 
         del metadata, kwargs
         try:
-            uri = await materialize_media_uri(audio_path, action="send_voice")
+            uri = validate_media_uri(audio_path, action="send_voice")
             media = record_segment(uri)
         except (ActionError, OutboundFormatError, ValueError) as error:
             return _failure(_error_classification(error), _safe_reason(error))
@@ -202,7 +202,7 @@ class MilkyOutboundSender:
 
         del metadata, kwargs
         try:
-            uri = await materialize_media_uri(video_path, action="send_video")
+            uri = validate_media_uri(video_path, action="send_video")
             media = video_segment(uri)
         except (ActionError, OutboundFormatError, ValueError) as error:
             return _failure(_error_classification(error), _safe_reason(error))
@@ -256,68 +256,139 @@ class MilkyOutboundSender:
             _log_upload_result(target if "target" in locals() else None, result)
             return result
 
-    async def get_group_info(
-        self, group_id: object, *, no_cache: bool | None = False
-    ) -> GroupEntity:
-        """查询群信息并返回已校验的 Milky DTO。"""
+    async def _call_tool(
+        self,
+        action: str,
+        params: Mapping[str, object],
+        fallback: Callable[[], Any],
+    ) -> object:
+        """调用已注册 Tool 的 raw client 入口，并兼容旧 fake client。"""
 
-        return await _maybe_await(self._client.get_group_info(group_id, no_cache=no_cache))  # type: ignore[attr-defined]
+        call_tool = getattr(self._client, "call_tool", None)
+        if callable(call_tool):
+            return await _maybe_await(call_tool(action, params))
+        call = getattr(self._client, "call", None)
+        if callable(call):
+            return await _maybe_await(call(action, params))
+        return await _maybe_await(fallback())
+
+    async def get_group_info(self, group_id: object, *, no_cache: bool | None = False) -> object:
+        """查询群信息并保留 Milky 的原始成功 envelope。"""
+
+        group_value = _qq_id(group_id, "group_id")
+        params: dict[str, object] = {"group_id": group_value}
+        if no_cache is not False:
+            if not isinstance(no_cache, bool) and no_cache is not None:
+                raise ActionError("invalid_input", "get_group_info", "no_cache is invalid")
+            params["no_cache"] = no_cache
+        return await self._call_tool(
+            "get_group_info",
+            params,
+            lambda: self._client.get_group_info(group_value, no_cache=no_cache),
+        )
 
     async def get_group_member_list(
         self, group_id: object, *, no_cache: bool | None = False
-    ) -> GroupMemberList:
-        """查询群成员列表并返回已校验的 Milky DTO。"""
+    ) -> object:
+        """查询群成员列表并保留 Milky 的原始成功 envelope。"""
 
-        return await _maybe_await(  # type: ignore[attr-defined]
-            self._client.get_group_member_list(group_id, no_cache=no_cache)
+        group_value = _qq_id(group_id, "group_id")
+        params: dict[str, object] = {"group_id": group_value}
+        if no_cache is not False:
+            if not isinstance(no_cache, bool) and no_cache is not None:
+                raise ActionError("invalid_input", "get_group_member_list", "no_cache is invalid")
+            params["no_cache"] = no_cache
+        return await self._call_tool(
+            "get_group_member_list",
+            params,
+            lambda: self._client.get_group_member_list(group_value, no_cache=no_cache),
         )
 
     async def get_group_member_info(
         self, group_id: object, user_id: object, *, no_cache: bool | None = False
-    ) -> GroupMemberInfo:
-        """查询群成员信息并返回已校验的 Milky DTO。"""
+    ) -> object:
+        """查询群成员信息并保留 Milky 的原始成功 envelope。"""
 
-        return await _maybe_await(  # type: ignore[attr-defined]
-            self._client.get_group_member_info(group_id, user_id, no_cache=no_cache)
+        group_value = _qq_id(group_id, "group_id")
+        user_value = _qq_id(user_id, "user_id")
+        params: dict[str, object] = {"group_id": group_value, "user_id": user_value}
+        if no_cache is not False:
+            if not isinstance(no_cache, bool) and no_cache is not None:
+                raise ActionError("invalid_input", "get_group_member_info", "no_cache is invalid")
+            params["no_cache"] = no_cache
+        return await self._call_tool(
+            "get_group_member_info",
+            params,
+            lambda: self._client.get_group_member_info(group_value, user_value, no_cache=no_cache),
         )
 
     async def set_group_member_mute(
         self, group_id: object, user_id: object, duration: object = _MISSING
-    ) -> MilkyEnvelope:
+    ) -> object:
         """设置群成员禁言状态。"""
 
+        group_value = _qq_id(group_id, "group_id")
+        user_value = _qq_id(user_id, "user_id")
+        params: dict[str, object] = {"group_id": group_value, "user_id": user_value}
         if duration is _MISSING:
-            return await _maybe_await(  # type: ignore[attr-defined]
-                self._client.set_group_member_mute(group_id, user_id)
+            return await self._call_tool(
+                "set_group_member_mute",
+                params,
+                lambda: self._client.set_group_member_mute(group_value, user_value),
             )
-        return await _maybe_await(  # type: ignore[attr-defined]
-            self._client.set_group_member_mute(group_id, user_id, duration)
+        params["duration"] = None if duration is None else _integer(duration, "duration")
+        return await self._call_tool(
+            "set_group_member_mute",
+            params,
+            lambda: self._client.set_group_member_mute(group_value, user_value, duration),
         )
 
-    async def set_group_whole_mute(
-        self, group_id: object, is_mute: object = _MISSING
-    ) -> MilkyEnvelope:
+    async def set_group_whole_mute(self, group_id: object, is_mute: object = _MISSING) -> object:
         """设置群全员禁言状态。"""
 
+        group_value = _qq_id(group_id, "group_id")
+        params: dict[str, object] = {"group_id": group_value}
         if is_mute is _MISSING:
-            return await _maybe_await(self._client.set_group_whole_mute(group_id))  # type: ignore[attr-defined]
-        return await _maybe_await(  # type: ignore[attr-defined]
-            self._client.set_group_whole_mute(group_id, is_mute)
+            return await self._call_tool(
+                "set_group_whole_mute",
+                params,
+                lambda: self._client.set_group_whole_mute(group_value),
+            )
+        if is_mute is not None and not isinstance(is_mute, bool):
+            raise ActionError("invalid_input", "set_group_whole_mute", "is_mute is invalid")
+        params["is_mute"] = is_mute
+        return await self._call_tool(
+            "set_group_whole_mute",
+            params,
+            lambda: self._client.set_group_whole_mute(group_value, is_mute),
         )
 
-    async def profile_like(self, user_id: object, count: object = _MISSING) -> OutboundSendResult:
+    async def profile_like(self, user_id: object, count: object = _MISSING) -> object:
         """执行已确认的名片点赞 Action。"""
 
         try:
             user_value = _qq_id(user_id, "user_id")
             if count is _MISSING:
-                envelope = await _maybe_await(self._client.send_profile_like(user_value))
+                params = {"user_id": user_value}
+                envelope = await self._call_tool(
+                    "send_profile_like",
+                    params,
+                    lambda: self._client.send_profile_like(user_value),
+                )
             elif count is None:
-                envelope = await _maybe_await(self._client.send_profile_like(user_value, None))
+                params = {"user_id": user_value, "count": None}
+                envelope = await self._call_tool(
+                    "send_profile_like",
+                    params,
+                    lambda: self._client.send_profile_like(user_value, None),
+                )
             else:
                 count_value = _integer(count, "count")
-                envelope = await _maybe_await(
-                    self._client.send_profile_like(user_value, count_value)
+                params = {"user_id": user_value, "count": count_value}
+                envelope = await self._call_tool(
+                    "send_profile_like",
+                    params,
+                    lambda: self._client.send_profile_like(user_value, count_value),
                 )
             return _action_success(envelope)
         except asyncio.CancelledError:
@@ -346,17 +417,25 @@ class MilkyOutboundSender:
                 if is_self is not None and not isinstance(is_self, bool):
                     raise ActionError("invalid_input", "send_friend_nudge", "is_self is invalid")
                 if is_self is None:
-                    envelope = await _maybe_await(self._client.send_friend_nudge(parsed.peer_id))
+                    envelope = await self._call_tool(
+                        "send_friend_nudge",
+                        {"user_id": parsed.peer_id},
+                        lambda: self._client.send_friend_nudge(parsed.peer_id),
+                    )
                 else:
-                    envelope = await _maybe_await(
-                        self._client.send_friend_nudge(parsed.peer_id, is_self)
+                    envelope = await self._call_tool(
+                        "send_friend_nudge",
+                        {"user_id": parsed.peer_id, "is_self": is_self},
+                        lambda: self._client.send_friend_nudge(parsed.peer_id, is_self),
                     )
             else:
                 if is_self is not None:
                     raise ActionError("invalid_input", "send_group_nudge", "is_self is unsupported")
                 target_user = _qq_id(user_id, "user_id")
-                envelope = await _maybe_await(
-                    self._client.send_group_nudge(parsed.peer_id, target_user)
+                envelope = await self._call_tool(
+                    "send_group_nudge",
+                    {"group_id": parsed.peer_id, "user_id": target_user},
+                    lambda: self._client.send_group_nudge(parsed.peer_id, target_user),
                 )
             result = _action_success(envelope)
             return result
@@ -382,8 +461,10 @@ class MilkyOutboundSender:
                     "unsupported", "recall_group_message", "target scene is unsupported"
                 )
             sequence = _integer(message_seq, "message_seq")
-            envelope = await _maybe_await(
-                self._client.recall_group_message(parsed.peer_id, sequence)
+            envelope = await self._call_tool(
+                "recall_group_message",
+                {"group_id": parsed.peer_id, "message_seq": sequence},
+                lambda: self._client.recall_group_message(parsed.peer_id, sequence),
             )
             return _action_success(envelope)
         except asyncio.CancelledError:
@@ -570,12 +651,12 @@ def _integer(
     raise ActionError("invalid_input", "tool", f"{field} is invalid")
 
 
-def _action_success(envelope: object) -> OutboundSendResult:
-    """确认显式 Action 已返回 envelope。"""
+def _action_success(envelope: object) -> object:
+    """确认显式 Action 已返回原始成功 envelope。"""
 
     if not isinstance(envelope, MilkyEnvelope):
         raise ActionError("malformed", "tool", "response envelope is malformed")
-    return _success(None)
+    return envelope
 
 
 def _success(

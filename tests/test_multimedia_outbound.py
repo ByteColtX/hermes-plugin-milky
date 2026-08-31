@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import importlib.util
 import inspect
 import logging
-import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,9 +14,8 @@ from typing import Any
 
 import pytest
 
-import milky.client as client_module
 from adapter import MilkyAdapter
-from milky.client import ActionError, SendResult, materialize_media_uri
+from milky.client import ActionError, SendResult, validate_media_uri
 from milky.models import MilkyEnvelope
 from outbound.sender import MilkyOutboundSender
 from tests.fixtures.multimedia_inputs import MEDIA_ENTRY_OWNERSHIP, SYNTHETIC_MEDIA_URIS
@@ -223,115 +220,45 @@ def test_actual_hermes_multiple_image_dispatch_uses_inherited_entries() -> None:
     ],
 )
 def test_explicit_media_uris_are_preserved(name: str, value: str) -> None:
-    """显式远端和内联 URI 不应被插件下载、解码或改写。"""
+    """Hermes 已 materialize 的远端和内联 URI 不应被插件改写。"""
 
-    assert asyncio.run(materialize_media_uri(value)) == value
+    assert validate_media_uri(value) == value
     assert name in {"http", "base64"}
 
 
-def test_local_path_and_file_uri_materialize_to_base64(tmp_path: Path) -> None:
-    """本地路径和 file URI 应读取一次并产生相同的 base64 URI。"""
-
-    media_path = tmp_path / "fixture-image.png"
-    media_bytes = b"synthetic-image-bytes"
-    media_path.write_bytes(media_bytes)
-
-    expected = "base64://" + base64.b64encode(media_bytes).decode("ascii")
-    assert asyncio.run(materialize_media_uri(media_path)) == expected
-    assert asyncio.run(materialize_media_uri(media_path.as_uri())) == expected
-
-
-@pytest.mark.parametrize("value_kind", ["empty", "missing", "directory", "unknown_scheme"])
-def test_invalid_local_media_fails_without_uri_or_exception_echo(
-    tmp_path: Path, value_kind: str
-) -> None:
-    """空值、非普通文件和未知 scheme 应在网络前安全失败。"""
-
-    if value_kind == "empty":
-        value: object = ""
-    elif value_kind == "missing":
-        value = tmp_path / "missing-secret-name.bin"
-    elif value_kind == "directory":
-        value = tmp_path / "directory-secret-name"
-        value.mkdir()
-    else:
-        value = "ftp://media.example.invalid/fixture.bin"
+@pytest.mark.parametrize(
+    "value", ["/fixture/workspace/image.png", "file:///fixture/workspace/image.png"]
+)
+def test_local_media_is_unsupported_without_reading(value: str) -> None:
+    """本地资源没有 Hermes 出站 seam 时必须在读取前降级。"""
 
     with pytest.raises(ActionError) as error_info:
-        asyncio.run(materialize_media_uri(value))
+        validate_media_uri(value)
 
-    assert error_info.value.classification == "invalid_input"
-    if value:
-        assert str(value) not in str(error_info.value)
-
-
-def test_unreadable_local_media_fails_without_reading_or_echo(tmp_path: Path) -> None:
-    """不可读文件应在 materialization 边界返回脱敏错误。"""
-
-    media_path = tmp_path / "unreadable-secret-name.bin"
-    media_path.write_bytes(b"synthetic")
-    media_path.chmod(0)
-    try:
-        if os.access(media_path, os.R_OK):
-            pytest.skip("当前测试用户仍可读取 chmod 000 文件")
-        with pytest.raises(ActionError) as error_info:
-            asyncio.run(materialize_media_uri(media_path))
-        assert error_info.value.classification == "invalid_input"
-        assert media_path.name not in str(error_info.value)
-    finally:
-        media_path.chmod(0o600)
-
-
-def test_local_media_size_limit_rejects_before_full_read(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """超过固定上限的本地文件应在 Action 前被拒绝。"""
-
-    monkeypatch.setattr(client_module, "MAX_LOCAL_MEDIA_BYTES", 4)
-    media_path = tmp_path / "too-large.bin"
-    media_path.write_bytes(b"12345")
-
-    with pytest.raises(ActionError) as error_info:
-        asyncio.run(materialize_media_uri(media_path))
-
-    assert error_info.value.classification == "invalid_input"
-    assert "too-large.bin" not in str(error_info.value)
-
-
-def test_local_media_size_limit_accepts_exact_boundary(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """恰好达到上限的非空文件应被完整编码。"""
-
-    monkeypatch.setattr(client_module, "MAX_LOCAL_MEDIA_BYTES", 4)
-    media_path = tmp_path / "boundary.bin"
-    media_path.write_bytes(b"1234")
-
-    assert asyncio.run(materialize_media_uri(media_path)) == "base64://MTIzNA=="
+    assert error_info.value.classification == "unsupported"
+    assert value not in str(error_info.value)
 
 
 @pytest.mark.parametrize(
     ("method_name", "argument", "segment_type"),
     [
-        ("send_image", "image.png", "image"),
-        ("send_voice", "audio.ogg", "record"),
-        ("send_video", "video.mp4", "video"),
+        ("send_image", "https://media.example.invalid/fixture.png", "image"),
+        ("send_voice", "base64://fixture-audio", "record"),
+        ("send_video", "https://media.example.invalid/fixture.mp4", "video"),
     ],
 )
-def test_sender_native_media_uses_base64_and_keeps_caption_order(
-    tmp_path: Path, method_name: str, argument: str, segment_type: str
+def test_sender_native_media_uses_materialized_uri_and_keeps_caption_order(
+    method_name: str, argument: str, segment_type: str
 ) -> None:
     """图片、语音和视频应进入 native segment，而不是路径文本。"""
 
-    media_path = tmp_path / argument
-    media_path.write_bytes(b"synthetic-media")
     client = MultimediaClient()
     sender = MilkyOutboundSender(client)
 
     result = asyncio.run(
         getattr(sender, method_name)(
             "group:700000001",
-            media_path,
+            argument,
             caption="合成说明",
         )
     )
@@ -341,8 +268,7 @@ def test_sender_native_media_uses_base64_and_keeps_caption_order(
     body = client.calls[0][1]["message"]
     assert body[0] == {"type": "text", "data": {"text": "合成说明"}}
     assert body[1]["type"] == segment_type
-    assert body[1]["data"]["uri"].startswith("base64://")
-    assert str(media_path) not in str(body)
+    assert body[1]["data"]["uri"] == argument
 
 
 def test_sender_routes_remote_animation_to_dm_without_download() -> None:
@@ -363,20 +289,24 @@ def test_sender_routes_remote_animation_to_dm_without_download() -> None:
 
 
 @pytest.mark.parametrize("target", ["group:700000001", "dm:800000001"])
-def test_sender_uploads_local_file_with_explicit_file_uri(target: str, tmp_path: Path) -> None:
-    """本地文档必须走独立 upload，并在 JSON 中只出现 file_uri/file_name。"""
+def test_sender_uploads_materialized_file_with_explicit_file_uri(target: str) -> None:
+    """Hermes 提供的文件 URI 必须走独立 upload。"""
 
-    media_path = tmp_path / "fixture-report.txt"
-    media_path.write_bytes(b"synthetic-document")
     client = MultimediaClient()
     sender = MilkyOutboundSender(client)
 
-    result = asyncio.run(sender.send_document(target, media_path))
+    result = asyncio.run(
+        sender.send_document(
+            target,
+            "https://media.example.invalid/fixture-report.txt",
+            file_name="fixture-report.txt",
+        )
+    )
 
     assert result.success is True
     action, body = client.calls[0]
     assert action == ("upload_group_file" if target.startswith("group:") else "upload_private_file")
-    assert body["file_uri"].startswith("base64://")
+    assert body["file_uri"] == "https://media.example.invalid/fixture-report.txt"
     assert body["file_name"] == "fixture-report.txt"
     assert "file_path" not in body
 
@@ -394,15 +324,15 @@ def test_sender_requires_file_name_for_explicit_base64_upload() -> None:
     assert client.calls == []
 
 
-def test_sender_preserves_media_failure_and_does_not_send_fallback(tmp_path: Path) -> None:
+def test_sender_preserves_media_failure_and_does_not_send_fallback() -> None:
     """协议拒绝应原样分类，且不能二次发送文本 fallback。"""
 
-    media_path = tmp_path / "fixture.png"
-    media_path.write_bytes(b"synthetic-image")
     client = MultimediaClient(error=ActionError("rejected", "send_group_message", "denied"))
     sender = MilkyOutboundSender(client)
 
-    result = asyncio.run(sender.send_image("group:700000001", media_path))
+    result = asyncio.run(
+        sender.send_image("group:700000001", "https://media.example.invalid/fixture.png")
+    )
 
     assert result.success is False
     assert result.error_kind == "rejected"
@@ -496,17 +426,15 @@ def test_adapter_media_gate_prevents_read_and_sender_call_after_disconnect(tmp_p
     assert sender.calls == []
 
 
-def test_media_transport_unknown_is_not_retried_or_fallbacked(tmp_path: Path) -> None:
+def test_media_transport_unknown_is_not_retried_or_fallbacked() -> None:
     """媒体 Action 的未知结果只能提交一次，并保留原始分类。"""
 
-    media_path = tmp_path / "fixture.ogg"
-    media_path.write_bytes(b"synthetic-audio")
     client = MultimediaClient(
         error=ActionError("transport_unknown", "send_group_message", "unknown")
     )
     sender = MilkyOutboundSender(client)
 
-    result = asyncio.run(sender.send_voice("group:700000001", media_path))
+    result = asyncio.run(sender.send_voice("group:700000001", "base64://fixture-audio"))
 
     assert result.success is False
     assert result.error_kind == "transport_unknown"
@@ -514,62 +442,16 @@ def test_media_transport_unknown_is_not_retried_or_fallbacked(tmp_path: Path) ->
     assert client.calls[0][1]["message"][0]["type"] == "record"
 
 
-class FakeHermesMediaDispatcher:
-    """模拟 Hermes 解析 MEDIA 指令后按资源类型动态 dispatch。"""
-
-    async def dispatch(self, adapter: MilkyAdapter, chat_id: str, directive: str) -> object:
-        """将已通过宿主路径检查的 MEDIA 指令交给 adapter native 入口。"""
-
-        prefix, path_and_caption = directive.split(":", 1)
-        assert prefix == "MEDIA"
-        path, _, caption = path_and_caption.partition(" ")
-        suffix = Path(path).suffix.lower()
-        if suffix in {".png", ".jpg", ".gif"}:
-            return await adapter.send_image_file(chat_id, path, caption or None)
-        if suffix in {".ogg", ".wav"}:
-            return await adapter.send_voice(chat_id, path, caption or None)
-        if suffix in {".mp4", ".webm"}:
-            return await adapter.send_video(chat_id, path, caption or None)
-        return await adapter.send_document(chat_id, path, caption or None)
-
-
-def test_fake_hermes_media_dispatch_reaches_native_sender(tmp_path: Path) -> None:
-    """模拟 Hermes MEDIA 交接应产生 native segment 或独立 upload。"""
-
-    paths = {
-        "image": tmp_path / "fixture.png",
-        "audio": tmp_path / "fixture.ogg",
-        "video": tmp_path / "fixture.mp4",
-        "document": tmp_path / "fixture.txt",
-    }
-    for path in paths.values():
-        path.write_bytes(b"synthetic-attachment")
+def test_unmaterialized_hermes_media_is_rejected_without_network() -> None:
+    """Hermes 未提供确认资源 URI 时 adapter 不读取路径或访问 Milky。"""
 
     client = MultimediaClient()
     adapter = object.__new__(MilkyAdapter)
     adapter._connected = True
     adapter._closed = False
     adapter._outbound = MilkyOutboundSender(client)
-    dispatcher = FakeHermesMediaDispatcher()
+    result = asyncio.run(adapter.send_document("group:700000001", "/fixture/report.txt"))
 
-    async def scenario() -> list[object]:
-        return await asyncio.gather(
-            dispatcher.dispatch(adapter, "group:700000001", f"MEDIA:{paths['image']} 图片"),
-            dispatcher.dispatch(adapter, "group:700000001", f"MEDIA:{paths['audio']} 语音"),
-            dispatcher.dispatch(adapter, "group:700000001", f"MEDIA:{paths['video']} 视频"),
-            dispatcher.dispatch(adapter, "group:700000001", f"MEDIA:{paths['document']} 文档"),
-        )
-
-    results = asyncio.run(scenario())
-
-    assert all(getattr(result, "success", False) for result in results)
-    assert [name for name, _ in client.calls].count("send_group_message") == 3
-    assert [name for name, _ in client.calls].count("upload_group_file") == 1
-    message_calls = [body for name, body in client.calls if name == "send_group_message"]
-    upload_body = next(body for name, body in client.calls if name == "upload_group_file")
-    for body in message_calls:
-        assert body["message"][0]["type"] == "text"
-        assert body["message"][1]["data"]["uri"].startswith("base64://")
-        assert "MEDIA:" not in str(body)
-    assert upload_body["file_uri"].startswith("base64://")
-    assert "file_path" not in upload_body
+    assert result.success is False
+    assert result.error_kind == "unsupported"
+    assert client.calls == []

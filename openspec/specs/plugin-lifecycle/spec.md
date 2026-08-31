@@ -71,8 +71,8 @@
 
 ### Requirement: 冷启动身份和群禁言扫描结果可观测
 
-冷启动完成登录信息读取后 MUST 使用英文日志记录 Bot 的 `uid` 和 `nickname`；`uid` 和被记录的群 ID
-MUST 只保留前后三位并将中间部分替换为 `*`。群禁言扫描逐群日志 MUST 只记录确认被禁言的群，
+冷启动完成登录信息读取后 MUST 使用英文日志记录 Bot 的 `uid` 和 `nickname`；已登记的 `uid` 和被记录的群 ID
+可以原样保留。群禁言扫描逐群日志 MUST 只记录确认被禁言的群，
 并使用英文日志给出 `total`、`succeeded`、`failed`、`muted`、`unmuted` 和 `unknown` 汇总计数；未禁言、
 全体禁言未知和查询失败的群不得逐群打印。扫描仍只处理 `MILKY_ALLOWED_CHATS` 中的 `group:<id>`；
 白名单为空时沿用“允许所有群”的语义，`dm:<id>` 不得触发群禁言扫描。动态身份、状态和统计值 SHALL
@@ -81,7 +81,7 @@ MUST 只保留前后三位并将中间部分替换为 `*`。群禁言扫描逐�
 #### Scenario: 冷启动打印身份和扫描结果
 
 - **WHEN** 登录身份和群列表同步成功，且白名单包含一个群会话和一个私聊会话
-- **THEN** 日志 SHALL 使用英文显示中间脱敏的 `uid`、`nickname` 和确认禁言群的 member/whole 状态
+- **THEN** 日志 SHALL 使用英文显示原始的 `uid`、`nickname` 和确认禁言群的 member/whole 状态
 - **AND** 无法通过 Milky 初始 Action 确认的 whole 状态 SHALL 计入汇总的 `unknown`
 - **AND** 扫描汇总 SHALL 显示 `total`、`succeeded`、`failed`、`muted`、`unmuted` 和 `unknown`，每个统计字段只出现一次
 - **AND** SHALL 不查询白名单外的群或因私聊白名单项查询群成员

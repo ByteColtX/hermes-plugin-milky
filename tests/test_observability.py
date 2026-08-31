@@ -1,4 +1,4 @@
-"""验证 Milky 运行时日志的事件、字段、级别和脱敏契约。"""
+"""验证 Milky 运行时日志的事件、字段、级别和安全边界。"""
 
 from __future__ import annotations
 
@@ -96,8 +96,8 @@ def test_runtime_log_inventory_uses_registered_helper_and_cli_boundary() -> None
     )
 
 
-def test_safe_fields_mask_identifiers_and_reject_unknown_values() -> None:
-    """字段只能来自白名单，数字 ID 和 chat key 必须脱敏。"""
+def test_safe_fields_preserve_business_values_and_reject_unknown_values() -> None:
+    """字段只能来自白名单，业务 ID 和 chat key 应保持原样。"""
 
     fields = sanitize_fields(
         {
@@ -108,9 +108,9 @@ def test_safe_fields_mask_identifiers_and_reject_unknown_values() -> None:
         }
     )
 
-    assert fields["chat_key"] == "group:700***003"
-    assert fields["self_id"] == "900***001"
-    assert fields["message_id"] == "1**5"
+    assert fields["chat_key"] == CORRELATION_FIXTURE["chat_key"]
+    assert fields["self_id"] == SYNTHETIC_IDENTIFIERS["self_id"]
+    assert fields["message_id"] == SYNTHETIC_IDENTIFIERS["message_id"]
     fields = sanitize_fields(
         {
             "uid": SYNTHETIC_IDENTIFIERS["self_id"],
@@ -121,15 +121,18 @@ def test_safe_fields_mask_identifiers_and_reject_unknown_values() -> None:
         }
     )
     assert fields == {
-        "uid": "900***001",
+        "uid": 900000001,
         "nickname": "合成机器人",
         "component": "mute_tracker",
         "member_mute": "muted",
         "whole_mute": "unknown",
     }
     assert set(fields) <= ALLOWED_FIELDS
-    assert sanitize_fields({"nickname": SENSITIVE_INPUTS["url"]})["nickname"] == "<redacted>"
-    assert sanitize_fields({"nickname": "900000001"})["nickname"] == "<redacted>"
+    assert (
+        sanitize_fields({"nickname": SENSITIVE_INPUTS["url"]})["nickname"]
+        == SENSITIVE_INPUTS["url"]
+    )
+    assert sanitize_fields({"nickname": "900000001"})["nickname"] == "900000001"
 
     with pytest.raises(ValueError):
         sanitize_fields({"body": SENSITIVE_INPUTS["body"]})
@@ -157,11 +160,52 @@ def test_log_event_has_fixed_prefix_event_name_and_safe_fields(caplog) -> None:
     assert record.getMessage().startswith("[Milky] ")
     assert record.event_name == "milky_inbound_trigger"
     assert record.levelno == logging.INFO
-    assert record.chat_key == "group:700***003"
+    assert record.chat_key == CORRELATION_FIXTURE["chat_key"]
     assert set(record.__dict__) >= ALLOWED_FIELDS.intersection(record.__dict__)
 
     with pytest.raises(ValueError):
         log_event(logger, "milky_inbound_trigger", message=SENSITIVE_INPUTS["body"])
+
+
+@pytest.mark.parametrize(
+    ("field_name", "field_value"),
+    [
+        ("chat_key", "group:700000001"),
+        ("uid", 900000001),
+        ("self_id", 900000001),
+        ("sender_id", 800000002),
+        ("peer_id", 700000001),
+        ("group_id", 700000001),
+        ("user_id", 800000002),
+        ("message_id", "46244"),
+        ("reference_id", "fixture-reference-001"),
+        ("file_id", "fixture-file-id-raw"),
+        ("nickname", "合成机器人"),
+    ],
+)
+def test_human_log_preserves_all_business_field_values(
+    field_name: str, field_value: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    """人类日志应保留所有业务关联字段的原始值。"""
+
+    logger = logging.getLogger(f"milky.observability.business.{field_name}")
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        log_event(
+            logger,
+            "milky_inbound_wait",
+            logging.INFO,
+            stage="buffer",
+            **{field_name: field_value},
+        )
+
+    records = [
+        record
+        for record in caplog.records
+        if record.name == logger.name and record.event_name == "milky_inbound_wait"
+    ]
+    assert len(records) == 1
+    assert getattr(records[0], field_name) == field_value
+    assert str(field_value) in records[0].getMessage()
 
 
 def test_log_event_renders_safe_fields_once(caplog) -> None:
@@ -230,8 +274,8 @@ def test_log_records_do_not_contain_synthetic_sensitive_inputs(caplog) -> None:
     for value in SENSITIVE_INPUTS.values():
         assert value not in rendered
     assert str(SYNTHETIC_IDENTIFIERS["self_id"]) not in rendered
-    assert str(SYNTHETIC_IDENTIFIERS["peer_id"]) not in rendered
-    assert SYNTHETIC_IDENTIFIERS["file_id"] not in rendered
+    assert str(SYNTHETIC_IDENTIFIERS["peer_id"]) in rendered
+    assert SYNTHETIC_IDENTIFIERS["file_id"] in rendered
 
 
 def test_local_traceback_requires_safe_exception_content(caplog) -> None:
@@ -398,7 +442,7 @@ def test_action_boundary_logs_safe_success_and_failure_classifications(caplog) -
 
 
 def test_inbound_wait_trigger_and_handoff_logs_are_correlatable(caplog) -> None:
-    """wait 到 trigger 的日志应保留 chat 脱敏值和 ingress 顺序。"""
+    """wait 到 trigger 的日志应保留 chat 原值和 ingress 顺序。"""
 
     from tests.test_hermes_pipeline import FakeHermes, FakeResolver, load_fixture, make_pipeline
 
@@ -443,9 +487,11 @@ def test_inbound_wait_trigger_and_handoff_logs_are_correlatable(caplog) -> None:
         "milky_inbound_drain",
         "milky_inbound_handoff_succeeded",
     ]
-    assert records[0].chat_key == records[1].chat_key == "group:700***001"
+    assert records[0].chat_key == records[1].chat_key == "group:700000001"
     assert records[0].ingress_sequence < records[1].ingress_sequence
     rendered = repr([(record.getMessage(), record.__dict__) for record in records])
+    assert "chat_key[group:700000001]" in rendered
+    assert "chat_key=group:700000001" not in rendered
     assert "历史敏感正文" not in rendered
     assert "触发敏感正文" not in rendered
 
@@ -456,14 +502,16 @@ def test_outbound_logs_route_chunks_and_safe_final_result(caplog, tmp_path) -> N
     from outbound.sender import MilkyOutboundSender
     from tests.test_outbound import FakeOutboundClient
 
-    path = tmp_path / "sensitive-fixture-name.txt"
-    path.write_text("敏感附件正文", encoding="utf-8")
     sender = MilkyOutboundSender(FakeOutboundClient([1, 2, 3, 4]), max_text_length=2)
 
     async def scenario() -> None:
         with caplog.at_level(logging.DEBUG, logger="outbound.sender"):
             await sender.send("group:700000001", "出站敏感正文")
-            await sender.send_document("group:700000001", path)
+            await sender.send_document(
+                "group:700000001",
+                "https://media.example.invalid/fixture-report.txt",
+                file_name="fixture-report.txt",
+            )
 
     asyncio.run(scenario())
 
@@ -475,7 +523,7 @@ def test_outbound_logs_route_chunks_and_safe_final_result(caplog, tmp_path) -> N
     assert "milky_outbound_upload_succeeded" in events
     rendered = repr([(record.getMessage(), record.__dict__) for record in records])
     assert "出站敏感正文" not in rendered
-    assert str(path) not in rendered
+    assert "media.example.invalid" not in rendered
     assert "sensitive-fixture-name.txt" not in rendered
 
 
@@ -483,7 +531,7 @@ def test_resource_resolution_logs_counts_without_references_or_body(caplog) -> N
     """资源 resolver 只记录触发阶段计数和安全关联字段。"""
 
     from inbound.canonical import canonicalize_event
-    from tests.test_resources import FakeHermesMedia, fake_url_to_bytes, load_fixture, make_client
+    from tests.test_resources import FakeHermesMedia, load_fixture, make_client
 
     canonical = canonicalize_event(
         load_fixture("events/message_receive.group.all_segments.json")
@@ -498,7 +546,6 @@ def test_resource_resolution_logs_counts_without_references_or_body(caplog) -> N
     resolver = ResourceResolver(
         make_client(),
         FakeHermesMedia(),
-        url_to_bytes=fake_url_to_bytes,
     )
 
     async def scenario() -> None:
@@ -511,8 +558,9 @@ def test_resource_resolution_logs_counts_without_references_or_body(caplog) -> N
     assert [record.event_name for record in records] == [
         "milky_resource_resolution_started",
         "milky_resource_resolution_completed",
+        "milky_resource_resolution_degraded",
     ]
-    assert records[0].chat_key == "group:700***001"
+    assert records[0].chat_key == "group:700000001"
     assert records[0].ingress_sequence == 17
     assert records[1].materialized_count >= 1
     rendered = repr([(record.getMessage(), record.__dict__) for record in records])
@@ -526,7 +574,7 @@ def test_resource_degradation_logs_safe_classification_and_counts(caplog) -> Non
 
     from inbound.canonical import canonicalize_event
     from milky.models import MilkyEnvelope
-    from tests.test_resources import FakeHermesMedia, fake_url_to_bytes, load_fixture, make_client
+    from tests.test_resources import FakeHermesMedia, load_fixture, make_client
 
     canonical = canonicalize_event(
         load_fixture("events/message_receive.group.all_segments.json")
@@ -535,7 +583,7 @@ def test_resource_degradation_logs_safe_classification_and_counts(caplog) -> Non
     batch = DetachedTriggerBatch(canonical.chat_key, (), canonical, trigger_ingress_sequence=18)
     client = make_client()
     client.resource_response = MilkyEnvelope("ok", 0, {})
-    resolver = ResourceResolver(client, FakeHermesMedia(), url_to_bytes=fake_url_to_bytes)
+    resolver = ResourceResolver(client, FakeHermesMedia())
 
     async def scenario() -> None:
         with caplog.at_level(logging.DEBUG, logger="milky.resources"):
@@ -620,8 +668,8 @@ def test_observer_failure_has_a_dedicated_event(caplog) -> None:
     assert "observer detail must not be logged" not in repr(records[0].__dict__)
 
 
-def test_mute_refresh_logs_success_and_failure_with_masked_group(caplog) -> None:
-    """禁言刷新日志应区分成功/失败并隐藏群号。"""
+def test_mute_refresh_logs_success_and_failure_with_raw_group(caplog) -> None:
+    """禁言刷新日志应区分成功/失败并保留群号原值。"""
 
     from state import MuteTracker
     from tests.test_mute_tracker import FakeMuteClient, member
@@ -650,16 +698,16 @@ def test_mute_refresh_logs_success_and_failure_with_masked_group(caplog) -> None
         "milky_mute_refresh_succeeded",
         "milky_mute_refresh_failed",
     ]
-    assert all(record.group_id == "700***001" for record in records)
+    assert all(record.group_id == 700000001 for record in records)
     rendered = repr([(record.getMessage(), record.__dict__) for record in records])
     assert "remote payload synthetic-credential-value" not in rendered
 
 
 def test_identifier_helpers_preserve_namespace_and_prefix_suffix() -> None:
-    """脱敏 helper 应保留可关联的命名空间及数字首尾。"""
+    """兼容 helper 应保留可关联的命名空间和数字原值。"""
 
-    assert mask_identifier(SYNTHETIC_IDENTIFIERS["self_id"]) == "900***001"
-    assert mask_chat_key(CORRELATION_FIXTURE["chat_key"]) == "group:700***003"
+    assert mask_identifier(SYNTHETIC_IDENTIFIERS["self_id"]) == "900000001"
+    assert mask_chat_key(CORRELATION_FIXTURE["chat_key"]) == "group:700000003"
 
 
 def test_event_name_catalog_contains_required_boundaries() -> None:

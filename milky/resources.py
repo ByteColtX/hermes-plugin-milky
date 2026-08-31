@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -18,8 +18,6 @@ from milky.models import IncomingMessage, Segment
 from milky.observability import log_event
 from milky.parser import ParseError, parse_forwarded_message, parse_incoming_message_data
 from session.identity import validate_chat_key
-
-UrlToBytes = Callable[[str], Awaitable[bytes]]
 
 logger = logging.getLogger(__name__)
 
@@ -53,23 +51,13 @@ class ResourceClient(Protocol):
 
 
 class HermesMediaHelpers(Protocol):
-    """描述 Hermes 已确认的媒体 helper 能力，不复制其实现。"""
+    """描述 Hermes 已确认的远端媒体 helper 能力，不复制其实现。"""
 
     async def cache_image_from_url(self, url: str, ext: str = ".jpg", retries: int = 2) -> str:
         """将图片 URL 交给 Hermes 安全缓存并返回本地路径。"""
 
     async def cache_audio_from_url(self, url: str, ext: str = ".ogg", retries: int = 2) -> str:
         """将音频 URL 交给 Hermes 安全缓存并返回本地路径。"""
-
-    def cache_media_bytes(
-        self,
-        data: bytes,
-        *,
-        filename: str = "",
-        mime_type: str = "",
-        default_kind: str | None = None,
-    ) -> object:
-        """缓存已经由安全 seam 提供的 bytes。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,10 +183,9 @@ class ResourceResolver:
         client: ResourceClient,
         hermes: HermesMediaHelpers,
         *,
-        url_to_bytes: UrlToBytes | None = None,
         max_nested_depth: int = 4,
     ) -> None:
-        """创建 resolver；URL-to-bytes seam 必须由调用方显式提供。"""
+        """创建只使用已确认 Hermes helper 的 resolver。"""
 
         if isinstance(max_nested_depth, bool) or not isinstance(max_nested_depth, int):
             raise TypeError("max_nested_depth must be an integer")
@@ -206,7 +193,6 @@ class ResourceResolver:
             raise ValueError("max_nested_depth must be non-negative")
         self._client = client
         self._hermes = hermes
-        self._url_to_bytes = url_to_bytes
         self._max_nested_depth = max_nested_depth
 
     async def resolve(self, message: object) -> ResolvedMessage:
@@ -422,14 +408,7 @@ class ResourceResolver:
                     reference_id=reference_id,
                 )
             else:
-                result = await self._cache_bytes_url(
-                    url,
-                    mime_type=mime_type,
-                    kind="video",
-                    filename=display_name,
-                    reference_kind=kind,
-                    reference_id=reference_id,
-                )
+                result = None
         except Exception as error:  # noqa: BLE001 - resolver must downgrade helper failures
             return None, _diagnostic_from_error(
                 error, kind, "media materialization failed", reference_id
@@ -479,31 +458,10 @@ class ResourceResolver:
             return None, _diagnostic_from_error(
                 error, "file", "file download URL is malformed", reference_id
             )
-        if self._url_to_bytes is None:
-            return None, _diagnostic(
-                "unsupported", "file", "URL-to-bytes seam is unavailable", reference_id
-            )
-
-        filename = _safe_display_name(_optional_text(reference, "file_name")) or "document"
-        mime_type = _optional_text(reference, "mime_type") or "application/octet-stream"
-        try:
-            result = await self._cache_bytes_url(
-                url,
-                mime_type=mime_type,
-                kind="document",
-                filename=filename,
-                reference_kind="file",
-                reference_id=reference_id,
-            )
-        except Exception as error:  # noqa: BLE001 - resolver must downgrade helper failures
-            return None, _diagnostic_from_error(
-                error, "file", "file materialization failed", reference_id
-            )
-        if result is None:
-            return None, _diagnostic(
-                "unsupported", "file", "file materialization is unavailable", reference_id
-            )
-        return result, None
+        del url
+        return None, _diagnostic(
+            "unsupported", "file", "Hermes file resource entry is unavailable", reference_id
+        )
 
     async def _resolve_reply_reference(
         self,
@@ -662,54 +620,12 @@ class ResourceResolver:
         reference_id: str | None,
     ) -> HermesAttachmentMaterialization | None:
         helper = getattr(self._hermes, helper_name, None)
-        if callable(helper):
-            result = helper(url, ext=ext)
-            path = await _await_result(result)
-            return _materialization_from_path(
-                path,
-                mime_type=mime_type,
-                kind=kind,
-                display_name=filename,
-                reference_kind=reference_kind,
-                reference_id=reference_id,
-            )
-        return await self._cache_bytes_url(
-            url,
-            mime_type=mime_type,
-            kind=kind,
-            filename=filename,
-            reference_kind=reference_kind,
-            reference_id=reference_id,
-        )
-
-    async def _cache_bytes_url(
-        self,
-        url: str,
-        *,
-        mime_type: str,
-        kind: str,
-        filename: str,
-        reference_kind: str,
-        reference_id: str | None,
-    ) -> HermesAttachmentMaterialization | None:
-        if self._url_to_bytes is None:
+        if not callable(helper):
             return None
-        cache_helper = getattr(self._hermes, "cache_media_bytes", None)
-        if not callable(cache_helper):
-            return None
-        data = await _await_result(self._url_to_bytes(url))
-        if not isinstance(data, bytes):
-            raise TypeError("URL-to-bytes seam returned non-bytes")
-        result = cache_helper(
-            data,
-            filename=filename,
-            mime_type=mime_type,
-            default_kind=kind,
-        )
-        if inspect.isawaitable(result):
-            raise TypeError("bytes cache helper must be synchronous")
-        return _materialization_from_cache_result(
-            result,
+        result = helper(url, ext=ext)
+        path = await _await_result(result)
+        return _materialization_from_path(
+            path,
             mime_type=mime_type,
             kind=kind,
             display_name=filename,
@@ -817,46 +733,6 @@ def _materialization_from_path(
         mime_type=mime_type,
         kind=kind,
         display_name=display_name,
-        reference_kind=reference_kind,
-        reference_id=reference_id,
-    )
-
-
-def _materialization_from_cache_result(
-    result: object,
-    *,
-    mime_type: str,
-    kind: str,
-    display_name: str,
-    reference_kind: str,
-    reference_id: str | None,
-) -> HermesAttachmentMaterialization | None:
-    if result is None:
-        return None
-    if isinstance(result, str):
-        return _materialization_from_path(
-            result,
-            mime_type=mime_type,
-            kind=kind,
-            display_name=display_name,
-            reference_kind=reference_kind,
-            reference_id=reference_id,
-        )
-    path = getattr(result, "path", None)
-    result_mime = getattr(result, "media_type", mime_type)
-    result_kind = getattr(result, "kind", kind)
-    result_name = getattr(result, "display_name", display_name)
-    if not isinstance(result_mime, str) or not result_mime.strip():
-        raise ValueError("Hermes bytes cache returned invalid MIME")
-    if not isinstance(result_kind, str) or not result_kind.strip():
-        raise ValueError("Hermes bytes cache returned invalid kind")
-    if not isinstance(result_name, str):
-        result_name = display_name
-    return _materialization_from_path(
-        path,
-        mime_type=result_mime,
-        kind=result_kind,
-        display_name=_safe_display_name(result_name),
         reference_kind=reference_kind,
         reference_id=reference_id,
     )
@@ -1005,5 +881,4 @@ __all__ = [
     "ResourceClient",
     "ResourceDiagnostic",
     "ResourceResolver",
-    "UrlToBytes",
 ]

@@ -197,10 +197,10 @@ def test_tracker_expiry_task_updates_state_and_closes_cleanly() -> None:
     asyncio.run(scenario())
 
 
-def test_tracker_scans_only_group_allowlist_and_logs_masked_identity_and_results(
+def test_tracker_scans_only_group_allowlist_and_logs_raw_identity_and_results(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """冷启动日志应显示身份和白名单群结果，且隐藏 ID 中间部分。"""
+    """冷启动日志应显示身份和白名单群结果。"""
 
     client = FakeMuteClient([700000001, 700000002])
     tracker = MuteTracker(
@@ -220,7 +220,7 @@ def test_tracker_scans_only_group_allowlist_and_logs_masked_identity_and_results
     assert "冷启动" not in caplog.text
     assert "群禁言" not in caplog.text
     assert "Milky muted group" not in caplog.text
-    assert "900000001" not in caplog.text
+    assert "900000001" in caplog.text
     assert "700000002" not in caplog.text
     records = [
         record
@@ -233,9 +233,9 @@ def test_tracker_scans_only_group_allowlist_and_logs_masked_identity_and_results
     summary = next(
         record for record in records if record.event_name == "milky_mute_initial_sync_succeeded"
     )
-    assert identity.uid == "900***001"
+    assert identity.uid == 900000001
     assert identity.nickname == "合成机器人"
-    assert identity.getMessage().count("uid=900***001") == 1
+    assert identity.getMessage().count("uid=900000001") == 1
     assert identity.getMessage().count("nickname=合成机器人") == 1
     assert summary.scope == "allowlist"
     assert (summary.total, summary.succeeded, summary.failed) == (1, 1, 0)
@@ -265,10 +265,10 @@ def test_tracker_logs_only_muted_groups_and_summarizes_all_states(
     ]
     muted_records = [record for record in records if record.event_name == "milky_mute_group_muted"]
     assert len(muted_records) == 1
-    assert muted_records[0].group_id == "700***001"
+    assert muted_records[0].group_id == 700000001
     assert muted_records[0].member_mute == "muted"
     assert muted_records[0].whole_mute == "unknown"
-    assert muted_records[0].getMessage().count("group_id=700***001") == 1
+    assert muted_records[0].getMessage().count("group_id=700000001") == 1
     assert muted_records[0].getMessage().count("member_mute=muted") == 1
     assert muted_records[0].getMessage().count("whole_mute=unknown") == 1
     summary = next(

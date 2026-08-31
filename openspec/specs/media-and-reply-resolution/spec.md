@@ -33,9 +33,9 @@ reply 原消息；已有完整 reply segments 时不得无条件重复查询。`
 不得使用 `get_resource_temp_url`：group file SHALL 使用
 `get_group_file_download_url(group_id, file_id)`，private file SHALL 使用
 `get_private_file_download_url(user_id, file_id, file_hash, ...)`，其中私聊缺少必需
-`file_hash` 时必须安全降级。两个 file Action 返回的 `download_url` 仍须经过安全的
-URL-to-bytes seam，才能交给 Hermes attachment materializer；没有该 seam 时必须返回
-`unsupported` 和占位。插件 MUST NOT 自行拼接 Hermes 本地路径或接管缓存和 SSRF 规则。
+`file_hash` 时必须安全降级。两个 file Action 返回的 `download_url` 只能在存在已确认的
+Hermes 文件资源入口时继续处理；没有该入口时必须返回 `unsupported` 和占位。插件 MUST
+NOT 自行拼接 Hermes 本地路径或接管缓存和 SSRF 规则。
 
 #### Scenario: trigger 补全回复
 
@@ -60,7 +60,7 @@ URL-to-bytes seam，才能交给 Hermes attachment materializer；没有该 seam
 
 - **WHEN** trigger 处理带有 `file_id` 的 group `file_attachment_references`
 - **THEN** 系统 SHALL 调用 `get_group_file_download_url` 并传入当前 `group_id` 与 `file_id`
-- **AND** SHALL 将成功返回的 `download_url` 交给经过确认的 bytes seam，不得把该 URL 直接写入 MessageEvent.media_urls
+- **AND** SHALL 将成功返回的 `download_url` 交给经过确认的 Hermes 文件入口；没有该入口时保留占位，不得把 URL 直接写入 MessageEvent.media_urls
 
 #### Scenario: private file 缺少哈希
 
@@ -68,15 +68,15 @@ URL-to-bytes seam，才能交给 Hermes attachment materializer；没有该 seam
 - **THEN** 系统 SHALL 不调用 `get_private_file_download_url`
 - **AND** SHALL 记录 `unsupported` 或 `malformed` 的安全诊断并生成 `[文件不可用]` 占位
 
-#### Scenario: file 没有确认的 URL-to-bytes seam
+#### Scenario: file 没有确认的 Hermes 入口
 
-- **WHEN** trigger 已通过对应 Milky file Action 获得 `download_url`，但当前 Hermes 组合没有确认的 URL-to-bytes seam
+- **WHEN** trigger 已通过对应 Milky file Action 获得 `download_url`，但当前 Hermes 组合没有确认的文件入口
 - **THEN** 系统 SHALL 保留 `file_id`、文件名和 `[文件不可用]` 占位，并记录 `unsupported`
 - **AND** SHALL 不调用 `get_resource_temp_url`、不把 URL 当成本地路径、不执行未受控的插件侧直接下载
 
 ### Requirement: 资源安全限制由 Hermes 所有
 
-媒体资源和已确认的文件附件 materialization MUST 由 Hermes helper/cache 边界负责其适用的 SSRF 校验、大小和 MIME 限制、下载路径、权限、缓存及生命周期；插件 SHALL 只提供经过协议层校验的分类远端引用或经确认 seam 得到的 bytes。
+媒体资源和已确认的文件附件 materialization MUST 由 Hermes helper/cache 边界负责其适用的 SSRF 校验、大小和 MIME 限制、下载路径、权限、缓存及生命周期；插件 SHALL 只提供经过协议层校验的分类远端引用。
 
 #### Scenario: 远端媒体引用
 
@@ -110,11 +110,11 @@ helper/materializer 完成。成功结果 SHALL 形成 `hermes_attachment_materi
 - **THEN** resolver SHALL await helper 返回的本地路径后再构造 MessageEvent
 - **AND** MessageEvent SHALL 只包含该本地路径及对应 MIME，不得包含未解析 URL
 
-#### Scenario: bytes-only cache helper
+#### Scenario: 文件没有确认的 materialization 入口
 
-- **WHEN** 某种附件只能由 Hermes bytes cache helper materialize
-- **THEN** 系统 SHALL 仅在已有经过确认的下载 seam 提供 bytes 后调用 `cache_media_bytes()` 或对应 bytes helper
-- **AND** 对 ZIP 等普通文件 SHALL 生成 `kind="document"` 的本地 materialization，且不得把同步 bytes cache helper 描述为会下载或 await 远端资源
+- **WHEN** 某种附件没有已确认的 Hermes 远端资源或文件 materialization 入口
+- **THEN** 系统 SHALL 返回 `unsupported` 和可解释占位
+- **AND** SHALL 不在插件中读取 bytes、创建路径或调用未确认的 bytes helper
 
 #### Scenario: materialization 不支持
 
@@ -126,9 +126,8 @@ helper/materializer 完成。成功结果 SHALL 形成 `hermes_attachment_materi
 
 本适配器 MUST 按具体 helper 的能力调用 Hermes，不得假定存在统一的
 `await_resource()` 或“任意引用转附件”公共入口。Hermes 的 image/audio async URL helper
-负责其支持类型的下载并返回本地路径；`cache_media_bytes()` 和其他 bytes cache helper
-只缓存已提供的 bytes，其中普通文件会被归类为 document；插件不得创建第二套缓存、下载
-目录、权限规则、SSRF 规则或本地路径协议。
+负责其支持类型的下载并返回本地路径；没有明确对应入口的附件由插件保留占位并返回
+`unsupported`；插件不得创建第二套缓存、下载目录、权限规则、SSRF 规则或本地路径协议。
 
 #### Scenario: 图片或音频远端引用
 

@@ -324,12 +324,11 @@ wait 阶段只保留资源引用，不下载。trigger 阶段才允许查询图�
 - `dm:<id>` 使用 `send_private_message`；
 - 非法或 temp 目标在网络访问前失败，不回退默认目标；
 - 文本和结构化内容由 `outbound/formatter.py` 生成 Milky segments；
-- Hermes 的图片 URL、本地图片、动画、语音和视频入口均进入对应的 native `image`、`record` 或 `video` segment；
-- 显式 `http(s)://` 和 `base64://` URI 原样保留，本地路径与 `file://` 只在出站时读取为 `base64://`，插件不下载远端 URI；
-- 本地资源完整读入内存，当前固定上限为 8 MiB；空文件、目录、不可读路径和超限资源在网络访问前失败；
+- Hermes 已 materialize 的图片 URL、动画、语音和视频 URI 进入对应的 native `image`、`record` 或 `video` segment；
+- 显式 `http(s)://` 和已 materialize 的 `base64://` URI 原样保留；只有当前主机本地路径或 `file://` URI 时返回 `unsupported`，插件不读取本地文件或下载远端 URI；
 - 空白消息在网络访问前拒绝，超长文本按明确边界拆分；
 - file 不是 message segment，必须使用对应的 upload Action；
-- Hermes 的文档附件使用 `upload_group_file` 或 `upload_private_file`，请求只接收 materialized `file_uri` 和校验后的 `file_name`；
+- Hermes 的文档附件使用 `upload_group_file` 或 `upload_private_file`，请求只接收已 materialize 的 `file_uri` 和校验后的 `file_name`；
 - 未实现的编辑、撤回、reaction 等能力返回 `unsupported`；
 - 结果区分 `rejected`、`transport_unknown`、`malformed` 和 `unsupported`。
 
@@ -357,11 +356,11 @@ v0.1 不使用插件自有持久化数据库。插件内只有进程内、可丢
 - 每 chat willingness 状态；
 - MuteTracker 群状态。
 
-Hermes 拥有 Agent turn、session/transcript、媒体下载、缓存、路径和权限。Milky client
-拥有 URL、认证和 HTTP envelope；event stream 拥有 SSE 生命周期；outbound 拥有 Milky
-segment 格式以及无缓存的本地资源 materialization。base64 仅为当前本地出站兼容 seam，
-不形成插件媒体缓存或持久化副本。standalone sender 只拥有一次调用的临时 client 生命周期，
-不拥有持久化连接、cron 状态或媒体缓存。
+Hermes 拥有 Agent turn、session/transcript、媒体下载、缓存、路径、权限和资源
+materialization。Milky client 拥有 URL、认证和 HTTP envelope；event stream 拥有 SSE 生命周期；
+outbound 只拥有 Milky segment 格式和 upload Action 路由，不读取资源或生成 `base64://`
+fallback。standalone sender 只拥有一次调用的临时 client 生命周期，不拥有持久化连接、cron
+状态或媒体缓存。
 
 ## 12. 配置与安全
 
@@ -377,8 +376,9 @@ deliver=milky 不回退到默认频道、origin、群聊或私聊。仍不使用
 groups/users、muted groups、require mention 或扁平 dm policy。
 
 所有日志、异常、SendResult、fixture、快照和执行记录不得包含 token、Authorization
-header、个人 QQ、真实媒体路径或敏感正文。诊断优先使用 chat key、message ID、reason 和
-错误类别。
+header、真实媒体路径或敏感正文；经过登记的业务 ID、chat key 和 message ID 可以原样用于
+关联。普通诊断优先使用 chat key、message ID、reason 和错误类别；已注册 Tool 的专用日志
+还记录原始业务入参和远端结果。
 
 ## 13. 开发与验证
 

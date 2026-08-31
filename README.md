@@ -92,17 +92,15 @@ Milky adapter 已覆盖 Hermes 的 native 媒体交接：
 | Hermes 入口 | Milky 出站边界 |
 | --- | --- |
 | 图片 URL、动画 | `image` segment，经 `send_group_message` 或 `send_private_message` |
-| 图片文件 | 读取为 `base64://` 后使用 `image` segment |
-| 语音 | 读取为 `base64://` 后使用 `record` segment |
-| 视频 | 读取为 `base64://` 后使用 `video` segment |
-| 文档/普通文件 | 读取为 `base64://` 后使用独立 `upload_group_file` 或 `upload_private_file` |
+| Hermes 已 materialize 的图片/语音/视频 URI | 原样交给对应 `image`、`record` 或 `video` segment |
+| Hermes 已 materialize 的文档 URI | 使用独立 `upload_group_file` 或 `upload_private_file` |
+| 只有当前主机本地路径的资源 | `unsupported`，不读取、不下载、不生成 `base64://` fallback |
 
-Hermes 负责从 Agent 输出中解析并校验 `MEDIA:<path>`，再调用 adapter 的对应媒体入口。
-插件不会下载 `http(s)://` URI、创建媒体缓存或接管 Hermes 的路径权限；显式
-`base64://` URI 会原样交给 Milky。当前本地资源会完整读入内存，固定上限为 8 MiB，空文件、
-目录、不可读路径、未知 scheme 和超限资源会在网络访问前返回 `invalid_input`。协议拒绝、
-传输结果未知、malformed 和未连接状态分别保持 `rejected`、`transport_unknown`、
-`malformed` 和 `unsupported`，不会改发路径文本或盲目重试。
+Hermes 负责从 Agent 输出中解析并校验资源，再调用 adapter 的对应媒体入口。插件不会下载
+`http(s)://` URI、读取本地文件、创建媒体缓存或接管 Hermes 的路径权限；只有 Hermes 已确认
+的资源 URI（包括显式 materialized 的 `base64://`）会原样交给 Milky。协议拒绝、传输结果
+未知、malformed 和未连接状态分别保持 `rejected`、`transport_unknown`、`malformed` 和
+`unsupported`，不会改发路径文本或盲目重试。
 
 ## 配置指南
 

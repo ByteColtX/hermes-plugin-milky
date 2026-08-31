@@ -90,8 +90,9 @@ MUST 按 Milky segment schema 生成；图片、语音和视频等媒体 MUST �
 ### Requirement: 文件使用独立上传 Action
 
 出站文件 MUST 根据目标调用 `upload_group_file` 或 `upload_private_file`，不得将 file 放入
-send message segments，也不得假设远端能访问本地路径。Hermes 提供的本地文件路径 MUST
-按当前确认的临时兼容方案读取并编码为 `base64://` URI，再交给对应 upload Action。
+send message segments，也不得假设远端能访问本地路径。文件资源 MUST 来自 Hermes 已确认的
+出站资源入口；没有该入口时 SHALL 返回 `unsupported`，插件不得读取本地文件或生成
+`base64://` fallback。
 
 #### Scenario: 群文件上传
 
@@ -102,7 +103,7 @@ send message segments，也不得假设远端能访问本地路径。Hermes 提�
 #### Scenario: 本地路径不可共享
 
 - **WHEN** 文件输入是当前主机的本地路径
-- **THEN** 系统 SHALL 按已确认的上传契约处理或安全拒绝
+- **THEN** 系统 SHALL 返回 `unsupported` 或本地资源错误
 - **AND** SHALL 不假设 Milky 进程可直接读取该路径
 
 #### Scenario: 私聊文件上传
@@ -111,11 +112,11 @@ send message segments，也不得假设远端能访问本地路径。Hermes 提�
 - **THEN** 系统 SHALL 调用 `upload_private_file`
 - **AND** SHALL 返回远端确认的 `file_id`，不把文件内容作为普通文本发送
 
-#### Scenario: 本地文件使用 base64 兼容方案
+#### Scenario: 本地文件没有 Hermes 出站入口
 
-- **WHEN** 文件输入是当前主机上可读的普通本地文件或 `file://` 路径
-- **THEN** 系统 SHALL 在 upload Action 的 JSON `file_uri` 中使用 `base64://` 内容
-- **AND** SHALL 不把本地路径直接交给 Milky 或写入日志、错误和用户可见文本
+- **WHEN** 文件输入是当前主机上的本地文件或 `file://` 路径，且没有 Hermes 已确认的出站资源入口
+- **THEN** 系统 SHALL 返回 `unsupported` 或本地资源错误
+- **AND** SHALL 不读取本地文件、不把路径交给 Milky 或生成 `base64://` fallback
 
 #### Scenario: 文件路径不可读
 
@@ -222,24 +223,29 @@ mention 或 reply segment。没有显式控制码时，系统 MUST NOT 自动引
 
 ### Requirement: Hermes 媒体入口必须执行 native 出站
 
-当 Hermes 已将 Agent 输出中的资源解析为图片 URL、本地图片、语音、视频或文档附件时，
-Milky adapter MUST 将这些资源交给对应的 native 媒体或文件出站能力，而不是使用
-Hermes 基类的纯文本 fallback。显式选择的 `http(s)://` 或 `base64://` URI MAY 原样作为
-远端资源引用使用；本地路径和 `file://` URI MUST 先 materialize 为 `base64://`。资源
-materialization 只允许读取用户明确选择的资源，不得下载任意 URL、建立插件缓存或复制
-Hermes 媒体权限规则。
+当 Hermes 已将 Agent 输出中的资源解析为图片 URL、语音、视频或文档附件并提供已确认的
+出站资源入口时，Milky adapter MUST 将这些资源交给对应的 native 媒体或文件出站能力，而
+不是使用 Hermes 基类的纯文本 fallback。显式选择的 `http(s)://` 或 `base64://` URI MAY
+原样作为已 materialize 资源引用使用；本地路径和 `file://` URI 在没有该入口时必须返回
+`unsupported`。插件不得读取本地资源、下载任意 URL、建立缓存或复制 Hermes 媒体权限规则。
 
 #### Scenario: Agent 请求发送工作区文件
 
-- **WHEN** Agent 输出一个已通过 Hermes 路径安全检查的工作区文件附件
+- **WHEN** Agent 输出一个已由 Hermes core materialize 且可供上传的工作区文件附件
 - **THEN** Milky adapter SHALL 调用对应目标的独立文件上传 Action
 - **AND** 用户 SHALL 收到文件附件而不是文件路径或文本 fallback
 
 #### Scenario: Agent 请求发送本地图片、语音或视频
 
-- **WHEN** Agent 输出一个已通过 Hermes 路径安全检查的本地图片、语音或视频附件
-- **THEN** Milky adapter SHALL 将文件内容编码为 `base64://` 并放入对应 native media segment
+- **WHEN** Agent 输出一个已由 Hermes core materialize 且可供发送的图片、语音或视频附件
+- **THEN** Milky adapter SHALL 将 Hermes 提供的资源 URI 放入对应 native media segment
 - **AND** 请求 SHALL 使用既有 group/dm 消息 Action 完成一次媒体发送
+
+#### Scenario: 本地附件没有确认的出站入口
+
+- **WHEN** Agent 输出的附件只有当前主机本地路径，且 Hermes 没有提供可供 adapter 使用的资源 URI
+- **THEN** Milky adapter SHALL 返回 `unsupported`
+- **AND** SHALL 不读取路径、不访问 Milky 网络、不生成 `base64://` fallback
 
 #### Scenario: 远端媒体 URI
 

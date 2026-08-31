@@ -19,7 +19,7 @@ SHALL 使用 `info`，可恢复失败、协议拒绝和安全降级 SHALL 使用
 
 - **WHEN** Milky 完成初始同步并开放普通消息入口
 - **THEN** 日志 SHALL 以 `[Milky] ` 开头并以 `info` 记录 ready 状态
-- **AND** 日志 SHALL 不包含 token、Authorization、完整 URL 或未脱敏身份
+- **AND** 日志 SHALL 不包含 token、Authorization 或完整 URL；已登记的业务身份字段可以原样关联
 
 #### Scenario: 可恢复 Action 失败
 
@@ -42,6 +42,7 @@ Hermes handoff、outbound 和 mute 状态。固定事件名至少 SHALL 包括�
 `milky_inbound_duplicate`、`milky_inbound_gate_denied`、`milky_inbound_wait`、
 `milky_inbound_trigger`、`milky_inbound_handoff_succeeded`、
 `milky_inbound_handoff_failed`、`milky_action_succeeded`、`milky_action_failed`、
+`milky_tool_call`、
 `milky_resource_resolution_completed`、`milky_resource_resolution_degraded`、
 `milky_outbound_succeeded`、`milky_outbound_failed`、`milky_mute_refresh_succeeded` 和
 `milky_mute_refresh_failed`；需要区分实际边界时还 SHALL 使用
@@ -52,7 +53,7 @@ Hermes handoff、outbound 和 mute 状态。固定事件名至少 SHALL 包括�
 
 - **WHEN** 一条消息通过 canonical、dedup、Gate 和 Will，并先 wait 后由另一条消息 trigger
 - **THEN** 日志 SHALL 能区分 wait、trigger、历史 drain、resource/handoff 成功或失败
-- **AND** SHALL 能使用 scene、脱敏 chat、ingress sequence 或计数关联同一处理链
+- **AND** SHALL 能使用 scene、chat、ingress sequence 或计数关联同一处理链
 - **AND** SHALL 不把 wait 消息记录为 Hermes Agent turn
 
 #### Scenario: Gate 或 dedup 短路
@@ -70,10 +71,10 @@ Hermes handoff、outbound 和 mute 状态。固定事件名至少 SHALL 包括�
 ### Requirement: 人类消息和结构化字段必须由单一来源渲染
 
 日志的人类可读部分 MUST 只使用固定事件标签和统一的 `[Milky] ` 前缀；动态 ID、计数、状态、
-nickname、错误分类和关联值 MUST 只通过经过白名单校验和脱敏的结构化字段提供。调用方
+nickname、错误分类和关联值 MUST 只通过经过白名单校验的结构化字段提供。调用方
 不得把动态 `key=value`、原始异常、URL、路径、正文或第二个平台前缀预先拼入消息。每个
 结构化字段在同一条人类可读消息中最多 SHALL 出现一次，同时 `LogRecord` 的结构化值 SHALL
-与人类消息使用同一份已脱敏结果。
+与人类消息使用同一份已校验的原始业务值。
 
 #### Scenario: Mute 扫描汇总不重复
 
@@ -82,11 +83,12 @@ nickname、错误分类和关联值 MUST 只通过经过白名单校验和脱敏
 - **AND** 结构化记录 SHALL 保留同名统计字段及对应的原始数值语义
 - **AND** 日志 SHALL 不再同时出现调用方预格式化统计文本和 helper 追加的同一字段
 
-#### Scenario: 动态身份不能绕过字段脱敏
+#### Scenario: 动态身份不能绕过字段约束
 
-- **WHEN** 日志调用尝试把未脱敏数字 ID、nickname、错误文本或动态字段放入人类可读消息
+- **WHEN** 日志调用尝试把未登记的动态字段、错误文本或第二个前缀放入人类可读消息
 - **THEN** 系统 SHALL 拒绝该动态消息或只使用安全字段渲染
-- **AND** 人类消息和结构化记录 SHALL 均不得包含未脱敏 ID、凭证、路径、URL 或正文
+- **AND** 已登记的业务 ID 和 nickname SHALL 在人类消息与结构化记录中保持原样
+- **AND** 凭证、路径、URL 和正文 SHALL 不得通过普通日志字段输出
 
 #### Scenario: 冷启动细节使用规范字段
 
@@ -147,14 +149,14 @@ URL、本地文件路径、文件名或远端完整响应。
 - **THEN** 日志 SHALL 区分 upload 成功/失败和 group/dm 路由
 - **AND** SHALL 不记录本地路径、文件名、file URI、token 或完整 file ID
 
-### Requirement: 日志字段和异常内容必须保持脱敏
+### Requirement: 日志字段和异常内容必须保持边界约束
 
 所有 Milky 日志及其结构化字段 MUST 只使用白名单字段，例如 `stage`、`event_name`、
 `scene`、`action`、`reason`、`classification`、`decision`、`attempt`、`delay_seconds`、
-`status_code`、`duration_ms`、计数和 `ingress_sequence`。QQ/群 ID SHALL 统一保留前后三位并
-隐藏中间部分；chat key SHALL 保持 `group:`/`dm:` 命名空间但使用脱敏 ID。日志 MUST NOT
-包含 token、Authorization header、个人 QQ/群 ID 原文、敏感正文、关键词、segment raw、
-媒体 URL、文件名、本地路径、完整异常文本或响应正文。
+`status_code`、`duration_ms`、计数和 `ingress_sequence`。已登记的 QQ/群 ID 和 chat key SHALL
+保持 `group:`/`dm:` 命名空间并原样保留。普通日志 MUST NOT
+包含 token、Authorization header、敏感正文、关键词、segment raw、媒体 URL、文件名、本地
+路径、完整异常文本或响应正文；已注册 Tool 的专用日志例外保留其业务入参和远端结果。
 
 #### Scenario: 含凭证的传输错误
 
@@ -165,7 +167,7 @@ URL、本地文件路径、文件名或远端完整响应。
 #### Scenario: 含消息内容的入站失败
 
 - **WHEN** canonical、Will、资源补全或 Hermes handoff 失败且消息包含敏感正文和媒体引用
-- **THEN** 日志 SHALL 只保留脱敏 chat、稳定关联字段、阶段和错误分类
+- **THEN** 日志 SHALL 只保留 chat、稳定关联字段、阶段和错误分类
 - **AND** SHALL 不默认输出正文、关键词、媒体 URL、路径或 raw segment
 
 #### Scenario: 失败日志需要 traceback

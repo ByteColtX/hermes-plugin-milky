@@ -8,18 +8,14 @@ Gate、Will 或 Hermes 业务。默认 transport 延迟使用 Hermes 提供的 H
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
-import os
 import re
-import stat
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Protocol, Self
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 
 from config import MilkyConfig
 
@@ -39,8 +35,20 @@ _NON_NEGATIVE_INTEGER_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
 _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
 _MAX_SAFE_INTEGER = 9007199254740991
-MAX_LOCAL_MEDIA_BYTES = 8 * 1024 * 1024
 _TRANSPORT_PHASES = frozenset({"connect", "write", "read", "pool", "unknown"})
+_TOOL_ACTIONS = frozenset(
+    {
+        "send_profile_like",
+        "send_friend_nudge",
+        "send_group_nudge",
+        "recall_group_message",
+        "get_group_info",
+        "get_group_member_list",
+        "get_group_member_info",
+        "set_group_member_mute",
+        "set_group_whole_mute",
+    }
+)
 _MISSING = object()
 
 logger = logging.getLogger(__name__)
@@ -185,14 +193,30 @@ class ActionError(Exception):
 MilkyActionError = ActionError
 
 
-async def materialize_media_uri(value: object, *, action: str = "media") -> str:
-    """把出站资源规范化为远端 URI 或受限的 ``base64://`` URI。
+def validate_media_uri(value: object, *, action: str = "media") -> str:
+    """只接受 Hermes 已 materialize 的远端或显式内联资源 URI。
 
-    显式的 HTTP(S) 和 base64 URI 不会在插件内下载或解码；本地路径和
-    ``file://`` URI 则在工作线程中读取一次，并受固定大小上限保护。
+    本函数不读取本地文件、不下载远端内容，也不生成新的 ``base64://`` URI。
     """
 
-    return await asyncio.to_thread(_materialize_media_uri, value, action)
+    if not isinstance(value, str):
+        raise ActionError("unsupported", action, "Hermes resource entry is unavailable")
+    raw = value.strip()
+    if not raw:
+        raise ActionError("invalid_input", action, "media URI is invalid")
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        raise ActionError("invalid_input", action, "media URI is invalid") from None
+    if parsed.scheme in {"http", "https"}:
+        if not parsed.netloc:
+            raise ActionError("invalid_input", action, "media URI is invalid")
+        return raw
+    if parsed.scheme == "base64" and raw.startswith("base64://"):
+        if parsed.netloc or parsed.path:
+            return raw
+        raise ActionError("invalid_input", action, "media URI is invalid")
+    raise ActionError("unsupported", action, "Hermes resource entry is unavailable")
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,6 +360,30 @@ class MilkyClient:
         """以兼容名称调用通用 Action。"""
 
         return await self.call(action, params)
+
+    async def call_tool(
+        self,
+        action: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> MilkyEnvelope:
+        """调用已注册 Tool 并返回完整 raw envelope。"""
+
+        if action not in _TOOL_ACTIONS:
+            raise ActionError("unsupported", action, "Action is not registered as a Tool")
+        envelope = await self.call(action, params)
+        if action in {"get_group_info", "get_group_member_list", "get_group_member_info"}:
+            try:
+                parse_action_response(
+                    {
+                        "status": envelope.status,
+                        "retcode": envelope.retcode,
+                        "data": envelope.data,
+                    },
+                    action,
+                )
+            except ParseError:
+                raise ActionError("malformed", action, "response data is malformed") from None
+        return envelope
 
     async def get_impl_info(self) -> str:
         """获取并原样返回已校验的 ``get_impl_info`` JSON 响应。"""
@@ -725,7 +773,7 @@ class MilkyClient:
                 minimum=_MIN_QQ_ID,
                 maximum=_MAX_QQ_ID,
             ),
-            "file_uri": _validate_text(file_uri, "file_uri", "upload_group_file"),
+            "file_uri": validate_media_uri(file_uri, action="upload_group_file"),
             "file_name": _validate_text(file_name, "file_name", "upload_group_file"),
         }
         if parent_folder_id is not _MISSING:
@@ -734,22 +782,6 @@ class MilkyClient:
             )
         envelope = await self.call("upload_group_file", params)
         return _parse_upload_result(envelope, "upload_group_file")
-
-    async def upload_group_file_from_path(
-        self,
-        group_id: object,
-        file_path: object,
-        file_name: object,
-        *,
-        parent_folder_id: object = _MISSING,
-    ) -> MilkyEnvelope:
-        """读取本地文件并以 base64 URI 上传到群。"""
-
-        file_uri = await materialize_media_uri(file_path, action="upload_group_file")
-        kwargs: dict[str, object] = {}
-        if parent_folder_id is not _MISSING:
-            kwargs["parent_folder_id"] = parent_folder_id
-        return await self.upload_group_file(group_id, file_uri, file_name, **kwargs)
 
     async def upload_private_file(
         self, user_id: object, file_uri: object, file_name: object
@@ -766,19 +798,11 @@ class MilkyClient:
                     minimum=_MIN_QQ_ID,
                     maximum=_MAX_QQ_ID,
                 ),
-                "file_uri": _validate_text(file_uri, "file_uri", "upload_private_file"),
+                "file_uri": validate_media_uri(file_uri, action="upload_private_file"),
                 "file_name": _validate_text(file_name, "file_name", "upload_private_file"),
             },
         )
         return _parse_upload_result(envelope, "upload_private_file")
-
-    async def upload_private_file_from_path(
-        self, user_id: object, file_path: object, file_name: object
-    ) -> MilkyEnvelope:
-        """读取本地文件并以 base64 URI 上传到私聊。"""
-
-        file_uri = await materialize_media_uri(file_path, action="upload_private_file")
-        return await self.upload_private_file(user_id, file_uri, file_name)
 
     async def close(self) -> None:
         """释放底层 transport，重复关闭保持安全。"""
@@ -1007,71 +1031,7 @@ def _response_body_bytes(body: object, action: str) -> bytes:
     raise ActionError("malformed", action, "response body is not JSON text")
 
 
-def _materialize_media_uri(value: object, action: str) -> str:
-    """在工作线程中应用统一的 URI 和本地文件边界。"""
-
-    if isinstance(value, Path):
-        raw = str(value).strip()
-    elif isinstance(value, str):
-        raw = value.strip()
-    else:
-        raise ActionError("invalid_input", action, "media URI is invalid")
-    if not raw:
-        raise ActionError("invalid_input", action, "media URI is invalid")
-
-    try:
-        parsed = urlsplit(raw)
-    except ValueError:
-        raise ActionError("invalid_input", action, "media URI is invalid") from None
-    if parsed.scheme in {"http", "https"}:
-        if not parsed.netloc:
-            raise ActionError("invalid_input", action, "media URI is invalid")
-        return raw
-    if parsed.scheme == "base64":
-        if not raw.startswith("base64://") or not parsed.netloc and not parsed.path:
-            raise ActionError("invalid_input", action, "media URI is invalid")
-        return raw
-    if parsed.scheme == "file":
-        if parsed.netloc not in {"", "localhost"} or not parsed.path:
-            raise ActionError("invalid_input", action, "media URI is invalid")
-        raw = unquote(parsed.path)
-    elif parsed.scheme:
-        raise ActionError("invalid_input", action, "media URI is invalid")
-
-    return _local_file_as_base64_uri(raw, action)
-
-
-def _local_file_as_base64_uri(file_path: object, action: str) -> str:
-    """将可读普通文件编码为受大小限制的 Milky base64 URI。"""
-
-    try:
-        path = Path(file_path).expanduser()
-    except (OSError, TypeError, ValueError):
-        raise ActionError("invalid_input", action, "file path is invalid") from None
-    try:
-        if not path.is_file():
-            raise ActionError("invalid_input", action, "file path is unavailable")
-        with path.open("rb") as stream:
-            file_stat = os.fstat(stream.fileno())
-            if not stat.S_ISREG(file_stat.st_mode):
-                raise ActionError("invalid_input", action, "file path is unavailable")
-            file_size = file_stat.st_size
-            if file_size > MAX_LOCAL_MEDIA_BYTES:
-                raise ActionError("invalid_input", action, "media file is too large")
-            data = stream.read(MAX_LOCAL_MEDIA_BYTES + 1)
-    except ActionError:
-        raise
-    except (OSError, ValueError):
-        raise ActionError("invalid_input", action, "file path is unavailable") from None
-    if len(data) > MAX_LOCAL_MEDIA_BYTES:
-        raise ActionError("invalid_input", action, "media file is too large")
-    if not data:
-        raise ActionError("invalid_input", action, "media file is empty")
-    return "base64://" + base64.b64encode(data).decode("ascii")
-
-
 __all__ = [
-    "MAX_LOCAL_MEDIA_BYTES",
     "ActionError",
     "HttpTransport",
     "HttpxTransport",
@@ -1080,5 +1040,5 @@ __all__ = [
     "MilkyClient",
     "SendResult",
     "TransportResponse",
-    "materialize_media_uri",
+    "validate_media_uri",
 ]

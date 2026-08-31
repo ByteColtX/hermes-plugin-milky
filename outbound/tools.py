@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import fields, is_dataclass
 from typing import Any
 
 from milky.client import ActionError
-from milky.models import GroupEntity, GroupMemberInfo, GroupMemberList, MilkyEnvelope
+from milky.models import MilkyEnvelope
+from milky.observability import log_event
 
 from .sender import (
     MilkyOutboundSender,
 )
 
 _ACTIVE_SENDER: MilkyOutboundSender | None = None
+logger = logging.getLogger(__name__)
 
 SEND_PROFILE_LIKE_SCHEMA = {
     "name": "send_profile_like",
@@ -319,9 +322,13 @@ async def _handle_send_profile_like(args: object, **kwargs: Any) -> str:
         return _tool_error("unsupported")
     if "count" in values:
         return await _execute_action(
-            lambda: sender.profile_like(values["user_id"], values["count"])
+            "send_profile_like",
+            values,
+            lambda: sender.profile_like(values["user_id"], values["count"]),
         )
-    return await _execute_action(lambda: sender.profile_like(values["user_id"]))
+    return await _execute_action(
+        "send_profile_like", values, lambda: sender.profile_like(values["user_id"])
+    )
 
 
 async def _handle_send_friend_nudge(args: object, **kwargs: Any) -> str:
@@ -339,10 +346,12 @@ async def _handle_send_friend_nudge(args: object, **kwargs: Any) -> str:
     if sender is None:
         return _tool_error("unsupported")
     return await _execute_action(
+        "send_friend_nudge",
+        values,
         lambda: sender.nudge(
             f"dm:{values['user_id']}",
             is_self=values.get("is_self"),
-        )
+        ),
     )
 
 
@@ -361,10 +370,12 @@ async def _handle_send_group_nudge(args: object, **kwargs: Any) -> str:
     if sender is None:
         return _tool_error("unsupported")
     return await _execute_action(
+        "send_group_nudge",
+        values,
         lambda: sender.nudge(
             f"group:{values['group_id']}",
             user_id=values["user_id"],
-        )
+        ),
     )
 
 
@@ -383,7 +394,9 @@ async def _handle_recall_group_message(args: object, **kwargs: Any) -> str:
     if sender is None:
         return _tool_error("unsupported")
     return await _execute_action(
-        lambda: sender.recall_group_message(f"group:{values['group_id']}", values["message_seq"])
+        "recall_group_message",
+        values,
+        lambda: sender.recall_group_message(f"group:{values['group_id']}", values["message_seq"]),
     )
 
 
@@ -402,7 +415,9 @@ async def _handle_get_group_info(args: object, **kwargs: Any) -> str:
     if sender is None:
         return _tool_error("unsupported")
     return await _execute_action(
-        lambda: sender.get_group_info(values["group_id"], no_cache=values.get("no_cache", False))
+        "get_group_info",
+        values,
+        lambda: sender.get_group_info(values["group_id"], no_cache=values.get("no_cache", False)),
     )
 
 
@@ -421,9 +436,11 @@ async def _handle_get_group_member_list(args: object, **kwargs: Any) -> str:
     if sender is None:
         return _tool_error("unsupported")
     return await _execute_action(
+        "get_group_member_list",
+        values,
         lambda: sender.get_group_member_list(
             values["group_id"], no_cache=values.get("no_cache", False)
-        )
+        ),
     )
 
 
@@ -444,11 +461,13 @@ async def _handle_get_group_member_info(args: object, **kwargs: Any) -> str:
     if sender is None:
         return _tool_error("unsupported")
     return await _execute_action(
+        "get_group_member_info",
+        values,
         lambda: sender.get_group_member_info(
             values["group_id"],
             values["user_id"],
             no_cache=values.get("no_cache", False),
-        )
+        ),
     )
 
 
@@ -472,12 +491,16 @@ async def _handle_set_group_member_mute(args: object, **kwargs: Any) -> str:
         return _tool_error("unsupported")
     if "duration" in values:
         return await _execute_action(
+            "set_group_member_mute",
+            values,
             lambda: sender.set_group_member_mute(
                 values["group_id"], values["user_id"], values["duration"]
-            )
+            ),
         )
     return await _execute_action(
-        lambda: sender.set_group_member_mute(values["group_id"], values["user_id"])
+        "set_group_member_mute",
+        values,
+        lambda: sender.set_group_member_mute(values["group_id"], values["user_id"]),
     )
 
 
@@ -497,9 +520,13 @@ async def _handle_set_group_whole_mute(args: object, **kwargs: Any) -> str:
         return _tool_error("unsupported")
     if "is_mute" in values:
         return await _execute_action(
-            lambda: sender.set_group_whole_mute(values["group_id"], values["is_mute"])
+            "set_group_whole_mute",
+            values,
+            lambda: sender.set_group_whole_mute(values["group_id"], values["is_mute"]),
         )
-    return await _execute_action(lambda: sender.set_group_whole_mute(values["group_id"]))
+    return await _execute_action(
+        "set_group_whole_mute", values, lambda: sender.set_group_whole_mute(values["group_id"])
+    )
 
 
 def _tools_available() -> bool:
@@ -532,50 +559,43 @@ def _tool_optional_bool(value: object) -> bool:
     return value is None or isinstance(value, bool)
 
 
-async def _execute_action(action: Callable[[], Any]) -> str:
-    """执行固定 Action 并将异常转换为安全的工具结果。"""
+async def _execute_action(
+    tool_name: str, arguments: Mapping[str, object], action: Callable[[], Any]
+) -> str:
+    """执行固定 Tool，并记录原始业务入参与远端结果。"""
 
     try:
-        return _serialize_result(await action())
+        result = await action()
+        serialized = _serialize_result(result)
+        _log_tool_call(tool_name, arguments, result)
+        return serialized
     except asyncio.CancelledError:
         raise
     except (ActionError, TypeError, ValueError) as error:
-        return _tool_error(_action_classification(error))
+        serialized = _tool_error(_action_classification(error))
+        _log_tool_call(tool_name, arguments, serialized)
+        return serialized
     except Exception:  # noqa: BLE001 - 工具边界不回显底层异常
-        return _tool_error("malformed")
+        serialized = _tool_error("malformed")
+        _log_tool_call(tool_name, arguments, serialized)
+        return serialized
 
 
 def _serialize_result(result: object) -> str:
-    """把 sender 结果转换为有限且不包含异常正文的 JSON。"""
+    """把成功的 Milky envelope 原样转换为 JSON。"""
 
     if isinstance(result, MilkyEnvelope):
-        data: object = result.data if result.data is not None else {}
-        return json.dumps(
-            {"ok": True, "data": _json_value(data)},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-    if isinstance(result, GroupEntity):
-        data = {"group": result}
-        return json.dumps(
-            {"ok": True, "data": _json_value(data)},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-    if isinstance(result, GroupMemberList):
-        data = {"members": result.members}
-        return json.dumps(
-            {"ok": True, "data": _json_value(data)},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-    if isinstance(result, GroupMemberInfo):
-        data = {"member": result.member}
-        return json.dumps(
-            {"ok": True, "data": _json_value(data)},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
+        payload: dict[str, object] = {
+            "status": result.status,
+            "retcode": result.retcode,
+            "data": _json_value(result.data) if result.data is not None else None,
+        }
+        if result.message is not None:
+            payload["message"] = result.message
+        if result.wording is not None:
+            payload["wording"] = result.wording
+        payload.update(_json_value(result.extras))
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     success = bool(getattr(result, "success", False))
     payload: dict[str, Any] = {"ok": success}
     if success:
@@ -586,6 +606,20 @@ def _serialize_result(result: object) -> str:
         payload["classification"] = getattr(result, "error_kind", None) or "malformed"
         payload["error"] = "Milky tool operation failed"
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _log_tool_call(tool_name: str, arguments: Mapping[str, object], result: object) -> None:
+    """记录已注册 Tool 的原始业务入参和结果，不记录 HTTP 认证上下文。"""
+
+    log_event(
+        logger,
+        "milky_tool_call",
+        logging.INFO,
+        stage="action",
+        tool=tool_name,
+        tool_args=arguments,
+        tool_result=result,
+    )
 
 
 def _json_value(value: object) -> object:

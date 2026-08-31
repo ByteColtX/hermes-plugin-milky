@@ -35,7 +35,7 @@ trigger 阶段 MAY 查询 `media_resource_references` 的临时 URL、forward �
 - **THEN** 系统 SHALL 不调用 `get_private_file_download_url`
 - **AND** SHALL 记录 `unsupported` 或 `malformed` 诊断并生成 `[文件不可用]` 占位
 
-#### Scenario: file 没有确认的 URL-to-bytes seam
+#### Scenario: file 没有确认的 Hermes 入口
 
 - **WHEN** trigger 已通过对应 Milky file Action 获得远端引用，但当前 Hermes 组合没有确认的资源入口
 - **THEN** 系统 SHALL 保留 `file_id`、文件名和 `[文件不可用]` 占位，并记录 `unsupported`

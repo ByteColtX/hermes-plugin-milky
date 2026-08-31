@@ -30,6 +30,7 @@ EVENT_NAMES = frozenset(
         "milky_adapter_fatal_error_report_failed",
         "milky_action_succeeded",
         "milky_action_failed",
+        "milky_tool_call",
         "milky_event_stream_disconnected",
         "milky_event_stream_reconnect_scheduled",
         "milky_event_stream_reconnect_attempt",
@@ -75,6 +76,9 @@ ALLOWED_FIELDS = frozenset(
         "event_name",
         "scene",
         "action",
+        "tool",
+        "tool_args",
+        "tool_result",
         "reason",
         "classification",
         "transport_phase",
@@ -230,6 +234,7 @@ _EVENT_LABELS = {
     "milky_adapter_fatal_error_report_failed": "Fatal error report failed",
     "milky_action_succeeded": "Action succeeded",
     "milky_action_failed": "Action failed",
+    "milky_tool_call": "Tool call",
     "milky_event_stream_disconnected": "Event stream disconnected",
     "milky_event_stream_reconnect_scheduled": "Event stream reconnect scheduled",
     "milky_event_stream_reconnect_attempt": "Event stream reconnect attempt",
@@ -288,27 +293,25 @@ _SENSITIVE_MARKERS = (
 
 
 def mask_identifier(value: object) -> str:
-    """保留数字标识前后三位并隐藏中间部分。"""
+    """兼容旧名称，校验数字标识后原样返回。"""
 
     text = _decimal_identifier(value)
-    if len(text) <= 6:
-        return f"{text[:1]}{'*' * max(1, len(text) - 2)}{text[-1:]}"
-    return f"{text[:3]}{'*' * (len(text) - 6)}{text[-3:]}"
+    return text
 
 
 def mask_chat_key(value: object) -> str:
-    """校验 namespaced chat key 并只返回其脱敏形式。"""
+    """兼容旧名称，校验 namespaced chat key 后原样返回。"""
 
     if not isinstance(value, str):
         raise TypeError("chat_key must be text")
     match = _CHAT_KEY_PATTERN.fullmatch(value)
     if match is None:
         raise ValueError("chat_key is invalid")
-    return f"{match.group(1)}:{mask_identifier(match.group(2))}"
+    return value
 
 
 def mask_opaque_identifier(value: object) -> str:
-    """截断不透明远端标识，禁止其携带 URL、路径或正文。"""
+    """兼容旧名称，校验不透明标识后原样返回。"""
 
     if (
         not isinstance(value, str)
@@ -316,9 +319,7 @@ def mask_opaque_identifier(value: object) -> str:
         or _OPAQUE_IDENTIFIER_PATTERN.fullmatch(value) is None
     ):
         raise ValueError("opaque identifier is invalid")
-    if len(value) <= 6:
-        return f"{value[:1]}{'*' * max(1, len(value) - 2)}{value[-1:]}"
-    return f"{value[:3]}{'*' * (len(value) - 6)}{value[-3:]}"
+    return value
 
 
 def safe_classification(value: object) -> str:
@@ -338,7 +339,7 @@ def safe_reason(value: object) -> str:
 
 
 def sanitize_fields(fields: Mapping[str, object]) -> dict[str, object]:
-    """验证并脱敏结构化日志字段。"""
+    """验证结构化日志字段并保留允许的业务值。"""
 
     if not isinstance(fields, Mapping):
         raise TypeError("log fields must be a mapping")
@@ -371,7 +372,9 @@ def log_event(
     safe_fields = sanitize_fields(fields)
     safe_fields["event_name"] = event_name
     label = _EVENT_LABELS[event_name]
-    rendered_fields = " ".join(f"{key}={value}" for key, value in safe_fields.items())
+    rendered_fields = " ".join(
+        _render_human_field(key, value) for key, value in safe_fields.items()
+    )
     rendered = f"[Milky] {label}"
     if rendered_fields:
         rendered = f"{rendered} {rendered_fields}"
@@ -404,22 +407,44 @@ def _sanitize_field(name: str, value: object) -> object:
             raise ValueError("event_name is not supported")
         return value
     if name == "chat_key":
-        return mask_chat_key(value)
+        if not isinstance(value, str) or _CHAT_KEY_PATTERN.fullmatch(value) is None:
+            raise ValueError("chat_key is invalid")
+        return value
     if name in {"uid", "self_id", "sender_id", "peer_id", "group_id", "user_id"}:
         if value is None:
             return None
-        return mask_identifier(value)
+        _decimal_identifier(value)
+        return value
     if name in {"message_id", "reference_id", "file_id"}:
         if value is None:
             return None
         if isinstance(value, int) or (
             isinstance(value, str) and _IDENTIFIER_PATTERN.fullmatch(value)
         ):
-            return mask_identifier(value)
-        return mask_opaque_identifier(value)
+            _decimal_identifier(value)
+            return value
+        if (
+            not isinstance(value, str)
+            or not value
+            or _OPAQUE_IDENTIFIER_PATTERN.fullmatch(value) is None
+        ):
+            raise ValueError("opaque identifier is invalid")
+        return value
     if name == "action":
         if not isinstance(value, str) or _ACTION_PATTERN.fullmatch(value) is None:
             raise ValueError("action is not safe")
+        return value
+    if name == "tool":
+        if not isinstance(value, str) or _ACTION_PATTERN.fullmatch(value) is None:
+            raise ValueError("tool is not safe")
+        return value
+    if name == "tool_args":
+        if not isinstance(value, Mapping):
+            raise ValueError("tool_args must be an object")
+        return value
+    if name == "tool_result":
+        if value is None:
+            raise ValueError("tool_result is required")
         return value
     if name == "stage":
         return _safe_choice(value, SAFE_STAGES, "stage")
@@ -482,6 +507,14 @@ def _sanitize_field(name: str, value: object) -> object:
     raise ValueError("log field is not supported")
 
 
+def _render_human_field(name: str, value: object) -> str:
+    """渲染字段并避免宿主将 chat_key 误判为 secret assignment。"""
+
+    if name == "chat_key":
+        return f"chat_key[{value}]"
+    return f"{name}={value}"
+
+
 def _decimal_identifier(value: object) -> str:
     if isinstance(value, bool):
         raise TypeError("identifier is invalid")
@@ -513,17 +546,12 @@ def _non_negative_number(value: object, name: str) -> float | int:
 
 
 def _safe_nickname(value: object) -> str:
-    """返回适合单 token 日志字段的昵称或固定占位。"""
+    """验证昵称可安全放入日志，但不改写业务值。"""
 
     if not isinstance(value, str) or not value:
         return "<unknown>"
-    if len(value) > 64 or any(not char.isprintable() or char.isspace() for char in value):
-        return "<redacted>"
-    lowered = value.lower()
-    if _RAW_IDENTIFIER_PATTERN.search(value) or any(
-        marker in lowered for marker in _SENSITIVE_MARKERS
-    ):
-        return "<redacted>"
+    if any(not char.isprintable() for char in value):
+        raise ValueError("nickname is not safe")
     return value
 
 

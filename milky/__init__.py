@@ -1,11 +1,10 @@
 """Milky v1.3 协议边界。"""
 
 from .client import (
-    MAX_LOCAL_MEDIA_BYTES,
     ActionError,
     MilkyClient,
     SendResult,
-    materialize_media_uri,
+    validate_media_uri,
 )
 from .event_stream import SseEventStream
 from .resources import (
@@ -20,7 +19,6 @@ from .resources import (
 )
 
 __all__ = [
-    "MAX_LOCAL_MEDIA_BYTES",
     "ActionError",
     "HermesAttachmentMaterialization",
     "MilkyClient",
@@ -33,5 +31,5 @@ __all__ = [
     "ResourceResolver",
     "SendResult",
     "SseEventStream",
-    "materialize_media_uri",
+    "validate_media_uri",
 ]

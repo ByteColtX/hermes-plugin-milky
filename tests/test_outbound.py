@@ -107,6 +107,43 @@ class FakeOutboundClient:
             raise self.error
         return MilkyEnvelope("ok", 0, {"file_id": "uploaded-private-file"})
 
+    async def call(self, action: str, params: dict[str, Any]) -> MilkyEnvelope:
+        """返回保留扩展字段的 raw Tool envelope。"""
+
+        self.calls.append((action, dict(params)))
+        if self.error is not None:
+            raise self.error
+        if action == "get_group_info":
+            data = {
+                "group": {"group_id": params["group_id"], "group_name": "合成群"},
+                "data_extension": "fixture-data-extension",
+            }
+        elif action == "get_group_member_list":
+            data = {
+                "members": [
+                    {"user_id": 900000001, "group_id": params["group_id"], "nickname": "合成成员"}
+                ],
+                "data_extension": "fixture-data-extension",
+            }
+        elif action == "get_group_member_info":
+            data = {
+                "member": {
+                    "user_id": params["user_id"],
+                    "group_id": params["group_id"],
+                    "nickname": "合成成员",
+                },
+                "data_extension": "fixture-data-extension",
+            }
+        else:
+            data = {"data_extension": "fixture-data-extension"}
+        return MilkyEnvelope(
+            "ok",
+            0,
+            data,
+            message="fixture-result-message",
+            extras={"envelope_extension": "fixture-envelope-extension"},
+        )
+
     async def send_profile_like(self, user_id: int, count: object = None) -> MilkyEnvelope:
         params: dict[str, Any] = {"user_id": user_id}
         if count is not None:
@@ -475,12 +512,16 @@ def test_sender_keeps_action_error_category_and_refreshes_only_group_failure() -
 def test_sender_uploads_file_separately_and_never_builds_file_message_segment(tmp_path) -> None:
     """document/file 出站必须使用独立 upload Action。"""
 
-    file_path = tmp_path / "fixture.txt"
-    file_path.write_text("fixture", encoding="utf-8")
     client = FakeOutboundClient()
     sender = MilkyOutboundSender(client)
 
-    result = asyncio.run(sender.send_document("group:700000001", str(file_path)))
+    result = asyncio.run(
+        sender.send_document(
+            "group:700000001",
+            "https://media.example.invalid/fixture.txt",
+            file_name="fixture.txt",
+        )
+    )
 
     assert result.success is True
     assert result.message_id == "uploaded-group-file"
@@ -489,18 +530,22 @@ def test_sender_uploads_file_separately_and_never_builds_file_message_segment(tm
     assert client.upload_calls[0][1]["file_name"] == "fixture.txt"
 
 
-def test_group_file_upload_failure_keeps_category_and_notifies_tracker(tmp_path) -> None:
+def test_group_file_upload_failure_keeps_category_and_notifies_tracker() -> None:
     """文件上传失败应保留错误分类，并只通知对应群刷新。"""
 
-    file_path = tmp_path / "fixture.txt"
-    file_path.write_text("fixture", encoding="utf-8")
     tracker = FakeMuteTracker()
     client = FakeOutboundClient(
         error=ActionError("rejected", "upload_group_file", "permission denied")
     )
     sender = MilkyOutboundSender(client, mute_tracker=tracker)
 
-    result = asyncio.run(sender.send_document("group:700000001", file_path))
+    result = asyncio.run(
+        sender.send_document(
+            "group:700000001",
+            "https://media.example.invalid/fixture.txt",
+            file_name="fixture.txt",
+        )
+    )
 
     assert result.success is False
     assert result.error_kind == "rejected"
@@ -518,7 +563,7 @@ def test_local_file_upload_rejects_missing_path_before_action(tmp_path) -> None:
     result = asyncio.run(sender.send_document("group:700000001", tmp_path / "missing.txt"))
 
     assert result.success is False
-    assert result.error_kind == "invalid_input"
+    assert result.error_kind == "unsupported"
     assert client.upload_calls == []
 
 
@@ -529,7 +574,7 @@ def test_sender_does_not_retry_recall_or_unknown_transport() -> None:
     sender = MilkyOutboundSender(client)
 
     recall_result = asyncio.run(sender.recall_group_message("group:700000001", "123"))
-    assert recall_result.success is True
+    assert recall_result.status == "ok"
     assert client.calls == [("recall_group_message", {"group_id": 700000001, "message_seq": 123})]
 
     client.error = ActionError("transport_unknown", "send_group_message", "unknown")
@@ -642,7 +687,7 @@ def test_tools_call_confirmed_actions_after_local_validation() -> None:
         unbind_sender()
 
     assert all(
-        item["ok"] is True
+        item["status"] == "ok"
         for item in (
             profile,
             friend_nudge,
@@ -655,7 +700,16 @@ def test_tools_call_confirmed_actions_after_local_validation() -> None:
             whole_mute,
         )
     )
-    assert group_info["data"]["group"]["group_id"] == 700000001
+    assert group_info == {
+        "status": "ok",
+        "retcode": 0,
+        "data": {
+            "group": {"group_id": 700000001, "group_name": "合成群"},
+            "data_extension": "fixture-data-extension",
+        },
+        "message": "fixture-result-message",
+        "envelope_extension": "fixture-envelope-extension",
+    }
     assert len(member_list["data"]["members"]) == 1
     assert member_info["data"]["member"]["user_id"] == 900000001
     assert [call[0] for call in client.calls] == [
@@ -686,8 +740,64 @@ def test_profile_like_tool_omits_optional_count_when_not_provided() -> None:
     finally:
         unbind_sender()
 
-    assert result["ok"] is True
+    assert result["status"] == "ok"
     assert client.calls == [("send_profile_like", {"user_id": 800000001})]
+
+
+def test_tool_logs_arguments_and_returns_complete_raw_envelope(caplog) -> None:
+    """已注册 Tool 应记录原始入参/结果并原样保留未知 envelope 字段。"""
+
+    context = ToolContext()
+    register_tools(context)
+    handler = next(
+        item["handler"] for item in context.registered if item["name"] == "get_group_info"
+    )
+    client = FakeOutboundClient()
+    bind_sender(MilkyOutboundSender(client))
+    try:
+        with caplog.at_level("INFO", logger="outbound.tools"):
+            result = json.loads(asyncio.run(handler({"group_id": 700000001})))
+    finally:
+        unbind_sender()
+
+    assert result["status"] == "ok"
+    assert result["retcode"] == 0
+    assert result["data"]["data_extension"] == "fixture-data-extension"
+    assert result["envelope_extension"] == "fixture-envelope-extension"
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "outbound.tools" and record.event_name == "milky_tool_call"
+    ]
+    assert len(records) == 1
+    assert records[0].tool == "get_group_info"
+    assert records[0].tool_args == {"group_id": 700000001}
+    assert records[0].tool_result.extras["envelope_extension"] == "fixture-envelope-extension"
+
+
+def test_tool_parameter_error_does_not_call_action_or_log_remote_result(caplog) -> None:
+    """参数错误沿用固定分类，不执行 Action 或伪造成功结果。"""
+
+    context = ToolContext()
+    register_tools(context)
+    handler = next(
+        item["handler"] for item in context.registered if item["name"] == "get_group_info"
+    )
+    client = FakeOutboundClient()
+    bind_sender(MilkyOutboundSender(client))
+    try:
+        with caplog.at_level("INFO", logger="outbound.tools"):
+            result = json.loads(asyncio.run(handler({"group_id": "700000001"})))
+    finally:
+        unbind_sender()
+
+    assert result == {
+        "ok": False,
+        "classification": "invalid_input",
+        "error": "tool input is invalid",
+    }
+    assert client.calls == []
+    assert not [record for record in caplog.records if record.name == "outbound.tools"]
 
 
 def test_outbound_fixture_directory_contains_sanitized_action_envelopes() -> None:

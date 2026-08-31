@@ -22,7 +22,7 @@
 - **THEN** 系统 SHALL 调用 `upload_private_file`
 - **AND** SHALL 返回远端确认的 `file_id`，不把文件内容作为普通文本发送
 
-#### Scenario: 本地文件使用 base64 兼容方案
+#### Scenario: 本地文件没有 Hermes 出站入口
 
 - **WHEN** 文件输入是当前主机上的本地文件或 `file://` 路径，但没有 Hermes core 提供的已确认出站资源入口
 - **THEN** 系统 SHALL 返回 `unsupported` 或本地资源错误，不在插件侧生成 `base64://`
@@ -49,6 +49,12 @@
 - **WHEN** Agent 输出一个已由 Hermes core materialize 的本地图片、语音或视频附件
 - **THEN** Milky adapter SHALL 将 Hermes 提供的可上传资源交给对应 native media 能力
 - **AND** SHALL 不在插件侧读取路径、编码 bytes 或创建 `base64://` fallback
+
+#### Scenario: 本地附件没有确认的出站入口
+
+- **WHEN** Agent 输出的附件只有当前主机本地路径，且 Hermes 没有提供可供 adapter 使用的资源 URI
+- **THEN** Milky adapter SHALL 返回 `unsupported`
+- **AND** SHALL 不读取路径、不访问 Milky 网络、不生成 `base64://` fallback
 
 #### Scenario: 远端媒体 URI
 
