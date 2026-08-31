@@ -372,30 +372,11 @@ class MilkyAdapter(BasePlatformAdapter):
     ) -> object:
         """将 Hermes 提供的图片路径交给统一 sender。"""
 
+        del kwargs
         return await self._delegate_outbound(
-            "send_image_file",
+            "send_image",
             chat_id,
             image_path,
-            caption=caption,
-            reply_to=reply_to,
-            metadata=metadata,
-            **kwargs,
-        )
-
-    async def send_animation(
-        self,
-        chat_id: str,
-        animation_url: str,
-        caption: str | None = None,
-        reply_to: str | None = None,
-        metadata: object = None,
-    ) -> object:
-        """将动画交给统一 Milky segment sender。"""
-
-        return await self._delegate_outbound(
-            "send_animation",
-            chat_id,
-            animation_url,
             caption=caption,
             reply_to=reply_to,
             metadata=metadata,
@@ -465,11 +446,6 @@ class MilkyAdapter(BasePlatformAdapter):
             metadata=metadata,
             **kwargs,
         )
-
-    async def send_file(self, *args: object, **kwargs: object) -> object:
-        """兼容 Hermes 的旧式文件发送名称。"""
-
-        return await self._delegate_outbound("send_file", *args, **kwargs)
 
     async def _send_with_retry(
         self,

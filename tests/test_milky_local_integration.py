@@ -429,7 +429,7 @@ def test_local_http_media_actions_receive_native_segments_and_base64_upload(
 
         async def scenario() -> None:
             results = await asyncio.gather(
-                sender.send_image_file("group:700000001", image_path, caption="图片"),
+                sender.send_image("group:700000001", image_path, caption="图片"),
                 sender.send_voice("dm:800000001", audio_path, caption="语音"),
                 sender.send_video("group:700000001", video_path, caption="视频"),
                 sender.send_document("dm:800000001", document_path),

@@ -170,36 +170,6 @@ class MilkyOutboundSender:
             return _failure(error.classification, _safe_reason(error))
         return await self._send_media(chat_id, media, caption=caption, reply_to=reply_to)
 
-    async def send_image_file(
-        self,
-        chat_id: str,
-        image_path: object,
-        caption: str | None = None,
-        reply_to: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> OutboundSendResult:
-        """把本地图片路径转换为 Milky file URI 后发送。"""
-
-        del kwargs
-        return await self.send_image(
-            chat_id, image_path, caption=caption, reply_to=reply_to, metadata=metadata
-        )
-
-    async def send_animation(
-        self,
-        chat_id: str,
-        animation_url: object,
-        caption: str | None = None,
-        reply_to: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-    ) -> OutboundSendResult:
-        """按 Milky image segment 发送动画 URI。"""
-
-        return await self.send_image(
-            chat_id, animation_url, caption=caption, reply_to=reply_to, metadata=metadata
-        )
-
     async def send_voice(
         self,
         chat_id: str,
@@ -285,11 +255,6 @@ class MilkyOutboundSender:
             self._schedule_group_failure(target if "target" in locals() else None)
             _log_upload_result(target if "target" in locals() else None, result)
             return result
-
-    async def send_file(self, *args: Any, **kwargs: Any) -> OutboundSendResult:
-        """提供 Hermes 旧式文件发送名称的兼容委托。"""
-
-        return await self.send_document(*args, **kwargs)
 
     async def get_group_info(
         self, group_id: object, *, no_cache: bool | None = False

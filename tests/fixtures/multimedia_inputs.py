@@ -19,6 +19,22 @@ SYNTHETIC_FILE_NAMES = {
     "document": "fixture-report.txt",
 }
 
+# 记录本次接口收缩后的所有权，避免把 Hermes 继承入口和插件实现混为一谈。
+MEDIA_ENTRY_OWNERSHIP = {
+    "adapter_native": (
+        "send",
+        "send_image",
+        "send_image_file",
+        "send_voice",
+        "send_video",
+        "send_document",
+    ),
+    "adapter_inherited": ("send_animation", "send_multiple_images"),
+    "sender_native": ("send", "send_image", "send_voice", "send_video", "send_document"),
+    "sender_removed": ("send_animation", "send_image_file", "send_file"),
+    "adapter_removed": ("send_animation", "send_file"),
+}
+
 SENSITIVE_MEDIA_MARKERS = (
     "Authorization",
     "Bearer ",

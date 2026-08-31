@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import importlib.util
+import inspect
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,7 +21,7 @@ from adapter import MilkyAdapter
 from milky.client import ActionError, SendResult, materialize_media_uri
 from milky.models import MilkyEnvelope
 from outbound.sender import MilkyOutboundSender
-from tests.fixtures.multimedia_inputs import SYNTHETIC_MEDIA_URIS
+from tests.fixtures.multimedia_inputs import MEDIA_ENTRY_OWNERSHIP, SYNTHETIC_MEDIA_URIS
 
 
 @dataclass
@@ -100,6 +103,116 @@ def test_multimedia_fixture_is_synthetic_and_covers_uri_boundaries() -> None:
     rendered = repr(SYNTHETIC_MEDIA_URIS)
     assert "Bearer " not in rendered
     assert "/Users/" not in rendered
+
+
+def test_media_entry_ownership_matrix_matches_adapter_refactor() -> None:
+    """入口矩阵应区分 adapter 兼容桥、Hermes 继承入口和 sender 正式入口。"""
+
+    adapter_methods = MilkyAdapter.__dict__
+    sender_methods = MilkyOutboundSender.__dict__
+
+    assert all(name in adapter_methods for name in MEDIA_ENTRY_OWNERSHIP["adapter_native"])
+    assert all(name in sender_methods for name in MEDIA_ENTRY_OWNERSHIP["sender_native"])
+    assert all(name not in adapter_methods for name in MEDIA_ENTRY_OWNERSHIP["adapter_removed"])
+    assert all(name not in sender_methods for name in MEDIA_ENTRY_OWNERSHIP["sender_removed"])
+    assert inspect.iscoroutinefunction(adapter_methods["send_image_file"])
+    assert "send_animation" not in sender_methods
+    assert "send_multiple_images" not in adapter_methods
+
+
+def _hermes_host_root() -> Path | None:
+    """从当前测试环境查找可选的 Hermes 源码根目录。"""
+
+    for entry in sys.path:
+        root = Path(entry or ".").resolve()
+        if (
+            root != Path(__file__).resolve().parents[1]
+            and (root / "gateway" / "platforms" / "base.py").is_file()
+        ):
+            return root
+    return None
+
+
+def test_actual_hermes_multiple_image_dispatch_uses_inherited_entries() -> None:
+    """Hermes 基类应负责 GIF/本地图片分流，插件只保留图片兼容桥。"""
+
+    host_root = _hermes_host_root()
+    if host_root is None:
+        pytest.skip("Hermes host unavailable in the current test environment")
+
+    original_path = list(sys.path)
+    original_tools = sys.modules.get("tools")
+    original_gateway_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "gateway" or name.startswith("gateway.")
+    }
+    module_name = "_milky_media_dispatch_host_test"
+    try:
+        sys.path[:] = [
+            str(host_root),
+            *(entry for entry in original_path if Path(entry or ".").resolve() != host_root),
+            str(Path(__file__).resolve().parents[1]),
+        ]
+        loaded_tools = sys.modules.get("tools")
+        tools_path = getattr(loaded_tools, "__file__", None)
+        if isinstance(tools_path, str) and Path(tools_path).resolve() == (
+            Path(__file__).resolve().parents[1] / "tools.py"
+        ):
+            sys.modules.pop("tools", None)
+        for name in tuple(sys.modules):
+            if name == "gateway" or name.startswith("gateway."):
+                sys.modules.pop(name, None)
+        host_base = pytest.importorskip("gateway.platforms.base")
+        spec = importlib.util.spec_from_file_location(
+            module_name, Path(__file__).resolve().parents[1] / "adapter.py"
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+
+        sender = RecordingMediaSender()
+        adapter = object.__new__(module.MilkyAdapter)
+        adapter._connected = True
+        adapter._closed = False
+        adapter._outbound = sender
+
+        async def scenario() -> None:
+            await adapter.send_multiple_images(
+                "dm:800000001",
+                [
+                    ("https://media.example.invalid/fixture.png", "普通"),
+                    ("https://media.example.invalid/fixture.gif", "动画"),
+                    ("file:///fixture/workspace/image.png", "本地"),
+                ],
+            )
+
+        asyncio.run(scenario())
+        assert [name for name, _ in sender.calls] == ["send_image", "send_image", "send_image"]
+        assert [call[1]["args"][1] for call in sender.calls] == [
+            "https://media.example.invalid/fixture.png",
+            "https://media.example.invalid/fixture.gif",
+            "/fixture/workspace/image.png",
+        ]
+        assert "send_multiple_images" not in module.MilkyAdapter.__dict__
+        assert "send_animation" not in module.MilkyAdapter.__dict__
+        assert module.MilkyAdapter.send_animation is host_base.BasePlatformAdapter.send_animation
+        assert (
+            module.MilkyAdapter.send_multiple_images
+            is host_base.BasePlatformAdapter.send_multiple_images
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+        if original_tools is not None:
+            sys.modules["tools"] = original_tools
+        else:
+            sys.modules.pop("tools", None)
+        for name in tuple(sys.modules):
+            if name == "gateway" or name.startswith("gateway."):
+                sys.modules.pop(name, None)
+        sys.modules.update(original_gateway_modules)
+        sys.path[:] = original_path
 
 
 @pytest.mark.parametrize(
@@ -200,7 +313,7 @@ def test_local_media_size_limit_accepts_exact_boundary(
 @pytest.mark.parametrize(
     ("method_name", "argument", "segment_type"),
     [
-        ("send_image_file", "image.png", "image"),
+        ("send_image", "image.png", "image"),
         ("send_voice", "audio.ogg", "record"),
         ("send_video", "video.mp4", "video"),
     ],
@@ -232,14 +345,14 @@ def test_sender_native_media_uses_base64_and_keeps_caption_order(
     assert str(media_path) not in str(body)
 
 
-def test_sender_routes_remote_media_to_dm_without_download() -> None:
-    """远端图片 URI 应保留并调用私聊 message Action。"""
+def test_sender_routes_remote_animation_to_dm_without_download() -> None:
+    """远端动画 URI 经统一图片入口保留并调用私聊 message Action。"""
 
     client = MultimediaClient()
     sender = MilkyOutboundSender(client)
     remote_uri = "https://media.example.invalid/fixture.gif"
 
-    result = asyncio.run(sender.send_animation("dm:800000001", remote_uri, caption="动画"))
+    result = asyncio.run(sender.send_image("dm:800000001", remote_uri, caption="动画"))
 
     assert result.success is True
     assert client.calls[0][0] == "send_private_message"
@@ -247,22 +360,6 @@ def test_sender_routes_remote_media_to_dm_without_download() -> None:
         "type": "image",
         "data": {"uri": remote_uri},
     }
-
-
-def test_sender_image_file_accepts_host_extension_kwargs(tmp_path: Path) -> None:
-    """图片文件 sender 应兼容 Hermes 宿主扩展参数。"""
-
-    media_path = tmp_path / "fixture-image.png"
-    media_path.write_bytes(b"synthetic-image")
-    client = MultimediaClient()
-    sender = MilkyOutboundSender(client)
-
-    result = asyncio.run(
-        sender.send_image_file("group:700000001", media_path, hermes_extension="fixture")
-    )
-
-    assert result.success is True
-    assert client.calls[0][1]["message"][0]["type"] == "image"
 
 
 @pytest.mark.parametrize("target", ["group:700000001", "dm:800000001"])
@@ -305,7 +402,7 @@ def test_sender_preserves_media_failure_and_does_not_send_fallback(tmp_path: Pat
     client = MultimediaClient(error=ActionError("rejected", "send_group_message", "denied"))
     sender = MilkyOutboundSender(client)
 
-    result = asyncio.run(sender.send_image_file("group:700000001", media_path))
+    result = asyncio.run(sender.send_image("group:700000001", media_path))
 
     assert result.success is False
     assert result.error_kind == "rejected"
@@ -342,12 +439,6 @@ class RecordingMediaSender:
     async def send_image(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
         return await self._record("send_image", *args, **kwargs)
 
-    async def send_image_file(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
-        return await self._record("send_image_file", *args, **kwargs)
-
-    async def send_animation(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
-        return await self._record("send_animation", *args, **kwargs)
-
     async def send_voice(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
         return await self._record("send_voice", *args, **kwargs)
 
@@ -356,9 +447,6 @@ class RecordingMediaSender:
 
     async def send_document(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
         return await self._record("send_document", *args, **kwargs)
-
-    async def send_file(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
-        return await self._record("send_file", *args, **kwargs)
 
 
 def test_adapter_media_methods_delegate_without_base_text_fallback() -> None:
@@ -375,7 +463,6 @@ def test_adapter_media_methods_delegate_without_base_text_fallback() -> None:
         await adapter.send_image_file(
             "dm:800000001", "/fixture/image.png", hermes_extension="fixture"
         )
-        await adapter.send_animation("dm:800000001", "https://media.example.invalid/a.gif")
         await adapter.send_voice("dm:800000001", "/fixture/audio.ogg")
         await adapter.send_video("dm:800000001", "/fixture/video.mp4")
         await adapter.send_document("dm:800000001", "/fixture/report.txt")
@@ -384,13 +471,11 @@ def test_adapter_media_methods_delegate_without_base_text_fallback() -> None:
 
     assert [name for name, _ in sender.calls] == [
         "send_image",
-        "send_image_file",
-        "send_animation",
+        "send_image",
         "send_voice",
         "send_video",
         "send_document",
     ]
-    assert sender.calls[1][1]["hermes_extension"] == "fixture"
 
 
 def test_adapter_media_gate_prevents_read_and_sender_call_after_disconnect(tmp_path: Path) -> None:
