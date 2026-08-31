@@ -20,11 +20,10 @@ _ROUTING_DEFAULTS = {
     "direct": "trigger",
     "mention": "trigger",
     "mentionAll": "wait",
-    "mentionHere": "wait",
     "quote": "wait",
-    "image": "wait",
     "poke": "wait",
-    "group": "wait",
+    "allMessage": "wait",
+    "keywords": [],
 }
 _WILLINGNESS_DEFAULTS = {
     "maxScore": 100,
@@ -228,8 +227,10 @@ def _parse_will_policy(value: object) -> dict[str, Any]:
     if "routing" in raw:
         routing = _mapping_value(raw["routing"], "MILKY_WILL_POLICY.routing")
         _reject_unknown_keys(routing, set(_ROUTING_DEFAULTS), "MILKY_WILL_POLICY.routing")
-        for key, decision in routing.items():
-            if decision not in {"wait", "trigger"}:
+        for key, routing_value in routing.items():
+            if key == "keywords":
+                _validate_routing_keywords(routing_value)
+            elif not isinstance(routing_value, str) or routing_value not in {"wait", "trigger"}:
                 raise ConfigError(f"MILKY_WILL_POLICY.routing.{key} has an unsupported value")
         policy["routing"].update(routing)
     if "willingness" in raw:
@@ -248,6 +249,17 @@ def _parse_will_policy(value: object) -> dict[str, Any]:
         policy["priority"] = _non_negative_number(raw["priority"], "MILKY_WILL_POLICY.priority")
     _validate_willingness(policy["willingness"])
     return policy
+
+
+def _validate_routing_keywords(value: object) -> None:
+    """校验 routing 的确定性关键词数组。"""
+
+    if not isinstance(value, list) or any(
+        not isinstance(keyword, str) or not keyword.strip() for keyword in value
+    ):
+        raise ConfigError(
+            "MILKY_WILL_POLICY.routing.keywords must be an array of non-empty strings"
+        )
 
 
 def _validate_willingness(values: Mapping[str, Any]) -> None:

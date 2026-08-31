@@ -1,0 +1,75 @@
+{
+  "routing_policy": {
+    "direct": "trigger",
+    "mention": "wait",
+    "mentionAll": "wait",
+    "quote": "wait",
+    "poke": "wait",
+    "allMessage": "wait",
+    "keywords": ["项目", "提醒"]
+  },
+  "empty_keywords_policy": {
+    "direct": "wait",
+    "mention": "wait",
+    "mentionAll": "wait",
+    "quote": "wait",
+    "poke": "wait",
+    "allMessage": "wait",
+    "keywords": []
+  },
+  "cases": [
+    {
+      "name": "friend direct",
+      "scene": "friend",
+      "mention_kinds": ["none"],
+      "has_reply": false,
+      "has_image": true,
+      "text": "普通私聊",
+      "expected": "trigger"
+    },
+    {
+      "name": "group self mention and quote",
+      "scene": "group",
+      "mention_kinds": ["self"],
+      "has_reply": true,
+      "has_image": false,
+      "text": "请看这条",
+      "expected": "wait"
+    },
+    {
+      "name": "group all mention",
+      "scene": "group",
+      "mention_kinds": ["all"],
+      "has_reply": false,
+      "has_image": false,
+      "text": "大家好",
+      "expected": "wait"
+    },
+    {
+      "name": "keyword match",
+      "scene": "group",
+      "mention_kinds": ["none"],
+      "has_reply": false,
+      "has_image": false,
+      "text": "请提醒我项目进度",
+      "expected": "trigger"
+    },
+    {
+      "name": "image without image route",
+      "scene": "group",
+      "mention_kinds": ["none"],
+      "has_reply": false,
+      "has_image": true,
+      "text": "图片",
+      "expected": "wait"
+    }
+  ],
+  "empty_keywords_case": {
+    "scene": "group",
+    "mention_kinds": ["none"],
+    "has_reply": false,
+    "has_image": false,
+    "text": "普通消息",
+    "expected": "wait"
+  }
+}
