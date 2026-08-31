@@ -16,10 +16,39 @@
       "action": "send_private_message",
       "body": {
         "user_id": 800000001,
-        "message": [
-          {"type": "record", "data": {"uri": "base64://fixture-audio"}},
-          {"type": "video", "data": {"uri": "base64://fixture-video"}}
-        ]
+        "message": [{"type": "image", "data": {"uri": "base64://fixture-image-dm"}}]
+      }
+    },
+    {
+      "method": "POST",
+      "action": "send_group_message",
+      "body": {
+        "group_id": 700000001,
+        "message": [{"type": "record", "data": {"uri": "base64://fixture-audio"}}]
+      }
+    },
+    {
+      "method": "POST",
+      "action": "send_private_message",
+      "body": {
+        "user_id": 800000001,
+        "message": [{"type": "record", "data": {"uri": "base64://fixture-audio-dm"}}]
+      }
+    },
+    {
+      "method": "POST",
+      "action": "send_group_message",
+      "body": {
+        "group_id": 700000001,
+        "message": [{"type": "video", "data": {"uri": "base64://fixture-video"}}]
+      }
+    },
+    {
+      "method": "POST",
+      "action": "send_private_message",
+      "body": {
+        "user_id": 800000001,
+        "message": [{"type": "video", "data": {"uri": "base64://fixture-video-dm"}}]
       }
     },
     {

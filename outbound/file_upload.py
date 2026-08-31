@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from typing import Protocol
-from urllib.parse import unquote, urlsplit
 
-from milky.client import ActionError, validate_media_uri
+from milky.client import ActionError
 from milky.models import MilkyEnvelope
+
+from .materialization import prepare_materialization
 
 _MISSING = object()
 
@@ -31,7 +32,7 @@ class FileUploadClient(Protocol):
 
 
 class FileUploader:
-    """只上传 Hermes 已 materialize 的显式 URI，不读取主机文件。"""
+    """将文档附件 materialize 后交给 Milky 独立文件上传 Action。"""
 
     def __init__(self, client: FileUploadClient) -> None:
         self._client = client
@@ -45,20 +46,27 @@ class FileUploader:
         *,
         parent_folder_id: object = _MISSING,
     ) -> MilkyEnvelope:
-        """按 friend/group scene 上传文件，并返回已校验的 envelope。"""
+        """按 friend/group scene 读取并上传一次文件。"""
 
+        if scene not in {"group", "dm"}:
+            raise ActionError("unsupported", "file_upload", "target scene is unsupported")
+        if scene == "dm" and parent_folder_id is not _MISSING:
+            raise ActionError(
+                "invalid_input", "upload_private_file", "parent_folder_id is unsupported"
+            )
+        attachment = await prepare_materialization(
+            file_path,
+            expected_kind="document",
+            action="upload_group_file" if scene == "group" else "upload_private_file",
+            file_name=file_name,
+        )
+        uri = attachment.uri
+        name = attachment.file_name
+        if name is None:  # pragma: no cover - document materialization always resolves a name
+            raise ActionError("invalid_input", "file_upload", "file name is invalid")
         if scene == "group":
-            uri = validate_media_uri(file_path, action="upload_group_file")
-            name = _file_name(file_name, uri)
             return await self._upload_group(peer_id, uri, name, parent_folder_id=parent_folder_id)
-        if scene == "dm":
-            if parent_folder_id is not _MISSING:
-                raise ActionError(
-                    "invalid_input", "upload_private_file", "parent_folder_id is unsupported"
-                )
-            uri = validate_media_uri(file_path, action="upload_private_file")
-            return await self._upload_private(peer_id, uri, _file_name(file_name, uri))
-        raise ActionError("unsupported", "file_upload", "target scene is unsupported")
+        return await self._upload_private(peer_id, uri, name)
 
     async def _upload_group(
         self,
@@ -80,28 +88,6 @@ class FileUploader:
         """执行私聊文件上传。"""
 
         return await self._client.upload_private_file(user_id, value, name)
-
-
-def _file_name(value: object, file_path: object) -> str:
-    """从显式文件名或远端 URI 确定上传名称。"""
-
-    if value is None:
-        if not isinstance(file_path, str):
-            name = ""
-        else:
-            parsed = urlsplit(file_path)
-            if parsed.scheme == "base64":
-                raise ActionError("invalid_input", "file_upload", "file name is required")
-            name = unquote(parsed.path.rsplit("/", 1)[-1])
-    elif isinstance(value, str):
-        if "/" in value or "\\" in value:
-            raise ActionError("invalid_input", "file_upload", "file name is invalid")
-        name = value
-    else:
-        name = ""
-    if not name or name in {".", ".."}:
-        raise ActionError("invalid_input", "file_upload", "file name is invalid")
-    return name
 
 
 __all__ = ["FileUploadClient", "FileUploader"]

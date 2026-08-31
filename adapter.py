@@ -14,6 +14,12 @@ from milky.client import MilkyClient
 from milky.event_stream import SseEventStream
 from milky.observability import log_event
 from milky.resources import HermesMediaHelpers, ResourceResolver
+from outbound.formatter import OutboundFormatError
+from outbound.materialization import (
+    MaterializationKind,
+    OutboundMaterialization,
+    prepare_materialization,
+)
 from outbound.sender import MilkyOutboundSender, OutboundSendResult, parse_outbound_target
 from session import ChatAdmissionCoordinator, TtlDeduplicator, WaitBuffer
 from state import MuteTracker
@@ -323,17 +329,25 @@ class MilkyAdapter(BasePlatformAdapter):
     async def send_image(
         self,
         chat_id: str,
-        image_url: str,
+        image_url: object,
         caption: str | None = None,
         reply_to: str | None = None,
         metadata: object = None,
     ) -> object:
         """将图片交给统一 Milky segment sender。"""
 
+        attachment, failure = await self._prepare_outbound_attachment(
+            chat_id,
+            image_url,
+            expected_kind="image",
+            action="send_image",
+        )
+        if failure is not None:
+            return failure
         return await self._delegate_outbound(
             "send_image",
             chat_id,
-            image_url,
+            attachment.uri,
             caption=caption,
             reply_to=reply_to,
             metadata=metadata,
@@ -342,7 +356,7 @@ class MilkyAdapter(BasePlatformAdapter):
     async def send_image_file(
         self,
         chat_id: str,
-        image_path: str,
+        image_path: object,
         caption: str | None = None,
         reply_to: str | None = None,
         metadata: object = None,
@@ -351,8 +365,7 @@ class MilkyAdapter(BasePlatformAdapter):
         """将 Hermes 提供的图片路径交给统一 sender。"""
 
         del kwargs
-        return await self._delegate_outbound(
-            "send_image",
+        return await self.send_image(
             chat_id,
             image_path,
             caption=caption,
@@ -363,7 +376,7 @@ class MilkyAdapter(BasePlatformAdapter):
     async def send_voice(
         self,
         chat_id: str,
-        audio_path: str,
+        audio_path: object,
         caption: str | None = None,
         reply_to: str | None = None,
         metadata: object = None,
@@ -371,10 +384,18 @@ class MilkyAdapter(BasePlatformAdapter):
     ) -> object:
         """将语音交给统一 Milky segment sender。"""
 
+        attachment, failure = await self._prepare_outbound_attachment(
+            chat_id,
+            audio_path,
+            expected_kind="audio",
+            action="send_voice",
+        )
+        if failure is not None:
+            return failure
         return await self._delegate_outbound(
             "send_voice",
             chat_id,
-            audio_path,
+            attachment.uri,
             caption=caption,
             reply_to=reply_to,
             metadata=metadata,
@@ -384,7 +405,7 @@ class MilkyAdapter(BasePlatformAdapter):
     async def send_video(
         self,
         chat_id: str,
-        video_path: str,
+        video_path: object,
         caption: str | None = None,
         reply_to: str | None = None,
         metadata: object = None,
@@ -392,10 +413,18 @@ class MilkyAdapter(BasePlatformAdapter):
     ) -> object:
         """将视频交给统一 Milky segment sender。"""
 
+        attachment, failure = await self._prepare_outbound_attachment(
+            chat_id,
+            video_path,
+            expected_kind="video",
+            action="send_video",
+        )
+        if failure is not None:
+            return failure
         return await self._delegate_outbound(
             "send_video",
             chat_id,
-            video_path,
+            attachment.uri,
             caption=caption,
             reply_to=reply_to,
             metadata=metadata,
@@ -414,12 +443,22 @@ class MilkyAdapter(BasePlatformAdapter):
     ) -> object:
         """将文件交给独立 Milky upload Action。"""
 
+        attachment, failure = await self._prepare_outbound_attachment(
+            chat_id,
+            file_path,
+            expected_kind="document",
+            action="send_document",
+            file_name=file_name,
+        )
+        if failure is not None:
+            return failure
+        effective_file_name = file_name if file_name is not None else attachment.file_name
         return await self._delegate_outbound(
             "send_document",
             chat_id,
-            file_path,
+            attachment.uri,
             caption=caption,
-            file_name=file_name,
+            file_name=effective_file_name,
             reply_to=reply_to,
             metadata=metadata,
             **kwargs,
@@ -459,6 +498,50 @@ class MilkyAdapter(BasePlatformAdapter):
         if inspect.isawaitable(result):
             return await result
         return result
+
+    async def _prepare_outbound_attachment(
+        self,
+        chat_id: str,
+        value: object,
+        *,
+        expected_kind: MaterializationKind,
+        action: str,
+        file_name: object = None,
+    ) -> tuple[OutboundMaterialization | None, OutboundSendResult | None]:
+        """在 adapter 边界 materialize 本地资源，并隐藏所有错误正文。"""
+
+        if not self._connected or self._closed:
+            return None, _materialization_failure("unsupported", action=action)
+        if file_name is not None and not isinstance(file_name, str):
+            return None, _materialization_failure("invalid_input", action=action)
+        try:
+            parse_outbound_target(chat_id)
+        except OutboundFormatError as error:
+            return None, _materialization_failure(error.classification, action=action)
+        try:
+            attachment = await prepare_materialization(
+                value,
+                expected_kind=expected_kind,
+                action=action,
+                file_name=file_name if isinstance(file_name, str) else None,
+            )
+        except Exception as error:  # noqa: BLE001 - adapter 边界不得泄漏错误正文
+            classification = getattr(error, "classification", None)
+            if classification not in {
+                "invalid_input",
+                "unsupported",
+                "rejected",
+                "transport_unknown",
+                "malformed",
+                "http_error",
+            }:
+                classification = (
+                    "transport_unknown"
+                    if isinstance(error, (OSError, TimeoutError))
+                    else "unsupported"
+                )
+            return None, _materialization_failure(classification, action=action)
+        return attachment, None
 
     async def get_chat_info(self, chat_id: str) -> dict[str, str]:
         """只根据 namespaced chat key 返回本地可确认的最小信息。"""
@@ -644,6 +727,56 @@ def _error_classification(error: BaseException) -> str:
     }:
         return classification
     return "state_sync_failed"
+
+
+def _materialization_failure(
+    classification: str, *, action: str | None = None
+) -> OutboundSendResult:
+    """创建不包含附件引用或底层异常正文的安全失败结果。"""
+
+    safe_classification = (
+        classification
+        if classification
+        in {
+            "invalid_input",
+            "unsupported",
+            "rejected",
+            "transport_unknown",
+            "malformed",
+            "http_error",
+        }
+        else "unsupported"
+    )
+    reason = {
+        "invalid_input": "input is invalid",
+        "unsupported": "operation is unsupported",
+        "rejected": "operation was rejected",
+        "transport_unknown": "request outcome is unknown",
+        "malformed": "response or result is malformed",
+        "http_error": "HTTP request failed",
+    }[safe_classification]
+    result = OutboundSendResult(
+        success=False,
+        error=f"{safe_classification}: {reason}",
+        error_kind=safe_classification,
+    )
+    if action is not None:
+        log_event(
+            logger,
+            "milky_outbound_materialization_failed",
+            logging.WARNING,
+            stage="outbound",
+            action=action,
+            classification=safe_classification,
+            reason=(
+                "invalid_input"
+                if safe_classification == "invalid_input"
+                else "operation_unsupported"
+                if safe_classification == "unsupported"
+                else "send_failed"
+            ),
+        )
+    return result
 
 
 __all__ = ["MilkyAdapter"]

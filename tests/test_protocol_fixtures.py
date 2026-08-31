@@ -112,21 +112,30 @@ def test_outbound_media_request_fixture_keeps_native_and_upload_boundaries() -> 
         "malformed",
         "transport_unknown",
     ]
-    assert [item["method"] for item in requests] == ["POST"] * 4
+    assert [item["method"] for item in requests] == ["POST"] * 8
     assert [item["action"] for item in requests] == [
+        "send_group_message",
+        "send_private_message",
+        "send_group_message",
+        "send_private_message",
         "send_group_message",
         "send_private_message",
         "upload_group_file",
         "upload_private_file",
     ]
-    assert requests[0]["body"]["message"][1]["type"] == "image"
-    assert requests[1]["body"]["message"][0]["type"] == "record"
-    assert requests[1]["body"]["message"][1]["type"] == "video"
+    assert [item["body"]["message"][0]["type"] for item in requests[:6]] == [
+        "text",
+        "image",
+        "record",
+        "record",
+        "video",
+        "video",
+    ]
     assert all(
         all(segment["type"] != "file" for segment in item["body"].get("message", []))
-        for item in requests[:2]
+        for item in requests[:6]
     )
-    assert all(item["body"]["file_uri"].startswith("base64://") for item in requests[2:])
+    assert all(item["body"]["file_uri"].startswith("base64://") for item in requests[6:])
 
 
 def test_message_fixture_covers_friend_group_temp_and_all_known_segments() -> None:

@@ -8,14 +8,18 @@ Gate、Will 或 Hermes 业务。默认 transport 延迟使用 Hermes 提供的 H
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import os
 import re
+import stat
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol, Self
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from config import MilkyConfig
 
@@ -35,6 +39,7 @@ _NON_NEGATIVE_INTEGER_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
 _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
 _MAX_SAFE_INTEGER = 9007199254740991
+MAX_LOCAL_MEDIA_BYTES = 8 * 1024 * 1024
 _TRANSPORT_PHASES = frozenset({"connect", "write", "read", "pool", "unknown"})
 _TOOL_ACTIONS = frozenset(
     {
@@ -193,8 +198,14 @@ class ActionError(Exception):
 MilkyActionError = ActionError
 
 
+async def materialize_media_uri(value: object, *, action: str = "media") -> str:
+    """将远端、内联或受限本地资源转换为 Milky URI。"""
+
+    return await asyncio.to_thread(_materialize_media_uri, value, action)
+
+
 def validate_media_uri(value: object, *, action: str = "media") -> str:
-    """只接受 Hermes 已 materialize 的远端或显式内联资源 URI。
+    """只接受远端或显式内联资源 URI。
 
     本函数不读取本地文件、不下载远端内容，也不生成新的 ``base64://`` URI。
     """
@@ -217,6 +228,58 @@ def validate_media_uri(value: object, *, action: str = "media") -> str:
             return raw
         raise ActionError("invalid_input", action, "media URI is invalid")
     raise ActionError("unsupported", action, "Hermes resource entry is unavailable")
+
+
+def _materialize_media_uri(value: object, action: str) -> str:
+    """在工作线程中执行 URI 校验或一次性本地文件读取。"""
+
+    if isinstance(value, Path):
+        raw = str(value).strip()
+    elif isinstance(value, str):
+        raw = value.strip()
+    else:
+        raise ActionError("invalid_input", action, "media URI is invalid")
+    if not raw:
+        raise ActionError("invalid_input", action, "media URI is invalid")
+
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        raise ActionError("invalid_input", action, "media URI is invalid") from None
+    if parsed.scheme in {"http", "https", "base64"}:
+        return validate_media_uri(raw, action=action)
+    if parsed.scheme == "file":
+        if parsed.netloc.casefold() not in {"", "localhost"} or not parsed.path:
+            raise ActionError("invalid_input", action, "media URI is invalid")
+        raw = unquote(parsed.path)
+    elif parsed.scheme:
+        raise ActionError("unsupported", action, "media URI scheme is unsupported")
+
+    return _local_file_as_base64_uri(raw, action)
+
+
+def _local_file_as_base64_uri(file_path: object, action: str) -> str:
+    """将一个安全的本地常规文件编码为受限 Base64 URI。"""
+
+    try:
+        path = Path(file_path).expanduser()
+        resolved = path.resolve(strict=True)
+        with resolved.open("rb") as stream:
+            file_stat = os.fstat(stream.fileno())
+            if not stat.S_ISREG(file_stat.st_mode):
+                raise ActionError("invalid_input", action, "file path is unavailable")
+            if file_stat.st_size > MAX_LOCAL_MEDIA_BYTES:
+                raise ActionError("invalid_input", action, "media file is too large")
+            data = stream.read(MAX_LOCAL_MEDIA_BYTES + 1)
+    except ActionError:
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError):
+        raise ActionError("invalid_input", action, "file path is unavailable") from None
+    if len(data) > MAX_LOCAL_MEDIA_BYTES:
+        raise ActionError("invalid_input", action, "media file is too large")
+    if not data:
+        raise ActionError("invalid_input", action, "media file is empty")
+    return "base64://" + base64.b64encode(data).decode("ascii")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1032,6 +1095,7 @@ def _response_body_bytes(body: object, action: str) -> bytes:
 
 
 __all__ = [
+    "MAX_LOCAL_MEDIA_BYTES",
     "ActionError",
     "HttpTransport",
     "HttpxTransport",
@@ -1040,5 +1104,6 @@ __all__ = [
     "MilkyClient",
     "SendResult",
     "TransportResponse",
+    "materialize_media_uri",
     "validate_media_uri",
 ]

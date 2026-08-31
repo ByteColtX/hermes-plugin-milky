@@ -90,9 +90,11 @@ MUST 按 Milky segment schema 生成；图片、语音和视频等媒体 MUST �
 ### Requirement: 文件使用独立上传 Action
 
 出站文件 MUST 根据目标调用 `upload_group_file` 或 `upload_private_file`，不得将 file 放入
-send message segments，也不得假设远端能访问本地路径。文件资源 MUST 来自 Hermes 已确认的
-出站资源入口；没有该入口时 SHALL 返回 `unsupported`，插件不得读取本地文件或生成
-`base64://` fallback。
+send message segments，也不得假设远端能访问本地路径。对当前 Hermes adapter 传入的本地
+路径、`Path` 或 `file://localhost`，plugin MUST 在出站边界只读取一次常规、非空且不超过
+8 MiB 的文件并生成 `base64://`；合法 `http(s)://` 和显式 `base64://` MUST 原样保留，
+不得下载或解码。其他本地资源边界失败时 MUST 在网络访问前返回 `invalid_input` 或
+`unsupported`。
 
 #### Scenario: 群文件上传
 
@@ -100,11 +102,11 @@ send message segments，也不得假设远端能访问本地路径。文件资�
 - **THEN** 系统 SHALL 调用 `upload_group_file`
 - **AND** SHALL 不把 file segment 塞入 `send_group_message`
 
-#### Scenario: 本地路径不可共享
+#### Scenario: 本地路径由 plugin materialize
 
 - **WHEN** 文件输入是当前主机的本地路径
-- **THEN** 系统 SHALL 返回 `unsupported` 或本地资源错误
-- **AND** SHALL 不假设 Milky 进程可直接读取该路径
+- **THEN** plugin SHALL 读取该常规文件并生成 `base64://` URI
+- **AND** SHALL 使用该 URI 调用对应的独立文件上传 Action
 
 #### Scenario: 私聊文件上传
 
@@ -112,11 +114,11 @@ send message segments，也不得假设远端能访问本地路径。文件资�
 - **THEN** 系统 SHALL 调用 `upload_private_file`
 - **AND** SHALL 返回远端确认的 `file_id`，不把文件内容作为普通文本发送
 
-#### Scenario: 本地文件没有 Hermes 出站入口
+#### Scenario: 本地文件超出 plugin 边界
 
-- **WHEN** 文件输入是当前主机上的本地文件或 `file://` 路径，且没有 Hermes 已确认的出站资源入口
-- **THEN** 系统 SHALL 返回 `unsupported` 或本地资源错误
-- **AND** SHALL 不读取本地文件、不把路径交给 Milky 或生成 `base64://` fallback
+- **WHEN** 文件输入为空、不是常规文件、不可读、超过 8 MiB 或是远端 `file://` URI
+- **THEN** 系统 SHALL 返回 `invalid_input` 或 `unsupported`
+- **AND** SHALL 不把路径交给 Milky 或生成部分 `base64://` 内容
 
 #### Scenario: 文件路径不可读
 
@@ -223,29 +225,30 @@ mention 或 reply segment。没有显式控制码时，系统 MUST NOT 自动引
 
 ### Requirement: Hermes 媒体入口必须执行 native 出站
 
-当 Hermes 已将 Agent 输出中的资源解析为图片 URL、语音、视频或文档附件并提供已确认的
-出站资源入口时，Milky adapter MUST 将这些资源交给对应的 native 媒体或文件出站能力，而
-不是使用 Hermes 基类的纯文本 fallback。显式选择的 `http(s)://` 或 `base64://` URI MAY
-原样作为已 materialize 资源引用使用；本地路径和 `file://` URI 在没有该入口时必须返回
-`unsupported`。插件不得读取本地资源、下载任意 URL、建立缓存或复制 Hermes 媒体权限规则。
+当 Hermes 将 Agent 输出中的资源解析为图片、语音、视频或文档附件并传给 Milky adapter
+时，plugin MUST 在出站边界统一 materialize 资源，而不是使用 Hermes 基类的纯文本
+fallback。对本地路径、`Path` 或 `file://localhost`，plugin MUST 只读取一次常规、非空且
+不超过 8 MiB 的文件并生成 `base64://`；合法 `http(s)://` 或显式 `base64://` URI MUST
+原样保留。插件不得下载远端 URI、解码显式 Base64、建立持久化缓存或复制 Hermes 入站
+媒体权限规则。
 
-#### Scenario: Agent 请求发送工作区文件
+#### Scenario: Agent 请求发送本地工作区文件
 
-- **WHEN** Agent 输出一个已由 Hermes core materialize 且可供上传的工作区文件附件
+- **WHEN** Agent 输出一个当前主机上的本地工作区文件附件
 - **THEN** Milky adapter SHALL 调用对应目标的独立文件上传 Action
 - **AND** 用户 SHALL 收到文件附件而不是文件路径或文本 fallback
 
 #### Scenario: Agent 请求发送本地图片、语音或视频
 
-- **WHEN** Agent 输出一个已由 Hermes core materialize 且可供发送的图片、语音或视频附件
-- **THEN** Milky adapter SHALL 将 Hermes 提供的资源 URI 放入对应 native media segment
+- **WHEN** Agent 输出一个当前主机上的图片、语音或视频附件
+- **THEN** Milky adapter SHALL 将 plugin 生成的 `base64://` URI 放入对应 native media segment
 - **AND** 请求 SHALL 使用既有 group/dm 消息 Action 完成一次媒体发送
 
-#### Scenario: 本地附件没有确认的出站入口
+#### Scenario: 本地附件超过边界
 
-- **WHEN** Agent 输出的附件只有当前主机本地路径，且 Hermes 没有提供可供 adapter 使用的资源 URI
-- **THEN** Milky adapter SHALL 返回 `unsupported`
-- **AND** SHALL 不读取路径、不访问 Milky 网络、不生成 `base64://` fallback
+- **WHEN** Agent 输出的附件不存在、为空、不是常规文件、超过 8 MiB 或使用远端 `file://`
+- **THEN** Milky adapter SHALL 返回 `invalid_input` 或 `unsupported`
+- **AND** SHALL 不访问 Milky 网络、不发送路径文本或部分内容
 
 #### Scenario: 远端媒体 URI
 

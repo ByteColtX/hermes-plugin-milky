@@ -563,7 +563,7 @@ def test_local_file_upload_rejects_missing_path_before_action(tmp_path) -> None:
     result = asyncio.run(sender.send_document("group:700000001", tmp_path / "missing.txt"))
 
     assert result.success is False
-    assert result.error_kind == "unsupported"
+    assert result.error_kind == "invalid_input"
     assert client.upload_calls == []
 
 

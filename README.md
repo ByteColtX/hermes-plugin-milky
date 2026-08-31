@@ -63,9 +63,9 @@ T01–T16 和 T18 的协议、canonical/dedup、Gate/Will、wait buffer、Hermes
 和 adapter 生命周期已有自动化测试；T19 另有脱敏本地 HTTP/SSE 集成 fixture 和默认只读
 Milky smoke。写入 smoke 必须显式使用 `--allow-write`，且目标必须命中运行时 allowlist。
 
-home channel 的网关 live 投递和无附件 standalone 文本投递已接入 Hermes registry；没有
-Hermes 安全附件 seam 的 standalone 媒体/文件、WebHook、WebSocket fallback、任意
-Action catalog 和其他未声明能力仍保持 `unsupported`。
+home channel 的网关 live 投递和无附件 standalone 文本投递已接入 Hermes registry；standalone
+媒体/文件、WebHook、WebSocket fallback、任意 Action catalog 和其他未声明能力仍保持
+`unsupported`。
 
 ### 模型可控 QQ 消息
 
@@ -87,20 +87,25 @@ ToolSpec 和 Milky native conversion 才决定可执行能力。CQ-compatible �
 
 ### 多媒体出站
 
-Milky adapter 已覆盖 Hermes 的 native 媒体交接：
+Milky adapter 已覆盖当前 Hermes `BasePlatformAdapter` 传入本地附件的 native 媒体交接：
 
 | Hermes 入口 | Milky 出站边界 |
 | --- | --- |
 | 图片 URL、动画 | `image` segment，经 `send_group_message` 或 `send_private_message` |
-| Hermes 已 materialize 的图片/语音/视频 URI | 原样交给对应 `image`、`record` 或 `video` segment |
-| Hermes 已 materialize 的文档 URI | 使用独立 `upload_group_file` 或 `upload_private_file` |
-| 只有当前主机本地路径的资源 | `unsupported`，不读取、不下载、不生成 `base64://` fallback |
+| 图片/语音/视频 URI 或本地路径 | `image`、`record` 或 `video` segment，经 `send_group_message` 或 `send_private_message` |
+| 文档 URI 或本地路径 | 先生成/校验 `file_uri`，再使用独立 `upload_group_file` 或 `upload_private_file` |
+| `file://localhost`、`Path` | 与本地路径相同，常规、非空且不超过 8 MiB 时一次读取并生成 `base64://` |
+| 远端 `file://` 或未知 scheme | 网络访问前返回 `invalid_input` 或 `unsupported` |
 
-Hermes 负责从 Agent 输出中解析并校验资源，再调用 adapter 的对应媒体入口。插件不会下载
-`http(s)://` URI、读取本地文件、创建媒体缓存或接管 Hermes 的路径权限；只有 Hermes 已确认
-的资源 URI（包括显式 materialized 的 `base64://`）会原样交给 Milky。协议拒绝、传输结果
-未知、malformed 和未连接状态分别保持 `rejected`、`transport_unknown`、`malformed` 和
-`unsupported`，不会改发路径文本或盲目重试。
+Hermes 负责从 Agent 输出中解析资源、管理入站媒体下载/缓存和路径权限；plugin 在 Milky
+出站边界负责上述受限本地读取。合法 `http(s)://` 和显式 `base64://` URI 原样交给 Milky，
+plugin 不下载远端 URI、不解码显式 Base64、不创建持久化媒体缓存，也不把本地路径改发为
+文本。协议拒绝、传输结果未知、malformed 和未连接状态分别保持 `rejected`、
+`transport_unknown`、`malformed` 和 `unsupported`，不会盲目重试。
+
+这项边界是对 `61d99fc` 的重构修正：恢复 plugin 需要的本地读取和 `base64://` 编码，但不
+修改 Hermes core，不建立第二套缓存、SSRF 或权限规则。附件失败时只返回安全分类，不发送
+第二条用户可见告警文本或重试可能产生副作用的 Action。
 
 ## 配置指南
 
@@ -171,8 +176,8 @@ channel 时不会猜测目标或回退到 origin、默认频道、群聊或私�
 adapter；独立 cron 为单次文本投递创建并关闭临时 Milky client，返回远端 `message_seq`
 对应的稳定消息 ID。
 
-standalone cron 没有经过 Hermes 安全 materialization 的媒体/文件输入 seam 时会返回
-`unsupported`，不会直传本地路径、下载 URL 或把 file 放入普通消息 segment。真实 Milky
+standalone cron 当前只支持文本；媒体/文件输入会返回 `unsupported`，不会直传本地路径、
+下载 URL 或把 file 放入普通消息 segment。真实 Milky
 写入 smoke 仍必须使用运行时注入的凭证，并在执行前取得明确授权；本文示例中的目标仅为
 合成占位。
 

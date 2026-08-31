@@ -100,6 +100,13 @@ HTTP/SSE，也不改变普通消息的初始化就绪门槛。
 `SlashCommandService` 注入每个 adapter，只有 connect 完成后才绑定其生命周期拥有的
 Milky client。插件不修改 Hermes 内置命令 registry、不注册任意 Action catalog。
 
+出站媒体的本地附件由 plugin 在 Milky Action 边界执行受限 materialization：接受当前
+Hermes `BasePlatformAdapter` 传入的本地路径、`Path` 和 `file://localhost`，只读取一次
+常规、非空且不超过 8 MiB 的文件并生成 `base64://` URI。显式 `http(s)://` 和
+`base64://` URI 原样保留，不下载或解码；plugin 不创建缓存、不复制 Hermes 入站资源的
+SSRF/权限规则，也不把路径作为消息文本发送。Hermes core 仍拥有入站资源解析、下载和
+Agent turn 生命周期，当前 host 不需要额外的 outbound materialization seam。
+
 ### 4.2 生命周期
 
 ```text
@@ -324,11 +331,11 @@ wait 阶段只保留资源引用，不下载。trigger 阶段才允许查询图�
 - `dm:<id>` 使用 `send_private_message`；
 - 非法或 temp 目标在网络访问前失败，不回退默认目标；
 - 文本和结构化内容由 `outbound/formatter.py` 生成 Milky segments；
-- Hermes 已 materialize 的图片 URL、动画、语音和视频 URI 进入对应的 native `image`、`record` 或 `video` segment；
-- 显式 `http(s)://` 和已 materialize 的 `base64://` URI 原样保留；只有当前主机本地路径或 `file://` URI 时返回 `unsupported`，插件不读取本地文件或下载远端 URI；
+- 图片、动画、语音和视频的显式 URI 或 plugin materialize 后的本地附件进入对应的 native `image`、`record` 或 `video` segment；
+- 显式 `http(s)://` 和 `base64://` URI 原样保留；当前主机本地路径、`Path` 和 `file://localhost` 由 plugin 受限读取并生成 `base64://`，其他 `file://` 主机和未知 scheme 在网络访问前失败；
 - 空白消息在网络访问前拒绝，超长文本按明确边界拆分；
 - file 不是 message segment，必须使用对应的 upload Action；
-- Hermes 的文档附件使用 `upload_group_file` 或 `upload_private_file`，请求只接收已 materialize 的 `file_uri` 和校验后的 `file_name`；
+- Hermes 的文档附件使用 `upload_group_file` 或 `upload_private_file`，请求只接收 plugin 已 materialize 的 `file_uri` 和校验后的 `file_name`；
 - 未实现的编辑、撤回、reaction 等能力返回 `unsupported`；
 - 结果区分 `rejected`、`transport_unknown`、`malformed` 和 `unsupported`。
 
@@ -343,8 +350,8 @@ Milky client；入站正文、mention 或 Will 分数不能赋予工具权限。
 
 网关内的系统消息复用已连接 adapter 的 MilkyOutboundSender。独立 cron 通过
 outbound/standalone.py 为每次调用创建并关闭临时 client，支持同一文本、分块、目标路由、
-SendResult 和错误分类；没有 Hermes 安全附件输入 seam 时，附件/线程参数返回
-unsupported，不会自行下载 URL 或把本地路径塞进消息 segment。两条路径都不自动 retry
+SendResult 和错误分类；standalone 当前不接受附件/线程参数，统一返回 unsupported，不会
+自行下载 URL 或把本地路径塞进消息 segment。两条路径都不自动 retry
 未知执行结果，也不改投其他目标。
 
 ## 11. 数据存储和所有权
@@ -356,11 +363,16 @@ v0.1 不使用插件自有持久化数据库。插件内只有进程内、可丢
 - 每 chat willingness 状态；
 - MuteTracker 群状态。
 
-Hermes 拥有 Agent turn、session/transcript、媒体下载、缓存、路径、权限和资源
+Hermes 拥有 Agent turn、session/transcript、入站媒体下载、缓存、路径权限和资源
 materialization。Milky client 拥有 URL、认证和 HTTP envelope；event stream 拥有 SSE 生命周期；
-outbound 只拥有 Milky segment 格式和 upload Action 路由，不读取资源或生成 `base64://`
-fallback。standalone sender 只拥有一次调用的临时 client 生命周期，不拥有持久化连接、cron
-状态或媒体缓存。
+outbound 拥有 Milky segment、文件 upload 和受限的本地附件 materialization：本地文件只在
+单次发送前读取并转换为 `base64://`，不建立持久化缓存或第二套 SSRF/权限规则。standalone
+sender 只拥有一次调用的临时 client 生命周期，当前仍只承诺文本投递，不继承 adapter 的
+本地附件入口。
+
+`61d99fc` 移除了当前 Hermes host 仍需要的 plugin 本地 materialization 路径；本 change
+通过重构恢复该兼容边界，不修改 Hermes core，不依赖不存在的 outbound seam，也不把完整
+文件内容、路径、URI 或凭证写入日志、异常和结果。
 
 ## 12. 配置与安全
 
@@ -397,7 +409,7 @@ npx --yes @fission-ai/openspec@1.11.0 validate --changes --strict
 smoke 只能从运行时环境读取凭证。新增行为先补 OpenSpec 对应契约或 fixture，再实现和测试。
 
 在宣布能力可用前，必须有自动化证据证明：唯一入口、canonical/dedup 顺序、Gate/Will 分离、
-正确禁言字段、Hermes 媒体所有权、文件 upload、temp/unknown/unsupported 降级、SendResult
+正确禁言字段、入站 Hermes 媒体所有权与出站 plugin materialization、文件 upload、temp/unknown/unsupported 降级、SendResult
 和秘密脱敏边界均成立。
 
 ## 14. 非目标和扩展边界
@@ -406,7 +418,7 @@ v0.1 不复制 OneBot v11 的 Action、CQ 入站协议、echo 或 WebSocket 回�
 第 10 节所述 Agent 出站层的 CQ-compatible 文本解析例外。该例外不改变 Milky wire
 protocol 或 OneBot 能力声明。不实现 WebHook，不注册任意 Action catalog，不管理插件自己的
 媒体缓存，也不处理 temp 会话。standalone cron 目前只承诺无 thread 的文本/已格式化内容
-投递；缺少 Hermes 安全附件 seam 时不做独立媒体或文件投递。
+投递，不继承 adapter 的本地附件入口。
 
 WebSocket fallback 和更多 Agent 工具必须先通过独立 OpenSpec 契约、Hermes 扩展点确认和
 测试，再加入本架构。

@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from milky.client import ActionError, validate_media_uri
+from milky.client import ActionError
 from milky.models import MilkyEnvelope
 from milky.observability import log_event
 from session.identity import CanonicalError, normalize_chat_key
@@ -24,6 +24,7 @@ from .formatter import (
     text_segment,
     video_segment,
 )
+from .materialization import prepare_materialization
 
 _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
@@ -160,11 +161,18 @@ class MilkyOutboundSender:
         reply_to: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> OutboundSendResult:
-        """以 image segment 发送 Hermes 提供的 URI。"""
+        """将图片 URI 或本地路径转换为 image segment 后发送。"""
 
         del metadata
         try:
-            uri = validate_media_uri(image_url, action="send_image")
+            parse_outbound_target(chat_id)
+            uri = (
+                await prepare_materialization(
+                    image_url,
+                    expected_kind="image",
+                    action="send_image",
+                )
+            ).uri
             media = image_segment(uri)
         except (ActionError, OutboundFormatError) as error:
             return _failure(error.classification, _safe_reason(error))
@@ -173,17 +181,24 @@ class MilkyOutboundSender:
     async def send_voice(
         self,
         chat_id: str,
-        audio_path: str,
+        audio_path: object,
         caption: str | None = None,
         reply_to: str | None = None,
         metadata: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> OutboundSendResult:
-        """以 record segment 发送 Hermes 提供的 URI。"""
+        """将语音 URI 或本地路径转换为 record segment 后发送。"""
 
         del metadata, kwargs
         try:
-            uri = validate_media_uri(audio_path, action="send_voice")
+            parse_outbound_target(chat_id)
+            uri = (
+                await prepare_materialization(
+                    audio_path,
+                    expected_kind="audio",
+                    action="send_voice",
+                )
+            ).uri
             media = record_segment(uri)
         except (ActionError, OutboundFormatError, ValueError) as error:
             return _failure(_error_classification(error), _safe_reason(error))
@@ -192,17 +207,24 @@ class MilkyOutboundSender:
     async def send_video(
         self,
         chat_id: str,
-        video_path: str,
+        video_path: object,
         caption: str | None = None,
         reply_to: str | None = None,
         metadata: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> OutboundSendResult:
-        """以 video segment 发送 Hermes 提供的 URI。"""
+        """将视频 URI 或本地路径转换为 video segment 后发送。"""
 
         del metadata, kwargs
         try:
-            uri = validate_media_uri(video_path, action="send_video")
+            parse_outbound_target(chat_id)
+            uri = (
+                await prepare_materialization(
+                    video_path,
+                    expected_kind="video",
+                    action="send_video",
+                )
+            ).uri
             media = video_segment(uri)
         except (ActionError, OutboundFormatError, ValueError) as error:
             return _failure(_error_classification(error), _safe_reason(error))

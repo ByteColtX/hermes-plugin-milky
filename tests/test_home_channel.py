@@ -294,7 +294,7 @@ def test_live_adapter_delegates_media_and_file_to_outbound_sender() -> None:
         )
         document = await adapter.send_document(
             "dm:800000001",
-            "opaque-hermes-file",
+            "base64://synthetic-file",
             file_name="synthetic.txt",
         )
         return image, document
@@ -305,7 +305,7 @@ def test_live_adapter_delegates_media_and_file_to_outbound_sender() -> None:
     assert document.success is True
     assert [call[0] for call in outbound.calls] == ["send_image", "send_document"]
     assert outbound.calls[0][1][:2] == ("group:700000001", "base64://synthetic-image")
-    assert outbound.calls[1][1][:2] == ("dm:800000001", "opaque-hermes-file")
+    assert outbound.calls[1][1][:2] == ("dm:800000001", "base64://synthetic-file")
 
 
 def test_standalone_text_send_uses_same_sender_result_and_closes_client() -> None:
@@ -360,7 +360,7 @@ def test_standalone_has_no_empty_or_home_target_fallback() -> None:
 
 @pytest.mark.parametrize("field", ["media_files", "thread_id", "force_document"])
 def test_standalone_rejects_unsafe_or_unsupported_inputs_before_client_creation(field: str) -> None:
-    """standalone 没有安全附件 seam 时不得直传路径、URL 或线程参数。"""
+    """standalone 不支持附件时不得直传路径、URL 或线程参数。"""
 
     config = make_config()
     factory_calls = 0

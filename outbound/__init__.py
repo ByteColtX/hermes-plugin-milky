@@ -21,6 +21,12 @@ from .formatter import (
     text_segment,
     video_segment,
 )
+from .materialization import (
+    MaterializationKind,
+    OutboundMaterialization,
+    prepare_materialization,
+    validate_materialization,
+)
 from .sender import (
     MilkyOutboundSender,
     OutboundSendResult,
@@ -33,8 +39,10 @@ __all__ = [
     "CQ_TYPES",
     "CQ_TYPE_REGISTRY",
     "DEFAULT_TEXT_LENGTH",
+    "MaterializationKind",
     "MilkyOutboundSender",
     "OutboundFormatError",
+    "OutboundMaterialization",
     "OutboundSendResult",
     "OutboundTarget",
     "chunk_text",
@@ -51,9 +59,11 @@ __all__ = [
     "mention_segment",
     "parse_cq_code",
     "parse_outbound_target",
+    "prepare_materialization",
     "record_segment",
     "reply_segment",
     "standalone_send",
     "text_segment",
+    "validate_materialization",
     "video_segment",
 ]
