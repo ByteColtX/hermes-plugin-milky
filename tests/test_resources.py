@@ -374,6 +374,69 @@ def test_image_placeholders_follow_helper_basenames_in_segment_order() -> None:
     ]
 
 
+def test_context_images_only_include_direct_images_not_nested_reply_images() -> None:
+    """历史 context 图片集合不应包含未展示的嵌套 reply 图片。"""
+
+    class SequentialHermes(FakeHermesMedia):
+        """为顶层和嵌套图片返回不同的合成路径。"""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.paths = iter(
+                ("/synthetic/hermes/context123456.png", "/synthetic/hermes/reply123456.png")
+            )
+
+        async def cache_image_from_url(self, url: str, ext: str = ".jpg") -> str:
+            """按解析顺序返回合成图片路径。"""
+
+            self.url_calls.append(("image", url))
+            return next(self.paths)
+
+    payload = load_fixture("events/message_receive.friend.json")
+    payload["data"]["segments"] = [
+        {
+            "type": "image",
+            "data": {
+                "resource_id": "fixture-context-image",
+                "temp_url": "https://cdn.example.invalid/context-image",
+            },
+        },
+        {
+            "type": "reply",
+            "data": {
+                "message_seq": 1000,
+                "sender_id": 800000001,
+                "sender_name": "合成好友",
+                "time": 1700000009,
+                "segments": [
+                    {
+                        "type": "image",
+                        "data": {
+                            "resource_id": "fixture-reply-image",
+                            "temp_url": "https://cdn.example.invalid/reply-image",
+                        },
+                    }
+                ],
+            },
+        },
+    ]
+    result = canonicalize_event(payload)
+    assert result.value is not None
+
+    resolved = asyncio.run(
+        ResourceResolver(make_client(), SequentialHermes()).resolve(result.value)
+    )
+
+    assert [item.path for item in resolved.hermes_attachment_materializations] == [
+        "/synthetic/hermes/context123456.png",
+        "/synthetic/hermes/reply123456.png",
+    ]
+    assert [item.path for item in resolved.context_image_materializations] == [
+        "/synthetic/hermes/context123456.png"
+    ]
+    assert resolved.body == "[img:file_name=context123456.png]"
+
+
 def test_failed_image_helper_keeps_typed_placeholder_without_path() -> None:
     """image helper 返回无效路径时应降级且不把路径写入正文。"""
 

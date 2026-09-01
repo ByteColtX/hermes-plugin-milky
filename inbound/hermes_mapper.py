@@ -6,7 +6,7 @@ MessageEvent。远端 URL、file ID 和插件内部引用不会直接进入 Herm
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -20,7 +20,11 @@ from milky.models import (
     TextSegment,
     VideoSegment,
 )
-from milky.resources import ResolvedMessage, ResourceDiagnostic
+from milky.resources import (
+    HermesAttachmentMaterialization,
+    ResolvedMessage,
+    ResourceDiagnostic,
+)
 from session.buffer import render_message_record
 
 from .commands import recognize_slash_command
@@ -43,6 +47,7 @@ def map_message_event(
     resolved: ResolvedMessage,
     *,
     channel_context: str | None = None,
+    context_image_materializations: Sequence[HermesAttachmentMaterialization] = (),
     source: object,
     message_event_cls: type | None = None,
     message_type_cls: type | None = None,
@@ -62,7 +67,11 @@ def map_message_event(
     body = _required_text_value(resolved.body, "resolved body")
     message_id = _optional_text(message, "message_id")
     quote_id = _optional_text(message, "quote_message_id")
-    materializations = tuple(resolved.hermes_attachment_materializations)
+    current_materializations = tuple(resolved.hermes_attachment_materializations)
+    materializations = _merge_media_materializations(
+        context_image_materializations,
+        current_materializations,
+    )
     media_urls = [item.path for item in materializations if _is_local_path(item.path)]
     media_types = [
         item.mime_type
@@ -81,7 +90,7 @@ def map_message_event(
         text=render_message_record(
             _MappedRecord(chat_key, sender_name, sender_id, body, message_id, quote_id)
         ),
-        message_type=_message_type(message, materializations, type_cls),
+        message_type=_message_type(message, current_materializations, type_cls),
         user_id=str(sender_id),
         user_name=sender_name,
         source=source,
@@ -244,6 +253,23 @@ def _event_metadata(
         "resource_diagnostics": diagnostics,
         "materialized_media_count": len(media_urls),
     }
+
+
+def _merge_media_materializations(
+    context_image_materializations: Sequence[HermesAttachmentMaterialization],
+    current_materializations: Sequence[HermesAttachmentMaterialization],
+) -> tuple[HermesAttachmentMaterialization, ...]:
+    """按历史 context 到当前消息的顺序合并并去重本地附件。"""
+
+    merged: list[HermesAttachmentMaterialization] = []
+    seen_paths: set[str] = set()
+    for materialization in (*context_image_materializations, *current_materializations):
+        path = materialization.path
+        if not _is_local_path(path) or path in seen_paths:
+            continue
+        seen_paths.add(path)
+        merged.append(materialization)
+    return tuple(merged)
 
 
 def _is_local_path(value: object) -> bool:

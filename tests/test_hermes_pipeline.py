@@ -134,6 +134,74 @@ class FakeResolver:
         return ResolvedTriggerBatch(batch.chat_key, history, current)
 
 
+class ContextImageResolver(FakeResolver):
+    """返回含历史 context 图片和当前附件的脱敏 resolved batch。"""
+
+    async def resolve_batch(self, batch: object) -> ResolvedTriggerBatch:
+        """按历史/当前顺序返回合成的 materialization。"""
+
+        history_first = HermesAttachmentMaterialization(
+            path="/hermes/cache/history-first.png",
+            mime_type="image/png",
+            kind="image",
+            display_name="history-first.png",
+            reference_kind="image",
+            reference_id="history-first",
+        )
+        shared = HermesAttachmentMaterialization(
+            path="/hermes/cache/shared.png",
+            mime_type="image/jpeg",
+            kind="image",
+            display_name="shared.jpg",
+            reference_kind="image",
+            reference_id="shared",
+        )
+        current_image = HermesAttachmentMaterialization(
+            path="/hermes/cache/current.png",
+            mime_type="image/webp",
+            kind="image",
+            display_name="current.webp",
+            reference_kind="image",
+            reference_id="current",
+        )
+        current_audio = HermesAttachmentMaterialization(
+            path="/hermes/cache/current.ogg",
+            mime_type="audio/ogg",
+            kind="audio",
+            display_name="current.ogg",
+            reference_kind="record",
+            reference_id="current-record",
+        )
+        history = (
+            ResolvedMessage(
+                body=batch.history[0].body,
+                context_image_materializations=(history_first,),
+            ),
+            ResolvedMessage(
+                body=batch.history[1].body,
+                context_image_materializations=(shared,),
+            ),
+        )
+        current = ResolvedMessage(
+            body=batch.current.body,
+            hermes_attachment_materializations=(shared, current_image, current_audio),
+        )
+        return ResolvedTriggerBatch(batch.chat_key, history, current)
+
+
+class FailedContextImageResolver(FakeResolver):
+    """返回历史图片失败后的安全降级结果。"""
+
+    async def resolve_batch(self, batch: object) -> ResolvedTriggerBatch:
+        """保留失败占位但不提供图片 materialization。"""
+
+        history = tuple(
+            ResolvedMessage(body="[img:file_name=NOT SUPPORTED]") for _item in batch.history
+        )
+        current = ResolvedMessage(body=batch.current.body)
+        return ResolvedTriggerBatch(batch.chat_key, history, current)
+
+
 class FakeMuteTracker:
     """为群 Gate 提供已确认的 unmuted 二态快照。"""
 
@@ -225,6 +293,87 @@ def test_wait_history_is_context_only_and_current_message_is_not_repeated() -> N
     assert event.text == "<合成名片 uid 800000002 msg_id 2002> @合成机器人触发消息"
     assert "触发消息" not in event.channel_context
     assert "历史消息" not in event.text
+
+
+def test_context_images_precede_current_images_and_deduplicate_media_paths() -> None:
+    """历史图片应先于当前附件进入 media_urls，并按路径去重。"""
+
+    async def scenario() -> FakeMessageEvent:
+        hermes = FakeHermes()
+        pipeline = make_pipeline(
+            hermes,
+            ContextImageResolver(),
+            routing=RoutingConfig(direct="trigger", mention="trigger", all_message="wait"),
+        )
+        first = load_fixture("events/message_receive.group.all_segments.json")
+        first["data"]["message_seq"] = 2101
+        first["data"]["segments"] = [
+            {"type": "image", "data": {"resource_id": "history-first"}},
+        ]
+        second = load_fixture("events/message_receive.group.all_segments.json")
+        second["data"]["message_seq"] = 2102
+        second["data"]["segments"] = [
+            {"type": "image", "data": {"resource_id": "history-shared"}},
+        ]
+        current = load_fixture("events/message_receive.group.all_segments.json")
+        current["data"]["message_seq"] = 2103
+        current["data"]["segments"] = [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "image", "data": {"resource_id": "current-shared"}},
+            {"type": "text", "data": {"text": "触发消息"}},
+        ]
+        assert (await pipeline.handle_event(first)).classification == "wait"
+        assert (await pipeline.handle_event(second)).classification == "wait"
+        assert (await pipeline.handle_event(current)).classification == "trigger"
+        await pipeline.wait_idle()
+        return hermes.events[0]
+
+    event = asyncio.run(scenario())
+
+    assert event.media_urls == [
+        "/hermes/cache/history-first.png",
+        "/hermes/cache/shared.png",
+        "/hermes/cache/current.png",
+        "/hermes/cache/current.ogg",
+    ]
+    assert event.media_types == ["image/png", "image/jpeg", "image/webp", "audio/ogg"]
+    assert event.channel_context is not None
+    assert "历史消息" not in event.text
+    assert "触发消息" not in event.channel_context
+
+
+def test_failed_context_image_keeps_placeholder_without_media_url() -> None:
+    """历史图片失败时保留占位，不能伪造媒体路径。"""
+
+    async def scenario() -> FakeMessageEvent:
+        hermes = FakeHermes()
+        pipeline = make_pipeline(
+            hermes,
+            FailedContextImageResolver(),
+            routing=RoutingConfig(direct="trigger", mention="trigger", all_message="wait"),
+        )
+        history = load_fixture("events/message_receive.group.all_segments.json")
+        history["data"]["message_seq"] = 2201
+        history["data"]["segments"] = [
+            {"type": "image", "data": {"resource_id": "failed-history-image"}},
+        ]
+        current = load_fixture("events/message_receive.group.all_segments.json")
+        current["data"]["message_seq"] = 2202
+        current["data"]["segments"] = [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "text", "data": {"text": "触发消息"}},
+        ]
+        assert (await pipeline.handle_event(history)).classification == "wait"
+        assert (await pipeline.handle_event(current)).classification == "trigger"
+        await pipeline.wait_idle()
+        return hermes.events[0]
+
+    event = asyncio.run(scenario())
+
+    assert event.media_urls == []
+    assert event.media_types == []
+    assert event.channel_context is not None
+    assert "[img:file_name=NOT SUPPORTED]" in event.channel_context
 
 
 def test_duplicate_gate_deny_temp_and_system_event_stop_before_resolver_or_hermes() -> None:
