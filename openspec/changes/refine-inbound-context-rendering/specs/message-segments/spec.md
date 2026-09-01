@@ -27,6 +27,12 @@ segment 类型。payload 无法解析或没有 `meta` 字段时，正文 MUST �
 不得在正文中额外追加 `[引用]` 或其他成功占位符。reply 缺少协议必填字段或 trigger 查询失败
 时，正文 MAY 使用 `[reply:NOT SUPPORTED]`，并保留 malformed 或安全资源诊断。
 
+normalizer 阶段生成的 image placeholder 是临时展示。trigger 阶段 image 经 Hermes image helper
+成功落盘后，最终正文 MUST 将对应 image placeholder 替换为 helper 返回本地路径的 basename，且
+该 basename MUST 与交给 Hermes `media_urls` 的对应路径 basename 一致。helper 不可用、下载失败
+或返回无效本地路径时，正文 MUST 使用 `[img:NOT SUPPORTED]`；不得继续使用 `summary` 作为成功
+占位文件名。
+
 `file` 只属于入站消息，不属于 outgoing message segment。除架构明确允许主消息
 `message_seq` 缺失并进入 `no_stable_message_id` 降级外，规范化 SHALL 不补造 OpenAPI 必填
 字段；reply 的 `message_seq`、`sender_id`、`time` 和 `segments` 缺失时 SHALL 保持 malformed
@@ -80,6 +86,25 @@ segment 类型。payload 无法解析或没有 `meta` 字段时，正文 MUST �
 - **WHEN** `json_payload` 不是合法 JSON object 或不包含 `meta`
 - **THEN** 正文 SHALL 使用 `[light_app:NOT SUPPORTED]`
 - **AND** SHALL 不把未知顶层字段猜测为正文
+
+#### Scenario: image placeholder follows Hermes basename
+
+- **WHEN** trigger 阶段 image helper 成功返回本地落盘路径
+- **THEN** 最终正文 SHALL 使用 `[img:<returned basename>]`
+- **AND** `<returned basename>` SHALL 与 Hermes `media_urls` 中对应路径的 basename 相同
+- **AND** SHALL 不使用 image `summary` 作为最终成功占位文件名
+
+#### Scenario: multiple image placeholders keep helper basename order
+
+- **WHEN** 一条消息按顺序包含多个 image segment 且 helper 依次返回多个本地路径
+- **THEN** 每个 image placeholder SHALL 替换为对应 helper 返回路径的 basename
+- **AND** 替换结果 SHALL 保持 image segment 与 `media_urls` 的顺序
+
+#### Scenario: image helper failure keeps typed fallback
+
+- **WHEN** image helper 不可用、下载失败或返回无效路径
+- **THEN** 对应正文 SHALL 使用 `[img:NOT SUPPORTED]`
+- **AND** SHALL 不泄露远端 URL 或本地完整路径
 
 ### Requirement: 规范化结果必须提供稳定策略特征
 

@@ -300,6 +300,12 @@ class ResourceResolver:
             resolved, diagnostic = await self._resolve_media_reference(reference)
             if resolved is not None:
                 materializations.append(resolved)
+                if _field(reference, "kind") == "image":
+                    body = _replace_first(
+                        body,
+                        _available_marker(reference),
+                        _image_path_marker(resolved.path),
+                    )
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
                 body = _replace_first(
@@ -748,6 +754,17 @@ def _available_marker(reference: object) -> str:
         "record": "[record:NOT SUPPORTED]",
         "video": "[video:NOT SUPPORTED]",
     }.get(kind, "[media:NOT SUPPORTED]")
+
+
+def _image_path_marker(path: object) -> str:
+    """用 Hermes helper 返回路径的 basename 生成最终图片占位符。"""
+
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError("Hermes image helper returned an empty path")
+    basename = path.replace("\\", "/").rsplit("/", 1)[-1]
+    if not basename or basename in {".", ".."}:
+        raise ValueError("Hermes image helper returned an invalid basename")
+    return f"[img:{basename}]"
 
 
 def _failure_marker(kind: object) -> str:

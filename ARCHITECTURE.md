@@ -331,6 +331,10 @@ raw。正文使用稳定 placeholder：`face`、`img`、`record`、`video`、`fi
 Agent 指令。`light_app` 只展示 JSON payload 顶层 `meta` 根对象并递归保留其结构；缺少或
 无法解析 `meta` 时使用 `NOT SUPPORTED`。
 
+image 的 normalizer placeholder 只作为资源解析前的临时展示。trigger 阶段成功调用 Hermes
+image helper 后，最终正文使用 helper 返回本地路径的 basename，并与交给 Hermes 的对应
+`media_urls` basename 保持一致；helper 失败或返回无效路径时使用 `[img:NOT SUPPORTED]`。
+
 wait 阶段只保留资源引用，不下载。trigger 阶段才允许查询图片、文件或 reply。远端引用
 必须交给 Hermes 公共 media helper；插件不创建下载目录、media cache、SSRF 规则、权限
 规则或 Hermes 本地路径。

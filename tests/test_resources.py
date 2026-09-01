@@ -101,7 +101,7 @@ class FakeHermesMedia:
 
         self.url_calls.append(("image", url))
         await asyncio.sleep(0)
-        return "/synthetic/hermes/image.png"
+        return f"/synthetic/hermes/img_fixture123456{ext}"
 
     async def cache_audio_from_url(self, url: str, ext: str = ".ogg") -> str:
         """记录并异步返回合成的本地音频路径。"""
@@ -162,6 +162,7 @@ def test_trigger_resolves_media_file_and_forward_with_separate_actions() -> None
         "image",
         "record",
     ]
+    assert "[img:img_fixture123456.jpg]" in resolved.body
     assert [name for name, _ in hermes.url_calls] == ["image", "audio"]
     assert [name for name, _ in client.calls].count("get_resource_temp_url") == 3
     assert [name for name, _ in client.calls].count("get_group_file_download_url") == 1
@@ -316,6 +317,94 @@ def test_inline_temp_url_skips_resource_action() -> None:
 
     assert not any(name == "get_resource_temp_url" for name, _ in client.calls)
     assert hermes.url_calls == [("image", "https://cdn.example.invalid/inline-image")]
+
+
+def test_image_placeholders_follow_helper_basenames_in_segment_order() -> None:
+    """多张图片应按 segment 顺序使用 helper 返回路径的 basename。"""
+
+    class SequentialHermes(FakeHermesMedia):
+        """为每张图片返回可观察但不含真实路径的 basename。"""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.paths = iter(
+                ("/synthetic/hermes/img_first123456.jpg", "/synthetic/hermes/img_second123456.jpg")
+            )
+
+        async def cache_image_from_url(self, url: str, ext: str = ".jpg") -> str:
+            """按调用顺序返回合成的 Hermes 落盘路径。"""
+
+            self.url_calls.append(("image", url))
+            return next(self.paths)
+
+    payload = load_fixture("events/message_receive.friend.json")
+    payload["data"]["segments"] = [
+        {
+            "type": "image",
+            "data": {
+                "resource_id": "fixture-image-first",
+                "temp_url": "https://cdn.example.invalid/first",
+                "summary": "[图片]",
+            },
+        },
+        {
+            "type": "image",
+            "data": {
+                "resource_id": "fixture-image-second",
+                "temp_url": "https://cdn.example.invalid/second",
+                "summary": "[图片]",
+            },
+        },
+    ]
+    result = canonicalize_event(payload)
+    assert result.value is not None
+
+    resolved = asyncio.run(
+        ResourceResolver(make_client(), SequentialHermes()).resolve(result.value)
+    )
+
+    assert resolved.body == "[img:img_first123456.jpg][img:img_second123456.jpg]"
+    assert [
+        item.path.rsplit("/", 1)[-1] for item in resolved.hermes_attachment_materializations
+    ] == [
+        "img_first123456.jpg",
+        "img_second123456.jpg",
+    ]
+
+
+def test_failed_image_helper_keeps_typed_placeholder_without_path() -> None:
+    """image helper 返回无效路径时应降级且不把路径写入正文。"""
+
+    class InvalidPathHermes(FakeHermesMedia):
+        """返回不应被接受为本地落盘路径的值。"""
+
+        async def cache_image_from_url(self, url: str, ext: str = ".jpg") -> str:
+            """返回伪造的远端 URL。"""
+
+            self.url_calls.append(("image", url))
+            return "https://cdn.example.invalid/not-local.jpg"
+
+    payload = load_fixture("events/message_receive.friend.json")
+    payload["data"]["segments"] = [
+        {
+            "type": "image",
+            "data": {
+                "resource_id": "fixture-image-resource",
+                "temp_url": "https://cdn.example.invalid/image",
+                "summary": "[图片]",
+            },
+        }
+    ]
+    result = canonicalize_event(payload)
+    assert result.value is not None
+
+    resolved = asyncio.run(
+        ResourceResolver(make_client(), InvalidPathHermes()).resolve(result.value)
+    )
+
+    assert resolved.body == "[img:NOT SUPPORTED]"
+    assert resolved.hermes_attachment_materializations == ()
+    assert all("cdn.example.invalid" not in str(item) for item in resolved.diagnostics)
 
 
 def test_malformed_resource_envelope_keeps_reference_diagnostic() -> None:

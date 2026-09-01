@@ -77,6 +77,8 @@ home channel 的网关 live 投递和无附件 standalone 文本投递已接入 
 `face`、`image`、`record`、`video`、`file`、`forward`、`market_face`、`light_app` 和
 `xml` 使用带类型的稳定 placeholder。`light_app` 只投影 JSON payload 的 `meta` 根对象，
 递归保留其中的字段、数组和 `null`；缺少或 malformed `meta` 使用 `NOT SUPPORTED`。
+image 在 trigger 阶段成功交给 Hermes image helper 后，placeholder 会改用 helper 返回路径的
+basename，因此与实际落盘文件名一致；helper 失败时使用 `[img:NOT SUPPORTED]`。
 `forward` 只展示 `[forward:<forward_id>]`，普通 trigger 不自动查询转发详情。
 完整 inline `reply` 只通过 `reply_to` header 和 Hermes reply metadata 表达，不在正文追加
 `[引用]`；reply 缺失或补全失败时使用 `[reply:NOT SUPPORTED]`。

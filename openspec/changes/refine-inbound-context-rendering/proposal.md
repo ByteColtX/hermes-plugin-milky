@@ -6,6 +6,7 @@
 
 - 将普通消息和历史上下文统一渲染为单行尖括号 header：`<sender uid ... msg_id ... reply_to ...> body`。
 - 完整 inline reply 只通过 `reply_to` header 表达，不在正文重复添加成功的引用占位符。
+- 图片成功经 Hermes image helper 落盘后，正文占位符使用 helper 返回路径的 basename，保证占位文件名与实际落盘文件名一致；资源失败时使用 `NOT SUPPORTED`。
 - 按 segment 类型提供稳定、可读的占位符；`market_face` 和 `xml` 使用 `NOT SUPPORTED`，未知 segment 继续不进入正文。
 - 解析 `light_app.json_payload` 时忽略顶层业务字段，以 `[light_app:{"meta":...}]` 形式保留完整 `meta` 根对象及其递归内容，不预设 `meta` 下的字段数量或名称。
 - 将 contact 视为 `light_app` payload 的内容，不新增独立 `contact` segment 或 placeholder 类型。

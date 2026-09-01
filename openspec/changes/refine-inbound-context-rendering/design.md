@@ -62,7 +62,14 @@ normalizer 保留 `forward_id` 和既有 raw/reference 信息；普通 resolver 
 `get_forwarded_messages`，正文仅渲染 `[forward:<forward_id>]`。未来 QQ Tool 如需查看详情，
 应在独立工具契约中定义授权、参数校验、查询结果和上下文注入方式。
 
-### 5. 系统事件使用事件字段生成固定自然语言
+### 5. 图片占位符以后端实际落盘 basename 为准
+
+normalizer 阶段只能使用临时的 image placeholder，因为 Hermes image helper 尚未执行。trigger
+阶段成功调用 helper 后，resolver 读取其返回本地路径的 basename，并按 image segment 顺序替换
+对应 placeholder。这样最终交给 Hermes 的正文与 `media_urls` 使用同一个实际文件名；helper 失败或
+不可用时保留 `[img:NOT SUPPORTED]`。不修改 Hermes core，也不尝试让 helper 接受原始文件名。
+
+### 6. 系统事件使用事件字段生成固定自然语言
 
 `group_nudge` 仅输出发送者和接收者 UID；成员增加/减少输出稳定动作文本和协议字段 JSON
 Details。display action、动作图片 URL 以及未登记扩展字段不进入该事件的 body。事件只进入
