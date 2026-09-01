@@ -71,5 +71,96 @@
     "has_image": false,
     "text": "普通消息",
     "expected": "wait"
-  }
+  },
+  "target_signal_policy": {
+    "direct": "wait",
+    "mention": "trigger",
+    "mentionAll": "wait",
+    "quote": "trigger",
+    "poke": "trigger",
+    "allMessage": "wait",
+    "keywords": ["提醒"]
+  },
+  "target_signal_cases": [
+    {
+      "name": "self quote",
+      "event_type": "message_receive",
+      "mention_kinds": ["none"],
+      "has_reply": true,
+      "is_self_quote": true,
+      "is_self_poke": false,
+      "text": "中性文本",
+      "expected": "trigger"
+    },
+    {
+      "name": "other quote",
+      "event_type": "message_receive",
+      "mention_kinds": ["none"],
+      "has_reply": true,
+      "is_self_quote": false,
+      "is_self_poke": false,
+      "text": "中性文本",
+      "expected": "wait"
+    },
+    {
+      "name": "unknown quote",
+      "event_type": "message_receive",
+      "mention_kinds": ["none"],
+      "has_reply": true,
+      "is_self_quote": false,
+      "is_self_poke": false,
+      "text": "引用正文",
+      "expected": "wait"
+    },
+    {
+      "name": "self mention",
+      "event_type": "message_receive",
+      "mention_kinds": ["self"],
+      "has_reply": false,
+      "is_self_quote": false,
+      "is_self_poke": false,
+      "text": "中性文本",
+      "expected": "trigger"
+    },
+    {
+      "name": "other mention",
+      "event_type": "message_receive",
+      "mention_kinds": ["none"],
+      "has_reply": false,
+      "is_self_quote": false,
+      "is_self_poke": false,
+      "text": "中性文本",
+      "expected": "wait"
+    },
+    {
+      "name": "self poke",
+      "event_type": "group_nudge",
+      "mention_kinds": ["none"],
+      "has_reply": false,
+      "is_self_quote": false,
+      "is_self_poke": true,
+      "text": "",
+      "expected": "trigger"
+    },
+    {
+      "name": "other poke",
+      "event_type": "group_nudge",
+      "mention_kinds": ["none"],
+      "has_reply": false,
+      "is_self_quote": false,
+      "is_self_poke": false,
+      "text": "",
+      "expected": "wait"
+    },
+    {
+      "name": "keyword wins over other target",
+      "event_type": "message_receive",
+      "mention_kinds": ["none"],
+      "has_reply": true,
+      "is_self_quote": false,
+      "is_self_poke": false,
+      "text": "请提醒我",
+      "expected": "trigger"
+    }
+  ]
 }

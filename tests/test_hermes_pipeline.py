@@ -211,6 +211,19 @@ class FakeMuteTracker:
         return "unmuted", "unmuted"
 
 
+class RecordingWill:
+    """记录 Will 调用，验证系统事件不进入普通策略路径。"""
+
+    def __init__(self) -> None:
+        self.inputs: list[object] = []
+
+    def decide(self, input_value: object) -> str:
+        """记录输入并返回 trigger 供普通消息测试使用。"""
+
+        self.inputs.append(input_value)
+        return "trigger"
+
+
 def make_pipeline(
     hermes: FakeHermes,
     resolver: FakeResolver,
@@ -408,6 +421,39 @@ def test_duplicate_gate_deny_temp_and_system_event_stop_before_resolver_or_herme
     assert calls == ["1001"]
     assert [event.message_id for event in events] == ["1001"]
     assert observed == ["message_recall"]
+
+
+def test_self_poke_remains_observe_only_without_will_or_hermes_turn() -> None:
+    """self-poke 可被观察，但不能绕过普通消息生命周期。"""
+
+    async def scenario() -> tuple[str, list[tuple[str, str]], list[FakeMessageEvent], int, int]:
+        hermes = FakeHermes()
+        resolver = FakeResolver()
+        will = RecordingWill()
+        pipeline = make_pipeline(
+            hermes,
+            resolver,
+            routing=RoutingConfig(poke="trigger", all_message="trigger"),
+        ).with_will_engine(will)
+        result = await pipeline.handle_event(
+            load_fixture("../will_routing/target_signals.json")["nudge_cases"][0]["event"]
+        )
+        await pipeline.wait_idle()
+        return (
+            result.classification,
+            resolver.calls,
+            hermes.events,
+            pipeline.reply_costs,
+            len(will.inputs),
+        )
+
+    classification, calls, events, reply_costs, will_calls = asyncio.run(scenario())
+
+    assert classification == "observe_only"
+    assert calls == []
+    assert events == []
+    assert reply_costs == 0
+    assert will_calls == 0
 
 
 def test_materialization_finishes_before_mapping_and_submit_does_not_wait_for_agent() -> None:

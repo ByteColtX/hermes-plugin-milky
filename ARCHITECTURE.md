@@ -171,7 +171,7 @@ TTL map 的检查和插入必须原子完成，且早于资源补全、Will 和 
 
 只有 `message_receive` 进入普通消息路径。recall、request、notice、lifecycle 和未知事件默认 observe-only，不伪装成普通消息。
 
-`group_nudge`、`friend_nudge`、`group_member_increase`、`group_member_decrease` 可写入每 chat 独立、有界、可丢失的 system context FIFO；不创建 canonical、dedup、Gate、Will、reply cost 或独立 Hermes turn。它们与普通 wait 消息共享 ingress sequence，在下一次同 chat trigger 中按序合并并原子清除。缺少 chat key/必要字段时记录 `malformed`/`unsupported`；其他事件不自动发送或批准。
+`group_nudge`、`friend_nudge`、`group_member_increase`、`group_member_decrease` 可写入每 chat 独立、有界、可丢失的 system context FIFO；不创建 canonical、dedup、Gate、Will、reply cost 或独立 Hermes turn。group nudge 只有 `receiver_id == self_id` 才产生 self-poke，friend nudge 只有明确的自身接收方向且无自身发送冲突才产生 self-poke；该特征仍不改变 nudge 的 observe-only 边界。它们与普通 wait 消息共享 ingress sequence，在下一次同 chat trigger 中按序合并并原子清除。缺少 chat key/必要字段时记录 `malformed`/`unsupported`；其他事件不自动发送或批准。
 
 正文使用固定格式：`group_nudge` 为 `uid <sender_id> 戳了 uid <receiver_id>`，`friend_nudge` 为 `uid <user_id> 戳了一下`；成员加入/退出使用“加入了群聊”或“退出了群聊”，并附已确认的 JSON Details。缺少 `operator_id` 或 `invitor_id` 时省略，不补空字符串；display 文本、动作图片 URL 和未确认扩展字段不进入正文。
 
@@ -196,7 +196,7 @@ normalizer 不做网络 I/O。支持并保留 `text`、`mention`、`mention_all`
 | `xml` | `[xml:NOT SUPPORTED]` |
 | `markdown` | 原样进入正文 |
 
-缺失字段使用 `NOT SUPPORTED`，不得补造 ID、文件名或路径。mention 区分 self、all、here、none；Milky v1.3 不从普通文本或 mention 名称推断 here。
+缺失字段使用 `NOT SUPPORTED`，不得补造 ID、文件名或路径。mention 区分 self、all、here、none；直接提及只有 `mention.user_id == self_id` 才是 self，reply 只有 `reply.data.sender_id == self_id` 才是 self quote；Milky v1.3 不从普通文本或 mention 名称推断 here。
 
 inline `reply` 通过单行 header 的 `reply_to` 和 Hermes reply metadata 表达；补全失败才使用 `[reply:NOT SUPPORTED]`。普通 `forward` 只保留 `forward_id`。
 
@@ -234,7 +234,7 @@ Gate 不包含概率、关键词、回复发送、网络查询或 Will 分数修
 
 ### Will
 
-Will 只在 Gate allow 后运行，输出 `wait` 或 `trigger`。`WillInput` 至少包含 self/chat/channel、segments、正文、mention kind、quote、image、event type 和时间。
+Will 只在 Gate allow 后运行，输出 `wait` 或 `trigger`。`WillInput` 至少包含 self/chat/channel、segments、正文、独立的 self mention/self quote/self-poke 特征、reply 存在性与目标序号、image、event type 和时间。routing 的 `mention`、`quote`、`poke` 分别只匹配明确涉及 Bot 自身的目标；nudge 即使形成 self-poke routing 信号仍保持 observe-only。
 
 配置使用嵌套 `engine`、`routing`、`willingness`、`priority` schema。routing 按 direct、mention、mentionAll、quote、poke、allMessage、keywords 顺序处理；willingness 按 chat 隔离维护 `score`、`lastMessageAt`、`lastDecayAt`。公式、半衰期、ratio、概率 clamp、force、关键词、direct/image/reply/poke 和时钟回拨以 OpenSpec 为准，clock/random 依赖注入。
 

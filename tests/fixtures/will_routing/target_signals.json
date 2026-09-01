@@ -1,0 +1,242 @@
+{
+  "message_cases": [
+    {
+      "name": "self_mention",
+      "event": {
+        "event_type": "message_receive",
+        "time": 1700000101,
+        "self_id": 900000001,
+        "data": {
+          "message_scene": "group",
+          "peer_id": 700000001,
+          "message_seq": 3001,
+          "sender_id": 800000002,
+          "time": 1700000101,
+          "segments": [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "text", "data": {"text": "合成正文"}}
+          ]
+        }
+      },
+      "expected_mention_kinds": ["self"],
+      "expected_self_quote": false
+    },
+    {
+      "name": "other_mention_with_bot_name",
+      "event": {
+        "event_type": "message_receive",
+        "time": 1700000102,
+        "self_id": 900000001,
+        "data": {
+          "message_scene": "group",
+          "peer_id": 700000001,
+          "message_seq": 3002,
+          "sender_id": 800000002,
+          "time": 1700000102,
+          "segments": [
+            {"type": "mention", "data": {"user_id": 800000003, "name": "合成机器人"}},
+            {"type": "text", "data": {"text": "合成正文"}}
+          ]
+        }
+      },
+      "expected_mention_kinds": ["none"],
+      "expected_self_quote": false
+    },
+    {
+      "name": "mention_all",
+      "event": {
+        "event_type": "message_receive",
+        "time": 1700000103,
+        "self_id": 900000001,
+        "data": {
+          "message_scene": "group",
+          "peer_id": 700000001,
+          "message_seq": 3003,
+          "sender_id": 800000002,
+          "time": 1700000103,
+          "segments": [
+            {"type": "mention_all", "data": {}},
+            {"type": "text", "data": {"text": "合成正文"}}
+          ]
+        }
+      },
+      "expected_mention_kinds": ["all"],
+      "expected_self_quote": false
+    },
+    {
+      "name": "self_quote",
+      "event": {
+        "event_type": "message_receive",
+        "time": 1700000104,
+        "self_id": 900000001,
+        "data": {
+          "message_scene": "group",
+          "peer_id": 700000001,
+          "message_seq": 3004,
+          "sender_id": 800000002,
+          "time": 1700000104,
+          "segments": [
+            {
+              "type": "reply",
+              "data": {
+                "message_seq": 2001,
+                "sender_id": 900000001,
+                "sender_name": "合成机器人",
+                "time": 1700000099,
+                "segments": [{"type": "text", "data": {"text": "被引用正文"}}]
+              }
+            },
+            {"type": "text", "data": {"text": "合成正文"}}
+          ]
+        }
+      },
+      "expected_reply_message_seq": 2001,
+      "expected_self_quote": true
+    },
+    {
+      "name": "other_quote_even_when_current_sender_is_bot",
+      "event": {
+        "event_type": "message_receive",
+        "time": 1700000105,
+        "self_id": 900000001,
+        "data": {
+          "message_scene": "group",
+          "peer_id": 700000001,
+          "message_seq": 3005,
+          "sender_id": 900000001,
+          "time": 1700000105,
+          "segments": [
+            {
+              "type": "reply",
+              "data": {
+                "message_seq": 2002,
+                "sender_id": 800000003,
+                "sender_name": "合成用户",
+                "time": 1700000098,
+                "segments": [
+                  {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}}
+                ]
+              }
+            },
+            {"type": "text", "data": {"text": "合成正文"}}
+          ]
+        }
+      },
+      "expected_reply_message_seq": 2002,
+      "expected_self_quote": false
+    },
+    {
+      "name": "unknown_quote_sender",
+      "event": {
+        "event_type": "message_receive",
+        "time": 1700000106,
+        "self_id": 900000001,
+        "data": {
+          "message_scene": "group",
+          "peer_id": 700000001,
+          "message_seq": 3006,
+          "sender_id": 800000002,
+          "time": 1700000106,
+          "segments": [
+            {
+              "type": "reply",
+              "data": {
+                "message_seq": 2003,
+                "time": 1700000097,
+                "segments": [{"type": "text", "data": {"text": "被引用正文"}}]
+              }
+            },
+            {"type": "text", "data": {"text": "合成正文"}}
+          ]
+        }
+      },
+      "expected_reply_message_seq": 2003,
+      "expected_classification": "malformed",
+      "expected_self_quote": false
+    }
+  ],
+  "nudge_cases": [
+    {
+      "name": "group_self_poke",
+      "event": {
+        "event_type": "group_nudge",
+        "time": 1700000201,
+        "self_id": 900000001,
+        "data": {"group_id": 700000001, "sender_id": 800000002, "receiver_id": 900000001}
+      },
+      "expected_self_poke": true
+    },
+    {
+      "name": "group_other_poke",
+      "event": {
+        "event_type": "group_nudge",
+        "time": 1700000202,
+        "self_id": 900000001,
+        "data": {"group_id": 700000001, "sender_id": 800000002, "receiver_id": 800000003}
+      },
+      "expected_self_poke": false
+    },
+    {
+      "name": "group_bot_outgoing_poke",
+      "event": {
+        "event_type": "group_nudge",
+        "time": 1700000203,
+        "self_id": 900000001,
+        "data": {"group_id": 700000001, "sender_id": 900000001, "receiver_id": 800000003}
+      },
+      "expected_self_poke": false
+    },
+    {
+      "name": "friend_self_poke",
+      "event": {
+        "event_type": "friend_nudge",
+        "time": 1700000204,
+        "self_id": 900000001,
+        "data": {"user_id": 800000001, "is_self_send": false, "is_self_receive": true}
+      },
+      "expected_self_poke": true
+    },
+    {
+      "name": "friend_bot_outgoing_poke",
+      "event": {
+        "event_type": "friend_nudge",
+        "time": 1700000205,
+        "self_id": 900000001,
+        "data": {"user_id": 800000001, "is_self_send": true, "is_self_receive": false}
+      },
+      "expected_self_poke": false
+    },
+    {
+      "name": "friend_direction_missing",
+      "event": {
+        "event_type": "friend_nudge",
+        "time": 1700000206,
+        "self_id": 900000001,
+        "data": {"user_id": 800000001, "is_self_send": false}
+      },
+      "expected_classification": "malformed",
+      "expected_self_poke": false
+    },
+    {
+      "name": "friend_direction_invalid",
+      "event": {
+        "event_type": "friend_nudge",
+        "time": 1700000207,
+        "self_id": 900000001,
+        "data": {"user_id": 800000001, "is_self_send": "false", "is_self_receive": true}
+      },
+      "expected_classification": "malformed",
+      "expected_self_poke": false
+    },
+    {
+      "name": "friend_direction_conflict",
+      "event": {
+        "event_type": "friend_nudge",
+        "time": 1700000208,
+        "self_id": 900000001,
+        "data": {"user_id": 800000001, "is_self_send": true, "is_self_receive": true}
+      },
+      "expected_self_poke": false
+    }
+  ]
+}

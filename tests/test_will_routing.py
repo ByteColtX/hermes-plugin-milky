@@ -27,6 +27,8 @@ def make_input(
     mention_kinds: tuple[str, ...] = ("none",),
     has_reply: bool = False,
     has_image: bool = False,
+    is_self_quote: bool = False,
+    is_self_poke: bool = False,
     text: str = "合成文本",
     event_type: str = "message_receive",
 ) -> WillInput:
@@ -45,6 +47,8 @@ def make_input(
         has_reply=has_reply,
         reply_message_seq=1000 if has_reply else None,
         has_image=has_image,
+        is_self_quote=is_self_quote,
+        is_self_poke=is_self_poke,
     )
 
 
@@ -67,6 +71,7 @@ def test_routing_merges_all_matching_rules_without_priority() -> None:
             make_input(
                 mention_kinds=("self",),
                 has_reply=True,
+                is_self_quote=True,
             )
         )
         == "trigger"
@@ -131,6 +136,26 @@ def test_routing_accepts_fixture_cases() -> None:
         == empty_case["expected"]
     )
 
+    target_engine = RoutingWillEngine(
+        RoutingConfig.from_mapping(fixture["target_signal_policy"])  # type: ignore[arg-type]
+    )
+    for case in fixture["target_signal_cases"]:  # type: ignore[union-attr]
+        assert isinstance(case, dict)
+        assert (
+            target_engine.decide(
+                make_input(
+                    scene="friend" if case["event_type"] == "message_receive" else "group",
+                    event_type=case["event_type"],  # type: ignore[arg-type]
+                    mention_kinds=tuple(case["mention_kinds"]),  # type: ignore[arg-type]
+                    has_reply=case["has_reply"],  # type: ignore[arg-type]
+                    is_self_quote=case["is_self_quote"],  # type: ignore[arg-type]
+                    is_self_poke=case["is_self_poke"],  # type: ignore[arg-type]
+                    text=case["text"],  # type: ignore[arg-type]
+                )
+            )
+            == case["expected"]
+        )
+
 
 @pytest.mark.parametrize("field_name", ["group", "image", "mentionHere"])
 def test_routing_rejects_removed_fields(field_name: str) -> None:
@@ -156,6 +181,17 @@ def test_routing_keeps_poke_and_system_nudge_observe_only() -> None:
     assert engine.decide(make_input(event_type="poke")) == "wait"
     assert engine.decide(make_input(event_type="friend_nudge")) == "wait"
     assert engine.decide(make_input(event_type="group_nudge")) == "wait"
+
+
+def test_routing_only_accepts_explicit_self_poke_observations() -> None:
+    """poke 只有在输入明确确认 Bot 为接收者时才命中。"""
+
+    engine = RoutingWillEngine(RoutingConfig(poke="trigger"))
+
+    assert engine.decide(make_input(event_type="group_nudge", is_self_poke=True)) == "trigger"
+    assert engine.decide(make_input(event_type="friend_nudge", is_self_poke=True)) == "trigger"
+    assert engine.decide(make_input(event_type="group_nudge")) == "wait"
+    assert engine.decide(make_input(event_type="poke", is_self_poke=True)) == "trigger"
 
 
 def test_routing_has_no_network_random_or_file_side_effect(

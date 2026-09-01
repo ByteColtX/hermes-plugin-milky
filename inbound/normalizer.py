@@ -57,6 +57,7 @@ class NormalizedMessage:
     mention_kinds: tuple[MentionKind, ...]
     has_reply: bool
     reply_message_seq: int | None
+    is_self_quote: bool
     has_image: bool
     media_resource_references: tuple[MediaResourceReference, ...]
     file_attachment_references: tuple[FileAttachmentReference, ...]
@@ -90,9 +91,21 @@ class NormalizedMessage:
 
     @property
     def has_quote(self) -> bool:
-        """返回是否存在可用引用目标。"""
+        """返回是否存在 reply segment。"""
 
-        return self.reply_message_seq is not None
+        return self.has_reply
+
+    @property
+    def self_quote(self) -> bool:
+        """返回 reply 是否明确指向 Bot。"""
+
+        return self.is_self_quote
+
+    @property
+    def has_self_quote(self) -> bool:
+        """返回是否存在指向 Bot 的 reply。"""
+
+        return self.is_self_quote
 
     @property
     def reply_message_id(self) -> str | None:
@@ -197,6 +210,7 @@ def normalize_message(
         mention_kinds=_mention_kinds(extracted.mention_kinds),
         has_reply=extracted.has_reply,
         reply_message_seq=extracted.reply_message_seq,
+        is_self_quote=extracted.is_self_quote,
         has_image=extracted.has_image,
         media_resource_references=extracted.media_resource_references,
         file_attachment_references=extracted.file_attachment_references,
@@ -218,6 +232,7 @@ def normalize_message(
             has_reply=extracted.has_reply,
             reply_message_seq=extracted.reply_message_seq,
             has_image=extracted.has_image,
+            is_self_quote=extracted.is_self_quote,
         ),
         friend=message.friend,
         group=message.group,

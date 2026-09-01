@@ -15,12 +15,19 @@ from inbound.normalizer import normalize_event
 from milky.models import UnknownSegment
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "protocol"
+WILL_FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "will_routing"
 
 
 def load_fixture(relative_path: str) -> object:
     """读取脱敏协议 fixture。"""
 
     return json.loads((FIXTURE_ROOT / relative_path).read_text(encoding="utf-8"))
+
+
+def load_will_fixture() -> dict[str, object]:
+    """读取消息目标判断的脱敏 fixture。"""
+
+    return json.loads((WILL_FIXTURE_ROOT / "target_signals.json").read_text(encoding="utf-8"))
 
 
 def test_normalizer_preserves_all_known_segments_and_strategy_features() -> None:
@@ -158,7 +165,8 @@ def test_reply_missing_required_fields_is_malformed_without_fabricating_quote() 
     assert result.classification == "malformed"
     assert result.value is not None
     assert result.value.has_reply is True
-    assert result.value.reply_message_seq is None
+    assert result.value.reply_message_seq == 1000
+    assert result.value.is_self_quote is False
     assert result.value.body == "[reply:NOT SUPPORTED]"
     assert "malformed_reply" in result.value.diagnostics
 
@@ -187,6 +195,34 @@ def test_inline_reply_does_not_need_remote_resolution() -> None:
     assert result.value.reply_message_seq == 1000
     assert result.value.body == "朋友消息"
     assert "[引用]" not in result.value.body
+
+
+def test_target_fixture_keeps_self_quote_separate_from_reply_and_sender() -> None:
+    """reply 作者才决定 self quote，当前消息作者和嵌套 mention 不参与判断。"""
+
+    fixture = load_will_fixture()
+    for case in fixture["message_cases"]:  # type: ignore[union-attr]
+        assert isinstance(case, dict)
+        result = normalize_event(case["event"])
+        expected_classification = case.get("expected_classification", "accepted")
+        assert result.classification == expected_classification
+        assert result.value is not None
+        normalized = result.value
+        assert list(normalized.mention_kinds) == case.get("expected_mention_kinds", ["none"])
+        assert normalized.is_self_quote is case["expected_self_quote"]
+        assert normalized.will_input.is_self_quote is case["expected_self_quote"]
+        assert normalized.will_input.has_reply == ("expected_reply_message_seq" in case)
+        if "expected_reply_message_seq" in case:
+            assert normalized.reply_message_seq == case["expected_reply_message_seq"]
+            assert normalized.will_input.reply_message_seq == case["expected_reply_message_seq"]
+
+
+def test_target_fixture_contains_only_synthetic_protocol_fields() -> None:
+    """目标 fixture 不得携带凭证、路径、URL 或敏感正文。"""
+
+    contents = (WILL_FIXTURE_ROOT / "target_signals.json").read_text(encoding="utf-8")
+    forbidden = ("MILKY_ACCESS_TOKEN", "Authorization", "Bearer ", "http://", "https://", "/Users/")
+    assert not any(value in contents for value in forbidden)
 
 
 def test_media_and_forward_only_store_references() -> None:

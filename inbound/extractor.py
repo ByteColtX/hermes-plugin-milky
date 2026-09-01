@@ -95,6 +95,7 @@ class ExtractedSegments:
     mention_kinds: tuple[str, ...]
     has_reply: bool
     reply_message_seq: int | None
+    is_self_quote: bool
     has_image: bool
     media_resource_references: tuple[MediaResourceReference, ...]
     file_attachment_references: tuple[FileAttachmentReference, ...]
@@ -120,6 +121,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
     diagnostics: list[str] = []
     has_reply = False
     reply_message_seq: int | None = None
+    is_self_quote = False
     has_image = False
     has_supported_content = False
 
@@ -169,10 +171,11 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
                     raw=_safe_mapping(segment.raw),
                 )
             )
-            if complete:
-                if reply_message_seq is None:
-                    reply_message_seq = segment.message_seq
-            else:
+            if reply_message_seq is None and segment.message_seq is not None:
+                reply_message_seq = segment.message_seq
+            if segment.sender_id == self_id:
+                is_self_quote = True
+            if not complete:
                 body_parts.append("[reply:NOT SUPPORTED]")
                 _append_once(diagnostics, "malformed_reply")
             continue
@@ -312,6 +315,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
         mention_kinds=tuple(mention_kinds),
         has_reply=has_reply,
         reply_message_seq=reply_message_seq,
+        is_self_quote=is_self_quote,
         has_image=has_image,
         media_resource_references=tuple(media_resource_references),
         file_attachment_references=tuple(file_attachment_references),

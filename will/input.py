@@ -26,6 +26,8 @@ class WillInput:
     has_reply: bool
     reply_message_seq: int | None
     has_image: bool
+    is_self_quote: bool = False
+    is_self_poke: bool = False
 
     @property
     def mention_kind(self) -> MentionKind:
@@ -56,9 +58,33 @@ class WillInput:
 
     @property
     def has_quote(self) -> bool:
-        """返回是否存在可用的引用目标。"""
+        """返回是否存在 reply segment。"""
 
-        return self.reply_message_seq is not None
+        return self.has_reply
+
+    @property
+    def self_quote(self) -> bool:
+        """返回 reply 是否明确指向 Bot。"""
+
+        return self.is_self_quote
+
+    @property
+    def has_self_quote(self) -> bool:
+        """返回是否存在指向 Bot 的 reply。"""
+
+        return self.is_self_quote
+
+    @property
+    def self_poke(self) -> bool:
+        """返回 nudge 是否明确由协议确认 Bot 为接收者。"""
+
+        return self.is_self_poke
+
+    @property
+    def has_self_poke(self) -> bool:
+        """返回是否存在指向 Bot 的 poke 观察。"""
+
+        return self.is_self_poke
 
     @property
     def image(self) -> bool:

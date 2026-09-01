@@ -9,6 +9,7 @@ from typing import Literal
 from .input import WillInput
 
 Decision = Literal["wait", "trigger"]
+_POKE_EVENTS = frozenset({"poke", "notice.poke", "friend_nudge", "group_nudge"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +101,8 @@ class RoutingWillEngine:
 
         if not isinstance(input_value, WillInput):
             raise TypeError("input_value must be a WillInput")
+        if input_value.event_type in _POKE_EVENTS:
+            return self.config.poke if input_value.is_self_poke else "wait"
         if input_value.event_type != "message_receive":
             return "wait"
         matched_actions: list[Decision] = [self.config.all_message]
@@ -109,7 +112,7 @@ class RoutingWillEngine:
             matched_actions.append(self.config.mention)
         if input_value.mention_all:
             matched_actions.append(self.config.mention_all)
-        if input_value.has_reply:
+        if input_value.is_self_quote:
             matched_actions.append(self.config.quote)
         if any(keyword in input_value.text for keyword in self.config.keywords):
             matched_actions.append("trigger")

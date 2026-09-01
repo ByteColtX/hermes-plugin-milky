@@ -149,10 +149,15 @@ chat key 只接受 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>`；`temp
 `MILKY_WILL_POLICY` 必须使用嵌套 schema；`engine` 可选 `routing` 或 `willingness`，默认
 engine 为 `routing`。动作值只能是 `wait` 或 `trigger`：
 
-- `direct`、`mention`、`mentionAll`、`quote`、`poke` 控制对应信号；
+- `direct`、`mention`、`mentionAll`、`quote`、`poke` 控制对应信号；`mention` 只匹配
+  `mention.user_id == self_id`，`quote` 只匹配 `reply.data.sender_id == self_id`，`poke` 只
+  匹配协议明确确认 Bot 为接收者的 nudge；
 - `allMessage` 对每条普通 friend/group 消息生效，默认 `wait`；
 - `keywords` 是正文直接匹配的非空字符串数组，命中时确定性触发；空数组不产生命中；
 - 图片没有独立 routing 动作，作为普通 segment 进入延迟媒体处理。
+
+`friend_nudge` 和 `group_nudge` 始终是 observe-only。self-poke 可以作为 Will routing 信号，
+但不会直接创建普通 `MessageEvent`、Agent turn、回复扣费或隐式 Action 调用。
 
 完整默认示例：
 
