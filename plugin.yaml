@@ -2,6 +2,9 @@ name: hermes-plugin-milky
 label: Milky QQ
 kind: platform
 version: 0.1.0
+manifest_version: 2
+python_dependencies:
+  - "httpx>=0.27,<1"
 description: >-
   将 Milky QQ 的 HTTP Action 和 SSE `/event` 接入 Hermes Gateway：接收
   friend/group 的 `message_receive`，完成规范化、去重、Gate、Will 和 Agent 交接；

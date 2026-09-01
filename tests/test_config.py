@@ -265,6 +265,8 @@ def test_manifest_declares_only_the_new_environment_contract_and_tools() -> None
 
     manifest = (PROJECT_ROOT / "plugin.yaml").read_text(encoding="utf-8")
 
+    assert "manifest_version: 2" in manifest
+    assert 'python_dependencies:\n  - "httpx>=0.27,<1"' in manifest
     assert "MILKY_BASE_URL" in manifest
     assert "MILKY_ACCESS_TOKEN" in manifest
     assert "MILKY_ALLOWED_CHATS" in manifest
