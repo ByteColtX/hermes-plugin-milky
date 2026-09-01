@@ -14,7 +14,11 @@ from gates import GateContext, GateRegistry
 from milky.models import Event
 from milky.observability import log_event
 from milky.parser import ParseError, parse_event
-from milky.resources import ResolvedTriggerBatch, ResourceResolver
+from milky.resources import (
+    HermesAttachmentMaterialization,
+    ResolvedTriggerBatch,
+    ResourceResolver,
+)
 from session import (
     ChatAdmissionCoordinator,
     ContextOnlyEvent,
@@ -345,6 +349,7 @@ class InboundPipeline:
                 current,
                 resolved_batch.current,
                 channel_context=_render_resolved_history(batch, resolved_batch),
+                context_image_materializations=_context_image_materializations(resolved_batch),
                 source=source,
                 message_event_cls=self._message_event_cls,
                 message_type_cls=self._message_type_cls,
@@ -592,6 +597,18 @@ def _render_resolved_history(batch: object, resolved_batch: ResolvedTriggerBatch
         for event in getattr(batch, "system_context", ())
     )
     return render_ordered_context(records)
+
+
+def _context_image_materializations(
+    resolved_batch: ResolvedTriggerBatch,
+) -> tuple[HermesAttachmentMaterialization, ...]:
+    """按历史 context 顺序提取正文中实际展示的图片附件。"""
+
+    return tuple(
+        materialization
+        for message in resolved_batch.history
+        for materialization in message.context_image_materializations
+    )
 
 
 @dataclass(frozen=True, slots=True)

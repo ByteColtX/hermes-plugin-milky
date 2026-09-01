@@ -131,6 +131,7 @@ class ResolvedMessage:
     replies: tuple[ResolvedReply, ...] = ()
     forwards: tuple[ResolvedForward, ...] = ()
     diagnostics: tuple[ResourceDiagnostic, ...] = ()
+    context_image_materializations: tuple[HermesAttachmentMaterialization, ...] = ()
 
     @property
     def media_materializations(self) -> tuple[HermesAttachmentMaterialization, ...]:
@@ -172,6 +173,7 @@ class _ContentResolution:
 
     body: str
     materializations: tuple[HermesAttachmentMaterialization, ...]
+    context_image_materializations: tuple[HermesAttachmentMaterialization, ...]
     replies: tuple[ResolvedReply, ...]
     forwards: tuple[ResolvedForward, ...]
     diagnostics: tuple[ResourceDiagnostic, ...]
@@ -207,6 +209,7 @@ class ResourceResolver:
             replies=content.replies,
             forwards=content.forwards,
             diagnostics=content.diagnostics,
+            context_image_materializations=content.context_image_materializations,
         )
 
     async def resolve_message(self, message: object) -> ResolvedMessage:
@@ -292,6 +295,7 @@ class ResourceResolver:
         depth: int,
     ) -> _ContentResolution:
         materializations: list[HermesAttachmentMaterialization] = []
+        context_image_materializations: list[HermesAttachmentMaterialization] = []
         diagnostics: list[ResourceDiagnostic] = []
         replies: list[ResolvedReply] = []
         forwards: list[ResolvedForward] = []
@@ -301,6 +305,7 @@ class ResourceResolver:
             if resolved is not None:
                 materializations.append(resolved)
                 if _field(reference, "kind") == "image":
+                    context_image_materializations.append(resolved)
                     body = _replace_first(
                         body,
                         _available_marker(reference),
@@ -356,6 +361,7 @@ class ResourceResolver:
         return _ContentResolution(
             body=body,
             materializations=tuple(materializations),
+            context_image_materializations=tuple(context_image_materializations),
             replies=tuple(replies),
             forwards=tuple(forwards),
             diagnostics=tuple(diagnostics),
