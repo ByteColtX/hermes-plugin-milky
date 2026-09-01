@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "tools": [
+    {
+      "operation_id": "get_forwarded_messages",
+      "required": ["forward_id"],
+      "optional": [],
+      "properties": {
+        "forward_id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    {
+      "operation_id": "get_private_file_download_url",
+      "required": ["user_id", "file_id", "file_hash"],
+      "optional": ["is_self_send"],
+      "properties": {
+        "user_id": {"type": "integer", "minimum": 10001, "maximum": 4294967295},
+        "file_id": {"type": "string", "minLength": 1},
+        "file_hash": {"type": "string", "minLength": 1},
+        "is_self_send": {"type": "boolean", "nullable": true}
+      },
+      "additionalProperties": false
+    },
+    {
+      "operation_id": "kick_group_member",
+      "required": ["group_id", "user_id"],
+      "optional": ["reject_add_request"],
+      "properties": {
+        "group_id": {"type": "integer", "minimum": 10001, "maximum": 4294967295},
+        "user_id": {"type": "integer", "minimum": 10001, "maximum": 4294967295},
+        "reject_add_request": {"type": "boolean", "nullable": true}
+      },
+      "additionalProperties": false
+    },
+    {
+      "operation_id": "quit_group",
+      "required": ["group_id"],
+      "optional": [],
+      "properties": {
+        "group_id": {"type": "integer", "minimum": 10001, "maximum": 4294967295}
+      },
+      "additionalProperties": false
+    },
+    {
+      "operation_id": "delete_friend",
+      "required": ["user_id"],
+      "optional": [],
+      "properties": {
+        "user_id": {"type": "integer", "minimum": 10001, "maximum": 4294967295}
+      },
+      "additionalProperties": false
+    },
+    {
+      "operation_id": "get_friend_requests",
+      "required": [],
+      "optional": ["limit", "is_filtered"],
+      "properties": {
+        "limit": {"type": "integer", "minimum": 0, "maximum": 9007199254740991, "nullable": true},
+        "is_filtered": {"type": "boolean", "nullable": true}
+      },
+      "additionalProperties": false
+    },
+    {
+      "operation_id": "accept_friend_request",
+      "required": ["initiator_uid"],
+      "optional": ["is_filtered"],
+      "properties": {
+        "initiator_uid": {"type": "string", "minLength": 1},
+        "is_filtered": {"type": "boolean", "nullable": true}
+      },
+      "additionalProperties": false
+    },
+    {
+      "operation_id": "reject_friend_request",
+      "required": ["initiator_uid"],
+      "optional": ["is_filtered", "reason"],
+      "properties": {
+        "initiator_uid": {"type": "string", "minLength": 1},
+        "is_filtered": {"type": "boolean", "nullable": true},
+        "reason": {"type": "string", "nullable": true}
+      },
+      "additionalProperties": false
+    }
+  ]
+}

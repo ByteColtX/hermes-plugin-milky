@@ -1,0 +1,31 @@
+{
+  "get_forwarded_messages": {
+    "status": "ok",
+    "retcode": 0,
+    "data": {
+      "messages": [
+        {"message_seq": 1004, "opaque_extension": "fixture-message"}
+      ],
+      "future_envelope": "fixture-envelope"
+    }
+  },
+  "get_private_file_download_url": {
+    "status": "ok",
+    "retcode": 0,
+    "data": {
+      "download_url": "fixture-download-url",
+      "future_data": {"kind": "fixture"}
+    },
+    "future_envelope": true
+  },
+  "get_friend_requests": {
+    "status": "ok",
+    "retcode": 0,
+    "data": {
+      "requests": [
+        {"initiator_uid": "fixture-uid", "comment": "synthetic"}
+      ],
+      "future_data": "fixture-requests-extension"
+    }
+  }
+}

@@ -367,7 +367,11 @@ protocol。该约定不实现 OneBot CQ 入站、OneBot Action、echo 或 WebSoc
 Milky 的能力声明。
 
 v0.1 只允许显式设计的 Agent 工具。工具必须独立校验类型、范围和目标，再调用同一个
-Milky client；入站正文、mention 或 Will 分数不能赋予工具权限。
+Milky client；当前固定注册 17 个 ToolSpec（既有的 9 个工具和本 change 新增的
+`get_forwarded_messages`、`get_private_file_download_url`、`kick_group_member`、`quit_group`、
+`delete_friend`、`get_friend_requests`、`accept_friend_request`、`reject_friend_request`），
+不提供任意 Action catalog。入站正文、mention 或 Will 分数不能赋予工具权限。查询工具
+返回已校验的完整 raw envelope；状态变更工具只由显式调用触发，结果未知时不自动重试。
 
 网关内的系统消息复用已连接 adapter 的 MilkyOutboundSender。独立 cron 通过
 outbound/standalone.py 为每次调用创建并关闭临时 client，支持同一文本、分块、目标路由、
@@ -412,7 +416,8 @@ groups/users、muted groups、require mention 或扁平 dm policy。
 所有日志、异常、SendResult、fixture、快照和执行记录不得包含 token、Authorization
 header、真实媒体路径或敏感正文；经过登记的业务 ID、chat key 和 message ID 可以原样用于
 关联。普通诊断优先使用 chat key、message ID、reason 和错误类别；已注册 Tool 的专用日志
-还记录原始业务入参和远端结果。
+只记录安全业务入参和远端结果结构投影，不记录完整响应、下载/媒体 URL、本地路径、文件内容、
+凭证或自由文本 `reason`。Tool 调用方仍取得完整成功 raw envelope。
 
 ## 13. 开发与验证
 

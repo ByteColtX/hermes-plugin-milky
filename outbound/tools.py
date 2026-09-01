@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import fields, is_dataclass
 from typing import Any
@@ -15,10 +16,13 @@ from milky.observability import log_event
 
 from .sender import (
     MilkyOutboundSender,
+    OutboundSendResult,
 )
 
 _ACTIVE_SENDER: MilkyOutboundSender | None = None
+_MISSING = object()
 logger = logging.getLogger(__name__)
+_SAFE_TOOL_OPAQUE = re.compile(r"^[A-Za-z0-9_.:-]+$")
 
 SEND_PROFILE_LIKE_SCHEMA = {
     "name": "send_profile_like",
@@ -245,6 +249,194 @@ SET_GROUP_WHOLE_MUTE_SCHEMA = {
     },
 }
 
+GET_FORWARDED_MESSAGES_SCHEMA = {
+    "name": "get_forwarded_messages",
+    "description": "查询指定合并转发消息的完整 Milky 结果。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "forward_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "合并转发消息 ID",
+            }
+        },
+        "required": ["forward_id"],
+        "additionalProperties": False,
+    },
+}
+
+GET_PRIVATE_FILE_DOWNLOAD_URL_SCHEMA = {
+    "name": "get_private_file_download_url",
+    "description": "查询私聊文件的下载链接；工具不会下载或缓存文件。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "user_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "私聊对象 QQ 号",
+            },
+            "file_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "文件 ID",
+            },
+            "file_hash": {
+                "type": "string",
+                "minLength": 1,
+                "description": "文件 hash",
+            },
+            "is_self_send": {
+                "type": "boolean",
+                "nullable": True,
+                "description": "文件是否由自己发送",
+            },
+        },
+        "required": ["user_id", "file_id", "file_hash"],
+        "additionalProperties": False,
+    },
+}
+
+KICK_GROUP_MEMBER_SCHEMA = {
+    "name": "kick_group_member",
+    "description": "将指定 QQ 移出群聊；仅在显式调用时执行。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "group_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "群号",
+            },
+            "user_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "待移出成员 QQ 号",
+            },
+            "reject_add_request": {
+                "type": "boolean",
+                "nullable": True,
+                "description": "是否拒绝该成员再次加群申请",
+            },
+        },
+        "required": ["group_id", "user_id"],
+        "additionalProperties": False,
+    },
+}
+
+QUIT_GROUP_SCHEMA = {
+    "name": "quit_group",
+    "description": "退出指定群聊；仅在显式调用时执行。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "group_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "群号",
+            }
+        },
+        "required": ["group_id"],
+        "additionalProperties": False,
+    },
+}
+
+DELETE_FRIEND_SCHEMA = {
+    "name": "delete_friend",
+    "description": "删除指定好友关系；仅在显式调用时执行。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "user_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "好友 QQ 号",
+            }
+        },
+        "required": ["user_id"],
+        "additionalProperties": False,
+    },
+}
+
+GET_FRIEND_REQUESTS_SCHEMA = {
+    "name": "get_friend_requests",
+    "description": "查询好友请求列表并保留完整 Milky 结果。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "limit": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "nullable": True,
+                "description": "最多返回的请求数量",
+            },
+            "is_filtered": {
+                "type": "boolean",
+                "nullable": True,
+                "description": "是否只返回过滤后的请求",
+            },
+        },
+        "required": [],
+        "additionalProperties": False,
+    },
+}
+
+ACCEPT_FRIEND_REQUEST_SCHEMA = {
+    "name": "accept_friend_request",
+    "description": "接受指定好友请求；仅在显式调用时执行。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "initiator_uid": {
+                "type": "string",
+                "minLength": 1,
+                "description": "好友请求发起者 UID",
+            },
+            "is_filtered": {
+                "type": "boolean",
+                "nullable": True,
+                "description": "是否按过滤后的请求处理",
+            },
+        },
+        "required": ["initiator_uid"],
+        "additionalProperties": False,
+    },
+}
+
+REJECT_FRIEND_REQUEST_SCHEMA = {
+    "name": "reject_friend_request",
+    "description": "拒绝指定好友请求；仅在显式调用时执行。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "initiator_uid": {
+                "type": "string",
+                "minLength": 1,
+                "description": "好友请求发起者 UID",
+            },
+            "is_filtered": {
+                "type": "boolean",
+                "nullable": True,
+                "description": "是否按过滤后的请求处理",
+            },
+            "reason": {
+                "type": "string",
+                "nullable": True,
+                "description": "拒绝理由",
+            },
+        },
+        "required": ["initiator_uid"],
+        "additionalProperties": False,
+    },
+}
+
 TOOL_SPECS = (
     SEND_PROFILE_LIKE_SCHEMA,
     SEND_FRIEND_NUDGE_SCHEMA,
@@ -255,6 +447,14 @@ TOOL_SPECS = (
     GET_GROUP_MEMBER_INFO_SCHEMA,
     SET_GROUP_MEMBER_MUTE_SCHEMA,
     SET_GROUP_WHOLE_MUTE_SCHEMA,
+    GET_FORWARDED_MESSAGES_SCHEMA,
+    GET_PRIVATE_FILE_DOWNLOAD_URL_SCHEMA,
+    KICK_GROUP_MEMBER_SCHEMA,
+    QUIT_GROUP_SCHEMA,
+    DELETE_FRIEND_SCHEMA,
+    GET_FRIEND_REQUESTS_SCHEMA,
+    ACCEPT_FRIEND_REQUEST_SCHEMA,
+    REJECT_FRIEND_REQUEST_SCHEMA,
 )
 
 
@@ -275,7 +475,7 @@ def unbind_sender() -> None:
 
 
 def register_tools(ctx: Any) -> None:
-    """向 Hermes 注册与 Milky operationId 对齐的九个异步 ToolSpec。"""
+    """向 Hermes 注册与 Milky operationId 对齐的十七个异步 ToolSpec。"""
 
     register_tool = getattr(ctx, "register_tool", None)
     if not callable(register_tool):
@@ -290,6 +490,14 @@ def register_tools(ctx: Any) -> None:
         _handle_get_group_member_info,
         _handle_set_group_member_mute,
         _handle_set_group_whole_mute,
+        _handle_get_forwarded_messages,
+        _handle_get_private_file_download_url,
+        _handle_kick_group_member,
+        _handle_quit_group,
+        _handle_delete_friend,
+        _handle_get_friend_requests,
+        _handle_accept_friend_request,
+        _handle_reject_friend_request,
     )
     for spec, handler in zip(TOOL_SPECS, handlers, strict=True):
         register_tool(
@@ -529,6 +737,206 @@ async def _handle_set_group_whole_mute(args: object, **kwargs: Any) -> str:
     )
 
 
+async def _handle_get_forwarded_messages(args: object, **kwargs: Any) -> str:
+    """校验并执行合并转发消息查询工具。"""
+
+    del kwargs
+    if not _valid_keys(args, {"forward_id"}) or "forward_id" not in args:
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_string(values["forward_id"]):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "get_forwarded_messages",
+        values,
+        lambda: sender.get_forwarded_messages(values["forward_id"]),
+    )
+
+
+async def _handle_get_private_file_download_url(args: object, **kwargs: Any) -> str:
+    """校验并执行私聊文件下载链接查询工具。"""
+
+    del kwargs
+    allowed = {"user_id", "file_id", "file_hash", "is_self_send"}
+    required = {"user_id", "file_id", "file_hash"}
+    if not _valid_keys(args, allowed) or not required.issubset(args):
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_integer(values["user_id"], minimum=10001, maximum=4294967295):
+        return _tool_error("invalid_input")
+    if not _tool_string(values["file_id"]) or not _tool_string(values["file_hash"]):
+        return _tool_error("invalid_input")
+    if "is_self_send" in values and not _tool_optional_bool(values["is_self_send"]):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    if "is_self_send" not in values:
+        action = lambda: sender.get_private_file_download_url(
+            values["user_id"], values["file_id"], values["file_hash"]
+        )
+    else:
+        action = lambda: sender.get_private_file_download_url(
+            values["user_id"],
+            values["file_id"],
+            values["file_hash"],
+            is_self_send=values["is_self_send"],
+        )
+    return await _execute_action(
+        "get_private_file_download_url",
+        values,
+        action,
+    )
+
+
+async def _handle_kick_group_member(args: object, **kwargs: Any) -> str:
+    """校验并执行踢出群成员工具。"""
+
+    del kwargs
+    allowed = {"group_id", "user_id", "reject_add_request"}
+    required = {"group_id", "user_id"}
+    if not _valid_keys(args, allowed) or not required.issubset(args):
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_integer(values["group_id"], minimum=10001, maximum=4294967295):
+        return _tool_error("invalid_input")
+    if not _tool_integer(values["user_id"], minimum=10001, maximum=4294967295):
+        return _tool_error("invalid_input")
+    if "reject_add_request" in values and not _tool_optional_bool(values["reject_add_request"]):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    if "reject_add_request" not in values:
+        action = lambda: sender.kick_group_member(values["group_id"], values["user_id"])
+    else:
+        action = lambda: sender.kick_group_member(
+            values["group_id"],
+            values["user_id"],
+            reject_add_request=values["reject_add_request"],
+        )
+    return await _execute_action(
+        "kick_group_member",
+        values,
+        action,
+    )
+
+
+async def _handle_quit_group(args: object, **kwargs: Any) -> str:
+    """校验并执行退出群聊工具。"""
+
+    del kwargs
+    if not _valid_keys(args, {"group_id"}) or "group_id" not in args:
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_integer(values["group_id"], minimum=10001, maximum=4294967295):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "quit_group", values, lambda: sender.quit_group(values["group_id"])
+    )
+
+
+async def _handle_delete_friend(args: object, **kwargs: Any) -> str:
+    """校验并执行删除好友工具。"""
+
+    del kwargs
+    if not _valid_keys(args, {"user_id"}) or "user_id" not in args:
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_integer(values["user_id"], minimum=10001, maximum=4294967295):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "delete_friend", values, lambda: sender.delete_friend(values["user_id"])
+    )
+
+
+async def _handle_get_friend_requests(args: object, **kwargs: Any) -> str:
+    """校验并执行好友请求查询工具。"""
+
+    del kwargs
+    allowed = {"limit", "is_filtered"}
+    if not _valid_keys(args, allowed):
+        return _tool_error("invalid_input")
+    values = args
+    if "limit" in values and not _tool_optional_integer(
+        values["limit"], minimum=0, maximum=9007199254740991
+    ):
+        return _tool_error("invalid_input")
+    if "is_filtered" in values and not _tool_optional_bool(values["is_filtered"]):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "get_friend_requests",
+        values,
+        lambda: sender.get_friend_requests(
+            **{key: values[key] for key in ("limit", "is_filtered") if key in values}
+        ),
+    )
+
+
+async def _handle_accept_friend_request(args: object, **kwargs: Any) -> str:
+    """校验并执行接受好友请求工具。"""
+
+    del kwargs
+    allowed = {"initiator_uid", "is_filtered"}
+    if not _valid_keys(args, allowed) or "initiator_uid" not in args:
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_string(values["initiator_uid"]):
+        return _tool_error("invalid_input")
+    if "is_filtered" in values and not _tool_optional_bool(values["is_filtered"]):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "accept_friend_request",
+        values,
+        lambda: sender.accept_friend_request(
+            values["initiator_uid"],
+            **({"is_filtered": values["is_filtered"]} if "is_filtered" in values else {}),
+        ),
+    )
+
+
+async def _handle_reject_friend_request(args: object, **kwargs: Any) -> str:
+    """校验并执行拒绝好友请求工具。"""
+
+    del kwargs
+    allowed = {"initiator_uid", "is_filtered", "reason"}
+    if not _valid_keys(args, allowed) or "initiator_uid" not in args:
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_string(values["initiator_uid"]):
+        return _tool_error("invalid_input")
+    if "is_filtered" in values and not _tool_optional_bool(values["is_filtered"]):
+        return _tool_error("invalid_input")
+    if "reason" in values and not _tool_optional_string(values["reason"]):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "reject_friend_request",
+        values,
+        lambda: sender.reject_friend_request(
+            values["initiator_uid"],
+            **{key: values[key] for key in ("is_filtered", "reason") if key in values},
+        ),
+    )
+
+
 def _tools_available() -> bool:
     """工具 schema 始终可发现，未绑定 sender 时由 handler 安全降级。"""
 
@@ -551,6 +959,18 @@ def _tool_optional_integer(value: object, *, minimum: int, maximum: int) -> bool
     """校验允许省略或显式为空的整数参数。"""
 
     return value is None or _tool_integer(value, minimum=minimum, maximum=maximum)
+
+
+def _tool_string(value: object) -> bool:
+    """校验 Tool 的非空字符串参数。"""
+
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _tool_optional_string(value: object) -> bool:
+    """校验 Tool 的可空字符串参数。"""
+
+    return value is None or isinstance(value, str)
 
 
 def _tool_optional_bool(value: object) -> bool:
@@ -609,7 +1029,7 @@ def _serialize_result(result: object) -> str:
 
 
 def _log_tool_call(tool_name: str, arguments: Mapping[str, object], result: object) -> None:
-    """记录已注册 Tool 的原始业务入参和结果，不记录 HTTP 认证上下文。"""
+    """记录 Tool 的安全投影，不记录原始结果、理由或认证上下文。"""
 
     log_event(
         logger,
@@ -617,9 +1037,89 @@ def _log_tool_call(tool_name: str, arguments: Mapping[str, object], result: obje
         logging.INFO,
         stage="action",
         tool=tool_name,
-        tool_args=arguments,
-        tool_result=result,
+        tool_args=_safe_tool_arguments(arguments),
+        tool_result=_safe_tool_result(result),
     )
+
+
+def _safe_tool_arguments(arguments: Mapping[str, object]) -> dict[str, object]:
+    """保留 Tool 入参中的可关联 ID、布尔值和数量，不记录自由文本。"""
+
+    safe: dict[str, object] = {}
+    id_fields = {
+        "user_id",
+        "group_id",
+        "forward_id",
+        "file_id",
+        "file_hash",
+        "initiator_uid",
+    }
+    boolean_fields = {"is_self", "is_self_send", "reject_add_request", "is_filtered"}
+    quantity_fields = {"count", "limit", "duration", "message_seq"}
+    for name, value in arguments.items():
+        if (
+            name in id_fields
+            and (
+                (isinstance(value, int) and not isinstance(value, bool))
+                or (isinstance(value, str) and _SAFE_TOOL_OPAQUE.fullmatch(value))
+            )
+            or (
+                name in boolean_fields
+                and (value is None or isinstance(value, bool))
+                or name in quantity_fields
+                and isinstance(value, int)
+                and not isinstance(value, bool)
+            )
+        ):
+            safe[name] = value
+    return safe
+
+
+def _safe_tool_result(result: object) -> dict[str, object]:
+    """将 Tool 结果投影为只包含结构和数量的安全诊断。"""
+
+    if isinstance(result, MilkyEnvelope):
+        projection: dict[str, object] = {
+            "status": result.status,
+            "retcode": result.retcode,
+        }
+        data = result.data
+        if isinstance(data, Mapping):
+            safe_fields = tuple(
+                sorted(
+                    str(key)
+                    for key in data
+                    if isinstance(key, str) and re.fullmatch(r"[A-Za-z0-9_]+", key)
+                )
+            )
+            projection["data_fields"] = safe_fields
+            if isinstance(data.get("messages"), (list, tuple)):
+                projection["message_count"] = len(data["messages"])
+            if isinstance(data.get("requests"), (list, tuple)):
+                projection["request_count"] = len(data["requests"])
+            if "download_url" in data:
+                projection["has_download_url"] = True
+        projection["envelope_field_count"] = len(result.extras)
+        return projection
+    if isinstance(result, OutboundSendResult):
+        return {
+            "ok": result.success,
+            "classification": result.error_kind or ("accepted" if result.success else "malformed"),
+        }
+    if isinstance(result, str):
+        try:
+            value = json.loads(result)
+        except json.JSONDecodeError:
+            return {"classification": "malformed"}
+        if isinstance(value, Mapping):
+            classification = value.get("classification")
+            return {
+                "ok": value.get("ok") is True,
+                "classification": classification
+                if classification in {"invalid_input", "unsupported", "malformed"}
+                else "accepted",
+            }
+    return {"classification": "malformed"}
 
 
 def _json_value(value: object) -> object:
@@ -660,10 +1160,18 @@ def _tool_error(classification: str) -> str:
 
 
 __all__ = [
+    "ACCEPT_FRIEND_REQUEST_SCHEMA",
+    "DELETE_FRIEND_SCHEMA",
+    "GET_FORWARDED_MESSAGES_SCHEMA",
+    "GET_FRIEND_REQUESTS_SCHEMA",
     "GET_GROUP_INFO_SCHEMA",
     "GET_GROUP_MEMBER_INFO_SCHEMA",
     "GET_GROUP_MEMBER_LIST_SCHEMA",
+    "GET_PRIVATE_FILE_DOWNLOAD_URL_SCHEMA",
+    "KICK_GROUP_MEMBER_SCHEMA",
+    "QUIT_GROUP_SCHEMA",
     "RECALL_GROUP_MESSAGE_SCHEMA",
+    "REJECT_FRIEND_REQUEST_SCHEMA",
     "SEND_FRIEND_NUDGE_SCHEMA",
     "SEND_PROFILE_LIKE_SCHEMA",
     "SET_GROUP_MEMBER_MUTE_SCHEMA",

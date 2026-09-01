@@ -294,6 +294,26 @@ class MilkyOutboundSender:
             return await _maybe_await(call(action, params))
         return await _maybe_await(fallback())
 
+    async def _execute_tool_action(
+        self,
+        action: str,
+        params: Mapping[str, object],
+        fallback: Callable[[], Any],
+    ) -> object:
+        """执行一次显式 Tool Action，并把失败收敛为固定结果。"""
+
+        try:
+            result = await self._call_tool(action, params, fallback)
+            envelope = _action_success(result)
+            _validate_tool_response(action, envelope)
+            return envelope
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+        except Exception:  # noqa: BLE001 - 工具边界不回显底层异常
+            return _failure("malformed", "tool action failed")
+
     async def get_group_info(self, group_id: object, *, no_cache: bool | None = False) -> object:
         """查询群信息并保留 Milky 的原始成功 envelope。"""
 
@@ -501,6 +521,232 @@ class MilkyOutboundSender:
                 self._schedule_group_failure(parsed)
             return _failure("malformed", "recall failed")
 
+    async def get_forwarded_messages(self, forward_id: object) -> object:
+        """查询合并转发消息并保留完整成功 envelope。"""
+
+        try:
+            value = _strict_text(forward_id, "forward_id")
+            return await self._execute_tool_action(
+                "get_forwarded_messages",
+                {"forward_id": value},
+                lambda: self._client.get_forwarded_messages(value),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
+    async def get_private_file_download_url(
+        self,
+        user_id: object,
+        file_id: object,
+        file_hash: object,
+        *,
+        is_self_send: object = _MISSING,
+    ) -> object:
+        """查询私聊文件链接，不下载、缓存或改写该链接。"""
+
+        try:
+            user_value = _strict_qq_id(user_id, "user_id")
+            file_value = _strict_text(file_id, "file_id")
+            hash_value = _strict_text(file_hash, "file_hash")
+            params: dict[str, object] = {
+                "user_id": user_value,
+                "file_id": file_value,
+                "file_hash": hash_value,
+            }
+            if is_self_send is not _MISSING:
+                if is_self_send is not None and not isinstance(is_self_send, bool):
+                    raise ActionError(
+                        "invalid_input",
+                        "get_private_file_download_url",
+                        "is_self_send is invalid",
+                    )
+                params["is_self_send"] = is_self_send
+            return await self._execute_tool_action(
+                "get_private_file_download_url",
+                params,
+                lambda: _invoke_without_missing(
+                    self._client.get_private_file_download_url,
+                    user_value,
+                    file_value,
+                    hash_value,
+                    is_self_send=is_self_send,
+                ),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
+    async def kick_group_member(
+        self,
+        group_id: object,
+        user_id: object,
+        *,
+        reject_add_request: object = _MISSING,
+    ) -> object:
+        """显式踢出群成员，最多提交一次远端 Action。"""
+
+        try:
+            group_value = _strict_qq_id(group_id, "group_id")
+            user_value = _strict_qq_id(user_id, "user_id")
+            params: dict[str, object] = {"group_id": group_value, "user_id": user_value}
+            if reject_add_request is not _MISSING:
+                if reject_add_request is not None and not isinstance(reject_add_request, bool):
+                    raise ActionError(
+                        "invalid_input", "kick_group_member", "reject_add_request is invalid"
+                    )
+                params["reject_add_request"] = reject_add_request
+            return await self._execute_tool_action(
+                "kick_group_member",
+                params,
+                lambda: _invoke_without_missing(
+                    self._client.kick_group_member,
+                    group_value,
+                    user_value,
+                    reject_add_request=reject_add_request,
+                ),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
+    async def quit_group(self, group_id: object) -> object:
+        """显式退出群聊，最多提交一次远端 Action。"""
+
+        try:
+            group_value = _strict_qq_id(group_id, "group_id")
+            return await self._execute_tool_action(
+                "quit_group",
+                {"group_id": group_value},
+                lambda: self._client.quit_group(group_value),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
+    async def delete_friend(self, user_id: object) -> object:
+        """显式删除好友关系，最多提交一次远端 Action。"""
+
+        try:
+            user_value = _strict_qq_id(user_id, "user_id")
+            return await self._execute_tool_action(
+                "delete_friend",
+                {"user_id": user_value},
+                lambda: self._client.delete_friend(user_value),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
+    async def get_friend_requests(
+        self,
+        *,
+        limit: object = _MISSING,
+        is_filtered: object = _MISSING,
+    ) -> object:
+        """查询好友请求并保留完整成功 envelope。"""
+
+        try:
+            params: dict[str, object] = {}
+            if limit is not _MISSING:
+                params["limit"] = (
+                    None
+                    if limit is None
+                    else _strict_integer(limit, "limit", maximum=_MAX_SAFE_INTEGER)
+                )
+            if is_filtered is not _MISSING:
+                if is_filtered is not None and not isinstance(is_filtered, bool):
+                    raise ActionError(
+                        "invalid_input", "get_friend_requests", "is_filtered is invalid"
+                    )
+                params["is_filtered"] = is_filtered
+            return await self._execute_tool_action(
+                "get_friend_requests",
+                params,
+                lambda: _invoke_without_missing(
+                    self._client.get_friend_requests,
+                    limit=limit,
+                    is_filtered=is_filtered,
+                ),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
+    async def accept_friend_request(
+        self,
+        initiator_uid: object,
+        *,
+        is_filtered: object = _MISSING,
+    ) -> object:
+        """显式接受好友请求，最多提交一次远端 Action。"""
+
+        try:
+            uid_value = _strict_text(initiator_uid, "initiator_uid")
+            params: dict[str, object] = {"initiator_uid": uid_value}
+            if is_filtered is not _MISSING:
+                if is_filtered is not None and not isinstance(is_filtered, bool):
+                    raise ActionError(
+                        "invalid_input", "accept_friend_request", "is_filtered is invalid"
+                    )
+                params["is_filtered"] = is_filtered
+            return await self._execute_tool_action(
+                "accept_friend_request",
+                params,
+                lambda: _invoke_without_missing(
+                    self._client.accept_friend_request,
+                    uid_value,
+                    is_filtered=is_filtered,
+                ),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
+    async def reject_friend_request(
+        self,
+        initiator_uid: object,
+        *,
+        is_filtered: object = _MISSING,
+        reason: object = _MISSING,
+    ) -> object:
+        """显式拒绝好友请求，最多提交一次远端 Action。"""
+
+        try:
+            uid_value = _strict_text(initiator_uid, "initiator_uid")
+            params: dict[str, object] = {"initiator_uid": uid_value}
+            if is_filtered is not _MISSING:
+                if is_filtered is not None and not isinstance(is_filtered, bool):
+                    raise ActionError(
+                        "invalid_input", "reject_friend_request", "is_filtered is invalid"
+                    )
+                params["is_filtered"] = is_filtered
+            if reason is not _MISSING:
+                if reason is not None and not isinstance(reason, str):
+                    raise ActionError("invalid_input", "reject_friend_request", "reason is invalid")
+                params["reason"] = reason
+            return await self._execute_tool_action(
+                "reject_friend_request",
+                params,
+                lambda: _invoke_without_missing(
+                    self._client.reject_friend_request,
+                    uid_value,
+                    is_filtered=is_filtered,
+                    reason=reason,
+                ),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
     def _message_parts(self, content: object, reply_to: object) -> tuple[list[dict[str, Any]], ...]:
         """格式化普通内容，并保持 CQ 片段不跨越分块边界。"""
 
@@ -636,6 +882,12 @@ async def _maybe_await(value: object) -> Any:
     return value
 
 
+def _invoke_without_missing(method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """调用兼容 fake/client 方法时省略未提供的可选字段。"""
+
+    return method(*args, **{key: value for key, value in kwargs.items() if value is not _MISSING})
+
+
 def _file_id(envelope: object) -> str:
     """校验上传成功返回的 file_id。"""
 
@@ -651,6 +903,34 @@ def _qq_id(value: object, field: str) -> int:
     """校验工具使用的 QQ ID。"""
 
     return _integer(value, field, minimum=_MIN_QQ_ID, maximum=_MAX_QQ_ID)
+
+
+def _strict_qq_id(value: object, field: str) -> int:
+    """校验新增 QQ Tool 使用的整数 QQ ID，不接受字符串伪装。"""
+
+    return _strict_integer(value, field, minimum=_MIN_QQ_ID, maximum=_MAX_QQ_ID)
+
+
+def _strict_text(value: object, field: str) -> str:
+    """校验新增 QQ Tool 使用的非空字符串。"""
+
+    if not isinstance(value, str) or not value.strip():
+        raise ActionError("invalid_input", "tool", f"{field} is invalid")
+    return value
+
+
+def _strict_integer(
+    value: object,
+    field: str,
+    *,
+    minimum: int = 0,
+    maximum: int = _MAX_SAFE_INTEGER,
+) -> int:
+    """校验新增 QQ Tool 使用的非布尔整数和范围。"""
+
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise ActionError("invalid_input", "tool", f"{field} is invalid")
+    return value
 
 
 def _integer(
@@ -679,6 +959,46 @@ def _action_success(envelope: object) -> object:
     if not isinstance(envelope, MilkyEnvelope):
         raise ActionError("malformed", "tool", "response envelope is malformed")
     return envelope
+
+
+def _validate_tool_response(action: str, envelope: MilkyEnvelope) -> None:
+    """在 sender 边界重复确认新增 Tool 的最小响应结构。"""
+
+    if not isinstance(envelope.data, Mapping):
+        raise ActionError("malformed", action, "response data is malformed")
+    if action == "get_forwarded_messages":
+        messages = envelope.data.get("messages")
+        if not _is_object_sequence(messages):
+            raise ActionError("malformed", action, "response messages are malformed")
+    elif action == "get_private_file_download_url":
+        if not isinstance(envelope.data.get("download_url"), str):
+            raise ActionError("malformed", action, "response download_url is malformed")
+    elif action == "get_friend_requests":
+        requests = envelope.data.get("requests")
+        if not _is_object_sequence(requests):
+            raise ActionError("malformed", action, "response requests are malformed")
+    elif (
+        action
+        in {
+            "kick_group_member",
+            "quit_group",
+            "delete_friend",
+            "accept_friend_request",
+            "reject_friend_request",
+        }
+        and envelope.data
+    ):
+        raise ActionError("malformed", action, "response data is not an empty object")
+
+
+def _is_object_sequence(value: object) -> bool:
+    """确认响应数组由对象元素组成。"""
+
+    return (
+        isinstance(value, Sequence)
+        and not isinstance(value, (str, bytes, bytearray))
+        and all(isinstance(item, Mapping) for item in value)
+    )
 
 
 def _success(

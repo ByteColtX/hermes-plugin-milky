@@ -27,11 +27,20 @@ adapter.py        # Milky platform adapter 生命周期薄层
 本项目不使用 `hermes_plugin_milky/__init__.py`，也不声明 Hermes Python entry point；
 `pyproject.toml` 仅用于 uv 开发环境和质量检查。
 
-当前 manifest 声明九个与 Milky operationId 对齐的显式 ToolSpec：
+当前 manifest 声明 17 个与 Milky operationId 对齐的显式 ToolSpec：
 `send_profile_like`、`send_friend_nudge`、`send_group_nudge`、`recall_group_message`、
 `get_group_info`、`get_group_member_list`、`get_group_member_info`、
-`set_group_member_mute` 和 `set_group_whole_mute`。它们的参数校验、目标校验和错误分类
-由出站边界统一处理；`tools.py` 继续保持安全的发现边界。
+`set_group_member_mute`、`set_group_whole_mute`、`get_forwarded_messages`、
+`get_private_file_download_url`、`kick_group_member`、`quit_group`、`delete_friend`、
+`get_friend_requests`、`accept_friend_request` 和 `reject_friend_request`。它们的参数校验、
+目标校验和错误分类由出站边界统一处理；查询结果保留完整 raw envelope，`tools.py` 继续
+保持安全的固定发现边界。
+
+新增的转发、私聊文件和好友请求查询不会自动写入 Hermes turn、下载或改变本地状态。踢人、
+退群、删好友以及接受/拒绝好友请求只由对应 Tool 的显式调用触发；请求进入 HTTP 边界后
+若结果未知只返回 `transport_unknown`，不自动重试。Tool 调用方仍可收到已校验的完整成功
+envelope，审计日志只保留安全的业务字段、布尔/数量字段和结构摘要，不记录下载链接、媒体
+URL、本地路径、凭证、完整响应或自由文本理由。
 
 ### Hermes 斜杠命令
 

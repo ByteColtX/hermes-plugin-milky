@@ -246,6 +246,14 @@ def test_qq_skills_are_split_and_do_not_add_tools() -> None:
         "get_group_member_info",
         "set_group_member_mute",
         "set_group_whole_mute",
+        "get_forwarded_messages",
+        "get_private_file_download_url",
+        "kick_group_member",
+        "quit_group",
+        "delete_friend",
+        "get_friend_requests",
+        "accept_friend_request",
+        "reject_friend_request",
     ):
         assert tool_name not in cq_skill
 
@@ -262,6 +270,14 @@ def test_qq_skills_are_split_and_do_not_add_tools() -> None:
         "get_group_member_info",
         "set_group_member_mute",
         "set_group_whole_mute",
+        "get_forwarded_messages",
+        "get_private_file_download_url",
+        "kick_group_member",
+        "quit_group",
+        "delete_friend",
+        "get_friend_requests",
+        "accept_friend_request",
+        "reject_friend_request",
     ):
         assert tool_name in tools_skill
 

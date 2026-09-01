@@ -52,6 +52,14 @@ _TOOL_ACTIONS = frozenset(
         "get_group_member_info",
         "set_group_member_mute",
         "set_group_whole_mute",
+        "get_forwarded_messages",
+        "get_private_file_download_url",
+        "kick_group_member",
+        "quit_group",
+        "delete_friend",
+        "get_friend_requests",
+        "accept_friend_request",
+        "reject_friend_request",
     }
 )
 _MISSING = object()
@@ -433,19 +441,9 @@ class MilkyClient:
 
         if action not in _TOOL_ACTIONS:
             raise ActionError("unsupported", action, "Action is not registered as a Tool")
+        _validate_tool_params(action, params)
         envelope = await self.call(action, params)
-        if action in {"get_group_info", "get_group_member_list", "get_group_member_info"}:
-            try:
-                parse_action_response(
-                    {
-                        "status": envelope.status,
-                        "retcode": envelope.retcode,
-                        "data": envelope.data,
-                    },
-                    action,
-                )
-            except ParseError:
-                raise ActionError("malformed", action, "response data is malformed") from None
+        _validate_tool_response(action, envelope)
         return envelope
 
     async def get_impl_info(self) -> str:
@@ -754,10 +752,12 @@ class MilkyClient:
     async def get_forwarded_messages(self, forward_id: object) -> MilkyEnvelope:
         """按 forward ID 查询完整转发内容。"""
 
-        return await self.call(
+        envelope = await self.call(
             "get_forwarded_messages",
             {"forward_id": _validate_text(forward_id, "forward_id", "get_forwarded_messages")},
         )
+        _validate_tool_response("get_forwarded_messages", envelope)
+        return envelope
 
     async def get_resource_temp_url(self, resource_id: object) -> MilkyEnvelope:
         """按资源 ID 查询临时引用地址。"""
@@ -795,7 +795,7 @@ class MilkyClient:
         """按用户号、文件 ID 和 hash 查询私聊文件下载地址。"""
 
         params: dict[str, Any] = {
-            "user_id": _validate_id(
+            "user_id": _validate_tool_integer(
                 user_id,
                 "user_id",
                 "get_private_file_download_url",
@@ -813,10 +813,166 @@ class MilkyClient:
                     "is_self_send is invalid",
                 )
             params["is_self_send"] = is_self_send
-        return await self.call(
+        envelope = await self.call(
             "get_private_file_download_url",
             params,
         )
+        _validate_tool_response("get_private_file_download_url", envelope)
+        return envelope
+
+    async def kick_group_member(
+        self,
+        group_id: object,
+        user_id: object,
+        *,
+        reject_add_request: object = _MISSING,
+    ) -> MilkyEnvelope:
+        """将群成员移出群聊；调用方负责确认高影响操作。"""
+
+        params: dict[str, Any] = {
+            "group_id": _validate_tool_integer(
+                group_id,
+                "group_id",
+                "kick_group_member",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            ),
+            "user_id": _validate_tool_integer(
+                user_id,
+                "user_id",
+                "kick_group_member",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            ),
+        }
+        if reject_add_request is not _MISSING:
+            if reject_add_request is not None and not isinstance(reject_add_request, bool):
+                raise ActionError(
+                    "invalid_input", "kick_group_member", "reject_add_request is invalid"
+                )
+            params["reject_add_request"] = reject_add_request
+        envelope = await self.call("kick_group_member", params)
+        _validate_tool_response("kick_group_member", envelope)
+        return envelope
+
+    async def quit_group(self, group_id: object) -> MilkyEnvelope:
+        """退出指定群聊；调用方负责确认高影响操作。"""
+
+        envelope = await self.call(
+            "quit_group",
+            {
+                "group_id": _validate_tool_integer(
+                    group_id,
+                    "group_id",
+                    "quit_group",
+                    minimum=_MIN_QQ_ID,
+                    maximum=_MAX_QQ_ID,
+                )
+            },
+        )
+        _validate_tool_response("quit_group", envelope)
+        return envelope
+
+    async def delete_friend(self, user_id: object) -> MilkyEnvelope:
+        """删除好友关系；调用方负责确认高影响操作。"""
+
+        envelope = await self.call(
+            "delete_friend",
+            {
+                "user_id": _validate_tool_integer(
+                    user_id,
+                    "user_id",
+                    "delete_friend",
+                    minimum=_MIN_QQ_ID,
+                    maximum=_MAX_QQ_ID,
+                )
+            },
+        )
+        _validate_tool_response("delete_friend", envelope)
+        return envelope
+
+    async def get_friend_requests(
+        self,
+        *,
+        limit: object = _MISSING,
+        is_filtered: object = _MISSING,
+    ) -> MilkyEnvelope:
+        """查询好友请求列表并保留原始协议 envelope。"""
+
+        params: dict[str, Any] = {}
+        if limit is not _MISSING:
+            params["limit"] = (
+                None
+                if limit is None
+                else _validate_tool_integer(
+                    limit,
+                    "limit",
+                    "get_friend_requests",
+                    maximum=_MAX_SAFE_INTEGER,
+                )
+            )
+        if is_filtered is not _MISSING:
+            if is_filtered is not None and not isinstance(is_filtered, bool):
+                raise ActionError("invalid_input", "get_friend_requests", "is_filtered is invalid")
+            params["is_filtered"] = is_filtered
+        envelope = await self.call("get_friend_requests", params)
+        _validate_tool_response("get_friend_requests", envelope)
+        return envelope
+
+    async def accept_friend_request(
+        self,
+        initiator_uid: object,
+        *,
+        is_filtered: object = _MISSING,
+    ) -> MilkyEnvelope:
+        """接受好友请求；调用方负责确认高影响操作。"""
+
+        params: dict[str, Any] = {
+            "initiator_uid": _validate_text(
+                initiator_uid,
+                "initiator_uid",
+                "accept_friend_request",
+            )
+        }
+        if is_filtered is not _MISSING:
+            if is_filtered is not None and not isinstance(is_filtered, bool):
+                raise ActionError(
+                    "invalid_input", "accept_friend_request", "is_filtered is invalid"
+                )
+            params["is_filtered"] = is_filtered
+        envelope = await self.call("accept_friend_request", params)
+        _validate_tool_response("accept_friend_request", envelope)
+        return envelope
+
+    async def reject_friend_request(
+        self,
+        initiator_uid: object,
+        *,
+        is_filtered: object = _MISSING,
+        reason: object = _MISSING,
+    ) -> MilkyEnvelope:
+        """拒绝好友请求；调用方负责确认高影响操作。"""
+
+        params: dict[str, Any] = {
+            "initiator_uid": _validate_text(
+                initiator_uid,
+                "initiator_uid",
+                "reject_friend_request",
+            )
+        }
+        if is_filtered is not _MISSING:
+            if is_filtered is not None and not isinstance(is_filtered, bool):
+                raise ActionError(
+                    "invalid_input", "reject_friend_request", "is_filtered is invalid"
+                )
+            params["is_filtered"] = is_filtered
+        if reason is not _MISSING:
+            if reason is not None and not isinstance(reason, str):
+                raise ActionError("invalid_input", "reject_friend_request", "reason is invalid")
+            params["reason"] = reason
+        envelope = await self.call("reject_friend_request", params)
+        _validate_tool_response("reject_friend_request", envelope)
+        return envelope
 
     async def upload_group_file(
         self,
@@ -1037,6 +1193,165 @@ def _validate_text(value: object, field: str, action: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ActionError("invalid_input", action, f"{field} is invalid")
     return value.strip()
+
+
+def _validate_tool_params(action: str, params: Mapping[str, Any] | None) -> None:
+    """在显式 Tool Action 进入 HTTP 前校验完整参数集合。"""
+
+    if params is None:
+        values: Mapping[str, Any] = {}
+    elif isinstance(params, Mapping):
+        values = params
+    else:
+        raise ActionError("invalid_input", action, "parameters must be an object")
+
+    schemas: dict[str, tuple[set[str], set[str]]] = {
+        "send_profile_like": ({"user_id", "count"}, {"user_id"}),
+        "send_friend_nudge": ({"user_id", "is_self"}, {"user_id"}),
+        "send_group_nudge": ({"group_id", "user_id"}, {"group_id", "user_id"}),
+        "recall_group_message": ({"group_id", "message_seq"}, {"group_id", "message_seq"}),
+        "get_group_info": ({"group_id", "no_cache"}, {"group_id"}),
+        "get_group_member_list": ({"group_id", "no_cache"}, {"group_id"}),
+        "get_group_member_info": (
+            {"group_id", "user_id", "no_cache"},
+            {"group_id", "user_id"},
+        ),
+        "set_group_member_mute": (
+            {"group_id", "user_id", "duration"},
+            {"group_id", "user_id"},
+        ),
+        "set_group_whole_mute": ({"group_id", "is_mute"}, {"group_id"}),
+        "get_forwarded_messages": ({"forward_id"}, {"forward_id"}),
+        "get_private_file_download_url": (
+            {"user_id", "file_id", "file_hash", "is_self_send"},
+            {"user_id", "file_id", "file_hash"},
+        ),
+        "kick_group_member": (
+            {"group_id", "user_id", "reject_add_request"},
+            {"group_id", "user_id"},
+        ),
+        "quit_group": ({"group_id"}, {"group_id"}),
+        "delete_friend": ({"user_id"}, {"user_id"}),
+        "get_friend_requests": ({"limit", "is_filtered"}, set()),
+        "accept_friend_request": ({"initiator_uid", "is_filtered"}, {"initiator_uid"}),
+        "reject_friend_request": (
+            {"initiator_uid", "is_filtered", "reason"},
+            {"initiator_uid"},
+        ),
+    }
+    allowed, required = schemas[action]
+    if set(values) - allowed or not required.issubset(values):
+        raise ActionError("invalid_input", action, "parameters are invalid")
+
+    id_fields = {
+        "user_id",
+        "group_id",
+    }
+    for field in id_fields & set(values):
+        _validate_tool_integer(values[field], field, action, minimum=_MIN_QQ_ID, maximum=_MAX_QQ_ID)
+    if "message_seq" in values:
+        _validate_tool_integer(values["message_seq"], "message_seq", action)
+    if "count" in values and values["count"] is not None:
+        _validate_tool_integer(values["count"], "count", action)
+    if "duration" in values and values["duration"] is not None:
+        _validate_tool_integer(values["duration"], "duration", action)
+    if "limit" in values and values["limit"] is not None:
+        _validate_tool_integer(values["limit"], "limit", action)
+
+    for field in (
+        "is_self",
+        "no_cache",
+        "is_mute",
+        "is_self_send",
+        "reject_add_request",
+        "is_filtered",
+    ):
+        if field in values and values[field] is not None and not isinstance(values[field], bool):
+            raise ActionError("invalid_input", action, f"{field} is invalid")
+    for field in ("forward_id", "file_id", "file_hash", "initiator_uid"):
+        if field in values:
+            _validate_nonempty_tool_text(values[field], field, action)
+    if (
+        "reason" in values
+        and values["reason"] is not None
+        and not isinstance(values["reason"], str)
+    ):
+        raise ActionError("invalid_input", action, "reason is invalid")
+
+
+def _validate_tool_response(action: str, envelope: MilkyEnvelope) -> None:
+    """校验显式 Tool Action 的最小成功 data 结构。"""
+
+    data = envelope.data
+    if not isinstance(data, Mapping):
+        raise ActionError("malformed", action, "response data is malformed")
+    if action == "get_forwarded_messages":
+        messages = data.get("messages")
+        if not _is_object_array(messages):
+            raise ActionError("malformed", action, "response messages are malformed")
+    elif action == "get_private_file_download_url":
+        if not isinstance(data.get("download_url"), str):
+            raise ActionError("malformed", action, "response download_url is malformed")
+    elif action == "get_friend_requests":
+        if not _is_object_array(data.get("requests")):
+            raise ActionError("malformed", action, "response requests are malformed")
+    elif (
+        action
+        in {
+            "kick_group_member",
+            "quit_group",
+            "delete_friend",
+            "accept_friend_request",
+            "reject_friend_request",
+        }
+        and data
+    ):
+        raise ActionError("malformed", action, "response data is not an empty object")
+    elif action in {"get_group_info", "get_group_member_list", "get_group_member_info"}:
+        try:
+            parse_action_response(
+                {
+                    "status": envelope.status,
+                    "retcode": envelope.retcode,
+                    "data": envelope.data,
+                },
+                action,
+            )
+        except ParseError:
+            raise ActionError("malformed", action, "response data is malformed") from None
+
+
+def _validate_tool_integer(
+    value: object,
+    field: str,
+    action: str,
+    *,
+    minimum: int = 0,
+    maximum: int = _MAX_SAFE_INTEGER,
+) -> int:
+    """校验 Tool schema 使用的严格整数范围。"""
+
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise ActionError("invalid_input", action, f"{field} is invalid")
+    return value
+
+
+def _validate_nonempty_tool_text(value: object, field: str, action: str) -> str:
+    """校验 Tool schema 使用的非空字符串。"""
+
+    if not isinstance(value, str) or not value.strip():
+        raise ActionError("invalid_input", action, f"{field} is invalid")
+    return value
+
+
+def _is_object_array(value: object) -> bool:
+    """确认协议数组由对象元素组成，同时不改变其 raw 内容。"""
+
+    return (
+        isinstance(value, Sequence)
+        and not isinstance(value, (str, bytes, bytearray))
+        and all(isinstance(item, Mapping) for item in value)
+    )
 
 
 def _validate_segments(value: object, action: str) -> list[Mapping[str, Any]]:

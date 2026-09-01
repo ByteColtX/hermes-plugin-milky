@@ -6,7 +6,7 @@ description: >-
   将 Milky QQ 的 HTTP Action 和 SSE `/event` 接入 Hermes Gateway：接收
   friend/group 的 `message_receive`，完成规范化、去重、Gate、Will 和 Agent 交接；
   出站支持文本、CQ-compatible `at`/`reply`、原生媒体、独立文件上传以及
-  系统/cron home channel。同时注册只读 `/milky` 命令和 9 个显式 QQ ToolSpec。
+  系统/cron home channel。同时注册只读 `/milky` 命令和 17 个显式 QQ ToolSpec。
   temp 会话及非消息事件不会进入普通 Agent 流程；媒体下载、缓存、SSRF 和
   本地路径安全由 Hermes 负责。
 author: ByteColtX
@@ -20,6 +20,14 @@ provides_tools:
   - get_group_member_info
   - set_group_member_mute
   - set_group_whole_mute
+  - get_forwarded_messages
+  - get_private_file_download_url
+  - kick_group_member
+  - quit_group
+  - delete_friend
+  - get_friend_requests
+  - accept_friend_request
+  - reject_friend_request
 requires_env:
   - name: MILKY_BASE_URL
     description: >-

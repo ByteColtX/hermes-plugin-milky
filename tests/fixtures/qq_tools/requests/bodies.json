@@ -1,0 +1,61 @@
+{
+  "requests": [
+    {
+      "action": "get_forwarded_messages",
+      "body": {"forward_id": "fixture-forward-id"}
+    },
+    {
+      "action": "get_private_file_download_url",
+      "body": {
+        "user_id": 800000001,
+        "file_id": "fixture-private-file",
+        "file_hash": "fixture-hash"
+      }
+    },
+    {
+      "action": "get_private_file_download_url",
+      "body": {
+        "user_id": 800000001,
+        "file_id": "fixture-private-file",
+        "file_hash": "fixture-hash",
+        "is_self_send": null
+      }
+    },
+    {
+      "action": "kick_group_member",
+      "body": {
+        "group_id": 700000001,
+        "user_id": 800000001,
+        "reject_add_request": true
+      }
+    },
+    {
+      "action": "quit_group",
+      "body": {"group_id": 700000001}
+    },
+    {
+      "action": "delete_friend",
+      "body": {"user_id": 800000001}
+    },
+    {
+      "action": "get_friend_requests",
+      "body": {}
+    },
+    {
+      "action": "get_friend_requests",
+      "body": {"limit": null, "is_filtered": false}
+    },
+    {
+      "action": "accept_friend_request",
+      "body": {"initiator_uid": "fixture-uid", "is_filtered": null}
+    },
+    {
+      "action": "reject_friend_request",
+      "body": {
+        "initiator_uid": "fixture-uid",
+        "is_filtered": false,
+        "reason": "synthetic-reason"
+      }
+    }
+  ]
+}

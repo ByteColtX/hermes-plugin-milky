@@ -1,17 +1,18 @@
 ---
 name: qq-tools
-description: Milky QQ Agent 显式 ToolSpec 参考：名片点赞、好友/群戳一戳、群消息撤回、群信息与成员查询、群成员禁言和全员禁言；说明 operationId、参数、权限、目标和副作用边界。
+description: Milky QQ Agent 显式 ToolSpec 参考：QQ 查询、好友/群操作、消息撤回、群信息与成员查询、群成员禁言和全员禁言；说明 operationId、参数、权限、目标和副作用边界。
 metadata:
   short-description: Milky QQ 工具参数、权限与调用边界
-  keywords: "Milky, QQ, Hermes, ToolSpec, operationId, 好友, 群聊, 群成员, 名片点赞, 戳一戳, 撤回消息, 群管理, 禁言, 全员禁言, group_id, user_id, message_seq"
+  keywords: "Milky, QQ, Hermes, ToolSpec, operationId, 好友, 好友请求, 合并转发, 私聊文件, 群聊, 群成员, 名片点赞, 戳一戳, 撤回消息, 群管理, 禁言, 全员禁言, group_id, user_id, initiator_uid, forward_id, file_hash, message_seq"
 ---
 
 # Milky QQ tools
 
-本 skill 面向需要发现、选择或调用 Milky QQ Agent 工具的场景，包括：发送名片点赞、好友
-或群戳一戳、撤回群消息、查询群和群成员、设置群成员禁言、设置群全员禁言。
+本 skill 面向需要发现、选择或调用 Milky QQ Agent 工具的场景，包括：查询合并转发消息、
+查询私聊文件链接、群成员和好友关系管理，以及现有的名片点赞、好友或群戳一戳、撤回群消息、
+查询群和群成员、设置群成员禁言、设置群全员禁言。
 
-工具名称与 Milky API 的 `operationId` 一致。本 skill 只解释当前已注册的 9 个 Hermes
+工具名称与 Milky API 的 `operationId` 一致。本 skill 只解释当前已注册的 17 个 Hermes
 ToolSpec；文字说明不注册工具，文字说明不执行也不扩大工具能力，也不把未列出的 Milky Action 变成可用能力。实际可用性、
 参数校验和服务端返回结果始终以 Hermes 当前发现的 ToolSpec 与 Milky 响应为准。
 
@@ -28,6 +29,14 @@ ToolSpec；文字说明不注册工具，文字说明不执行也不扩大工具
 | `get_group_member_info` | 只读查询 | OpenAPI 未声明额外群管理权限；目标群成员关系和可见范围由 Milky 服务端判断。 |
 | `set_group_member_mute` | 写操作 | Bot 必须具备目标群管理权限（群主或管理员）；`duration=0` 表示取消禁言。 |
 | `set_group_whole_mute` | 写操作 | Bot 必须具备目标群管理权限（群主或管理员）；`is_mute=false` 表示取消全员禁言。 |
+| `get_forwarded_messages` | 只读查询 | 只按明确的 `forward_id` 查询；结果不会自动进入 Hermes turn。 |
+| `get_private_file_download_url` | 只读查询 | 只按明确的文件字段查询；插件不会下载、缓存或解码链接。 |
+| `kick_group_member` | 写操作 | Bot 必须具备目标群管理权限；状态未知时不会自动重试。 |
+| `quit_group` | 写操作 | 退出目标群是不可逆远端操作；不会回退其他群或默认目标。 |
+| `delete_friend` | 写操作 | 删除好友关系只接受明确 QQ 号；不会由好友事件自动触发。 |
+| `get_friend_requests` | 只读查询 | 只查询请求，不自动接受、拒绝或修改本地状态。 |
+| `accept_friend_request` | 写操作 | 必须明确提供好友请求 `initiator_uid`；不会由请求事件自动触发。 |
+| `reject_friend_request` | 写操作 | 必须明确提供好友请求 `initiator_uid`；`reason` 不写入审计日志。 |
 
 撤回、戳一戳、点赞和禁言都会产生外部副作用。调用前必须确认目标和动作来自当前用户
 意图；权限不足、目标不合法或服务端拒绝时，不应改用其他 Action 猜测或重试。
@@ -120,6 +129,67 @@ ToolSpec；文字说明不注册工具，文字说明不执行也不扩大工具
 - 可选：`is_mute`，布尔值，默认 `true`；`true` 开启，`false` 取消。
 - Bot 必须是目标群群主或管理员。
 - 这是影响整个群的高影响写操作；调用前必须确认目标群和开关方向。服务端拒绝或未知结果应原样作为失败处理。
+
+### `get_forwarded_messages`
+
+查询指定合并转发消息的完整 Milky 结果。
+
+- 必填：`forward_id`，非空字符串。
+- 返回完整 raw envelope，包含 `data.messages` 和未来扩展字段。
+- 不把转发内容注入普通入站正文、`channel_context` 或 Hermes transcript。
+
+### `get_private_file_download_url`
+
+查询私聊文件的下载链接。
+
+- 必填：`user_id`、`file_id`、`file_hash`。
+- 可选：`is_self_send`，布尔值或显式 `null`。
+- 插件只返回协议结果，不下载、缓存、解码或改写 `download_url`。
+
+### `kick_group_member`
+
+显式将指定成员移出群聊。
+
+- 必填：`group_id`、`user_id`。
+- 可选：`reject_add_request`，布尔值或显式 `null`。
+- 这是状态变更操作；请求结果未知时只返回 `transport_unknown`，不重试或更新本地缓存。
+
+### `quit_group`
+
+显式退出指定群聊。
+
+- 必填：`group_id`。
+- 不接受默认群或备用目标；普通消息、通知和 Will 不会触发它。
+
+### `delete_friend`
+
+显式删除好友关系。
+
+- 必填：`user_id`。
+- 这是状态变更操作；不会由好友请求或其他事件自动调用。
+
+### `get_friend_requests`
+
+查询好友请求列表。
+
+- 可选：`limit`，整数 `0..9007199254740991` 或 `null`；`is_filtered`，布尔值或 `null`。
+- 成功时返回完整 raw envelope 和 `data.requests`；不修改好友状态。
+
+### `accept_friend_request`
+
+显式接受好友请求。
+
+- 必填：`initiator_uid`，非空字符串，不从昵称、QQ 号或正文推断。
+- 可选：`is_filtered`，布尔值或 `null`。
+- 请求只提交一次；好友请求事件不会自动批准。
+
+### `reject_friend_request`
+
+显式拒绝好友请求。
+
+- 必填：`initiator_uid`，非空字符串。
+- 可选：`is_filtered`，布尔值或 `null`；`reason`，字符串或 `null`。
+- `reason` 只进入对应 Action body，不出现在审计日志；未知结果不重试。
 
 ## 结果与降级
 

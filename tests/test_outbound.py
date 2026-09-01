@@ -610,6 +610,14 @@ def test_tools_register_explicit_api_specs_and_validate_arguments() -> None:
         "get_group_member_info",
         "set_group_member_mute",
         "set_group_whole_mute",
+        "get_forwarded_messages",
+        "get_private_file_download_url",
+        "kick_group_member",
+        "quit_group",
+        "delete_friend",
+        "get_friend_requests",
+        "accept_friend_request",
+        "reject_friend_request",
     ]
     assert all(item["is_async"] is True for item in context.registered)
     assert {item["schema"]["name"] for item in context.registered} == set(names)
@@ -772,7 +780,8 @@ def test_tool_logs_arguments_and_returns_complete_raw_envelope(caplog) -> None:
     assert len(records) == 1
     assert records[0].tool == "get_group_info"
     assert records[0].tool_args == {"group_id": 700000001}
-    assert records[0].tool_result.extras["envelope_extension"] == "fixture-envelope-extension"
+    assert records[0].tool_result["data_fields"] == ("data_extension", "group")
+    assert records[0].tool_result["envelope_field_count"] == 1
 
 
 def test_tool_parameter_error_does_not_call_action_or_log_remote_result(caplog) -> None:
