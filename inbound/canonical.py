@@ -59,6 +59,7 @@ class CanonicalMessage:
     metadata: JsonObject
     diagnostics: tuple[str, ...] = ()
     will_input: WillInput | None = None
+    is_self_quote: bool = False
 
     @property
     def time(self) -> int:
@@ -79,6 +80,18 @@ class CanonicalMessage:
         """返回消息是否带有引用目标。"""
 
         return self.quote_message_id is not None
+
+    @property
+    def self_quote(self) -> bool:
+        """返回 reply 是否明确指向 Bot。"""
+
+        return self.is_self_quote
+
+    @property
+    def has_self_quote(self) -> bool:
+        """返回是否存在指向 Bot 的 reply。"""
+
+        return self.is_self_quote
 
     @property
     def mention_kind(self) -> MentionKind:
@@ -207,6 +220,7 @@ def _canonicalize_normalized(
         metadata=metadata,
         diagnostics=diagnostics,
         will_input=normalized.will_input,
+        is_self_quote=normalized.is_self_quote,
     )
 
 

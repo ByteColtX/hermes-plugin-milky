@@ -19,12 +19,21 @@ class ContextOnlyEvent:
     event_type: str
     body: str
     ingress_sequence: int | None = None
+    sender_id: int | None = None
+    receiver_id: int | None = None
+    is_self_poke: bool = False
 
     @property
     def sequence(self) -> int | None:
         """返回兼容命名的 ingress 顺序。"""
 
         return self.ingress_sequence
+
+    @property
+    def self_poke(self) -> bool:
+        """返回 nudge 是否明确指向 Bot。"""
+
+        return self.is_self_poke
 
 
 SystemContextEntry = ContextOnlyEvent
@@ -91,6 +100,9 @@ class SystemContextBuffer:
     ) -> ContextAppendResult:
         """保存一条系统事件，必要时淘汰最早记录。"""
 
+        sender_id: int | None = None
+        receiver_id: int | None = None
+        is_self_poke = False
         if isinstance(event_or_chat_key, ContextOnlyEvent):
             if event_type is not None or body is not None:
                 raise TypeError("event fields must be omitted for ContextOnlyEvent")
@@ -98,6 +110,9 @@ class SystemContextBuffer:
             normalized_key = validate_chat_key(event.chat_key)
             event_type = event.event_type
             body = event.body
+            sender_id = event.sender_id
+            receiver_id = event.receiver_id
+            is_self_poke = event.is_self_poke
             if ingress_sequence is None:
                 ingress_sequence = event.ingress_sequence
         else:
@@ -121,6 +136,9 @@ class SystemContextBuffer:
                 event_type=event_type.strip(),
                 body=body,
                 ingress_sequence=sequence,
+                sender_id=sender_id,
+                receiver_id=receiver_id,
+                is_self_poke=is_self_poke,
             )
             buffer = self._buffers.setdefault(normalized_key, deque())
             evicted = buffer.popleft() if len(buffer) >= self._max_size else None

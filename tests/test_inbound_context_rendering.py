@@ -13,6 +13,7 @@ from milky.resources import ResourceResolver
 from session import SystemContextBuffer, render_message_record
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "protocol"
+WILL_FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "will_routing"
 LEGACY_PLACEHOLDERS = (
     "[引用]",
     "[引用不可用]",
@@ -49,6 +50,12 @@ def load_fixture(relative_path: str) -> object:
     """读取脱敏协议 fixture。"""
 
     return json.loads((FIXTURE_ROOT / relative_path).read_text(encoding="utf-8"))
+
+
+def load_target_fixture() -> dict[str, object]:
+    """读取 nudge 目标判断的脱敏 fixture。"""
+
+    return json.loads((WILL_FIXTURE_ROOT / "target_signals.json").read_text(encoding="utf-8"))
 
 
 def test_message_context_is_single_line_and_escapes_header_boundaries() -> None:
@@ -164,6 +171,29 @@ def test_system_events_render_only_confirmed_fields() -> None:
     assert malformed.value is None
 
 
+def test_nudge_target_fixture_only_marks_protocol_confirmed_self_pokes() -> None:
+    """group 用 receiver_id，friend 用明确方向字段，未知方向安全降级。"""
+
+    fixture = load_target_fixture()
+    for case in fixture["nudge_cases"]:  # type: ignore[union-attr]
+        assert isinstance(case, dict)
+        result = parse_context_event(parse_event(case["event"]))
+        expected_classification = case.get("expected_classification", "accepted")
+        assert result.classification == expected_classification
+        if result.value is None:
+            assert case["expected_self_poke"] is False
+            continue
+        assert result.value.is_self_poke is case["expected_self_poke"]
+        if case["name"].startswith("group_"):
+            assert result.value.sender_id == case["event"]["data"]["sender_id"]
+            assert result.value.receiver_id == case["event"]["data"]["receiver_id"]
+
+    group = parse_context_event(parse_event(load_fixture("events/system.group_nudge.json")))
+    friend = parse_context_event(parse_event(load_fixture("events/system.friend_nudge.json")))
+    assert group.value is not None and group.value.is_self_poke is True
+    assert friend.value is not None and friend.value.is_self_poke is True
+
+
 def test_system_context_buffer_isolated_bounded_and_drained_once() -> None:
     """系统上下文按 chat 隔离，溢出淘汰最早事件，drain 后不重复注入。"""
 
@@ -179,6 +209,30 @@ def test_system_context_buffer_isolated_bounded_and_drained_once() -> None:
     assert buffer.drain("group:700000001") == ()
     assert [event.body for event in buffer.snapshot("dm:800000001")] == ["私聊"]
     assert buffer.diagnostics[-1].reason == "system_context_overflow"
+
+
+def test_system_context_buffer_preserves_self_poke_feature_and_identities() -> None:
+    """context buffer 重建事件时不得丢失 nudge 的目标特征。"""
+
+    from session import ContextOnlyEvent
+
+    buffer = SystemContextBuffer(max_size=1)
+    buffer.append(
+        ContextOnlyEvent(
+            chat_key="group:700000001",
+            event_type="group_nudge",
+            body="uid 800000002 戳了 uid 900000001",
+            sender_id=800000002,
+            receiver_id=900000001,
+            is_self_poke=True,
+        ),
+        ingress_sequence=1,
+    )
+
+    stored = buffer.snapshot("group:700000001")[0]
+    assert stored.sender_id == 800000002
+    assert stored.receiver_id == 900000001
+    assert stored.is_self_poke is True
 
 
 def test_forward_resolution_does_not_query_forwarded_messages() -> None:

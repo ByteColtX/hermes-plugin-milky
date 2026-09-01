@@ -28,6 +28,8 @@ def make_input(
     mention_kinds: tuple[str, ...] = ("none",),
     has_reply: bool = False,
     has_image: bool = False,
+    is_self_quote: bool = False,
+    is_self_poke: bool = False,
     event_type: str = "message_receive",
 ) -> WillInput:
     """构造只包含 T08 显式特征的输入，不重新解析 raw segment。"""
@@ -45,6 +47,8 @@ def make_input(
         has_reply=has_reply,
         reply_message_seq=1000 if has_reply else None,
         has_image=has_image,
+        is_self_quote=is_self_quote,
+        is_self_poke=is_self_poke,
     )
 
 
@@ -122,6 +126,16 @@ def test_willingness_formula_adds_message_attributes_and_clamps() -> None:
     assert calculate_score(0, input_value, config) == 100
     assert calculate_score(80, input_value, config) == 100
     assert calculate_score(100, input_value, config) == 100
+
+
+def test_willingness_keeps_self_target_features_out_of_its_formula() -> None:
+    """self quote 只影响 routing，willingness 仍按 reply 存在性计算。"""
+
+    config = WillingnessConfig(text_gain=10, quote_gain=30, default_multiplier=1)
+    ordinary_quote = make_input(has_reply=True)
+    self_quote = make_input(has_reply=True, is_self_quote=True)
+
+    assert calculate_score(0, ordinary_quote, config) == calculate_score(0, self_quote, config)
 
 
 def test_willingness_probability_is_thresholded_and_clamped() -> None:

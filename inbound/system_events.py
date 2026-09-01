@@ -39,16 +39,25 @@ def parse_context_event(event: Event) -> ContextEventResult:
     if event.event_type not in _CONTEXT_EVENT_TYPES:
         return ContextEventResult("observe_only", None, "event is not context-only")
     try:
+        sender_id: int | None = None
+        receiver_id: int | None = None
+        is_self_poke = False
         if event.event_type == "group_nudge":
             group_id = _required_id(event.data, "group_id")
             sender_id = _required_id(event.data, "sender_id")
             receiver_id = _required_id(event.data, "receiver_id")
             chat_key = normalize_chat_key("group", group_id)
             body = f"uid {sender_id} 戳了 uid {receiver_id}"
+            is_self_poke = receiver_id == event.self_id
         elif event.event_type == "friend_nudge":
             user_id = _required_id(event.data, "user_id")
+            is_self_send = _required_bool(event.data, "is_self_send")
+            is_self_receive = _required_bool(event.data, "is_self_receive")
             chat_key = normalize_chat_key("friend", user_id)
             body = f"uid {user_id} 戳了一下"
+            is_self_poke = is_self_receive and not is_self_send
+            sender_id = event.self_id if is_self_send else user_id
+            receiver_id = user_id if is_self_send else event.self_id
         elif event.event_type == "group_member_increase":
             group_id = _required_id(event.data, "group_id")
             user_id = _required_id(event.data, "user_id")
@@ -66,7 +75,14 @@ def parse_context_event(event: Event) -> ContextEventResult:
 
     return ContextEventResult(
         "accepted",
-        ContextOnlyEvent(chat_key=chat_key, event_type=event.event_type, body=body),
+        ContextOnlyEvent(
+            chat_key=chat_key,
+            event_type=event.event_type,
+            body=body,
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            is_self_poke=is_self_poke,
+        ),
     )
 
 
@@ -80,6 +96,15 @@ def _required_id(data: Mapping[str, Any], field_name: str) -> int:
     value = data.get(field_name, _MISSING)
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{field_name} is invalid")
+    return value
+
+
+def _required_bool(data: Mapping[str, Any], field_name: str) -> bool:
+    """读取 nudge 的协议方向字段，不为缺失值补默认值。"""
+
+    value = data.get(field_name, _MISSING)
+    if not isinstance(value, bool):
+        raise TypeError(f"{field_name} is invalid")
     return value
 
 
