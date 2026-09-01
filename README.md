@@ -68,7 +68,13 @@ agent:
   gateway_auto_continue_freshness: 3600
   gateway_notify_interval: 180  # 每 3 分钟发一次“仍在处理”
   session_stall_timeout: 300    # 排队且无进展 5 分钟时提醒
-  image_input_mode: native      # 改用原生视觉处理，速度优先，准确度会有所牺牲
+  # 已确认主模型支持图片输入时，直接以内联图片交给主模型
+  image_input_mode: native
+
+# 自定义 provider 的模型不会总能从模型目录自动识别视觉能力。
+# 请在已有 model 配置中保留其他字段，并追加 supports_vision: true。
+model:
+  supports_vision: true
 
 # 关闭自动建议创建 Skill
 skills:
@@ -113,6 +119,12 @@ session_reset:
 Will `wait` 阶段的插件侧历史消息。`busy_input_mode: queue` 让 Hermes 负责 queue、
 follow-up、pending 和 interrupt/steer 语义，插件不复制 Agent 执行队列。平台显示覆盖应放在
 `display.platforms.milky` 下，不要放到全局 `display` 下。
+
+`image_input_mode: native` 与 `model.supports_vision: true` 只应配置在已确认支持
+OpenAI-compatible `image_url` 输入的主模型上。前者选择原生图片路径，后者防止自定义模型被
+误判为文本模型后逐张降级调用 `vision_analyze`。修改后重启 Gateway；日志应出现
+`Image routing: native`，且不再出现 `Analyzing image`、`Processing image with vision model`
+或 `Image analysis completed`。如果接口不支持原生图片输入，请移除这两项并使用文本视觉路径。
 
 ### Milky 插件配置
 
