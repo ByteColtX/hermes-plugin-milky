@@ -40,12 +40,16 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "normalize_message": ("inbound.normalizer", "normalize_message"),
     "InboundPipeline": ("inbound.pipeline", "InboundPipeline"),
     "PipelineResult": ("inbound.pipeline", "PipelineResult"),
+    "ContextEventResult": ("inbound.system_events", "ContextEventResult"),
+    "is_context_event": ("inbound.system_events", "is_context_event"),
+    "parse_context_event": ("inbound.system_events", "parse_context_event"),
 }
 
 __all__ = [
     "CanonicalError",
     "CanonicalMessage",
     "CanonicalResult",
+    "ContextEventResult",
     "ExtractedSegments",
     "FileAttachmentReference",
     "ForwardReference",
@@ -63,6 +67,7 @@ __all__ = [
     "extract_message_features",
     "extract_segment_features",
     "extract_segments",
+    "is_context_event",
     "is_slash_command",
     "make_dedup_key",
     "map_command_event",
@@ -72,6 +77,7 @@ __all__ = [
     "normalize_event",
     "normalize_incoming_message",
     "normalize_message",
+    "parse_context_event",
     "recognize_slash_command",
 ]
 

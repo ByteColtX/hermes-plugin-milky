@@ -67,6 +67,25 @@ home channel 的网关 live 投递和无附件 standalone 文本投递已接入 
 媒体/文件、WebHook、WebSocket fallback、任意 Action catalog 和其他未声明能力仍保持
 `unsupported`。
 
+### 入站上下文与系统事件
+
+普通消息的当前正文和 wait 历史均使用单行尖括号 header，例如
+`<sender uid 123 msg_id 7 reply_to 6> 正文`；缺失的 `msg_id` 或 `reply_to` 会省略。header
+中的尖括号、反斜杠和换行，以及正文中的换行，都会被编码为字面量，避免伪造 context
+记录。当前消息只进入本次正文，历史只进入 `channel_context`。
+
+`face`、`image`、`record`、`video`、`file`、`forward`、`market_face`、`light_app` 和
+`xml` 使用带类型的稳定 placeholder。`light_app` 只投影 JSON payload 的 `meta` 根对象，
+递归保留其中的字段、数组和 `null`；缺少或 malformed `meta` 使用 `NOT SUPPORTED`。
+`forward` 只展示 `[forward:<forward_id>]`，普通 trigger 不自动查询转发详情。
+完整 inline `reply` 只通过 `reply_to` header 和 Hermes reply metadata 表达，不在正文追加
+`[引用]`；reply 缺失或补全失败时使用 `[reply:NOT SUPPORTED]`。
+
+`group_nudge`、`friend_nudge`、`group_member_increase` 和 `group_member_decrease` 是
+context-only 事件：按 chat 保存到有界 FIFO，下一次同 chat trigger 时按 ingress 顺序注入
+`channel_context` 一次，不创建 canonical、Will 或独立 Agent turn。其他系统事件仍为
+observe-only；未确认的事件字段和能力继续安全降级。
+
 ### 模型可控 QQ 消息
 
 普通 Agent 文本支持受限的 CQ-compatible 出站语法：

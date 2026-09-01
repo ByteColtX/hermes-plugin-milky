@@ -10,14 +10,16 @@ import inspect
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from inbound.extractor import extract_segments
 from milky.client import ActionError
 from milky.models import IncomingMessage, Segment
 from milky.observability import log_event
-from milky.parser import ParseError, parse_forwarded_message, parse_incoming_message_data
+from milky.parser import ParseError, parse_incoming_message_data
 from session.identity import validate_chat_key
+
+if TYPE_CHECKING:
+    from inbound.extractor import ExtractedSegments
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +100,7 @@ class ResolvedReply:
 
 @dataclass(frozen=True, slots=True)
 class ResolvedForward:
-    """保存一个 forward ID 和其已解析的完整消息。"""
+    """保存一个 forward ID；普通 trigger 不自动展开其消息。"""
 
     forward_id: str
     messages: tuple[ResolvedForwardedMessage, ...] = ()
@@ -302,7 +304,7 @@ class ResourceResolver:
                 diagnostics.append(diagnostic)
                 body = _replace_first(
                     body,
-                    _available_marker(_field(reference, "kind")),
+                    _available_marker(reference),
                     _failure_marker(_field(reference, "kind")),
                 )
 
@@ -312,7 +314,7 @@ class ResourceResolver:
                 materializations.append(resolved)
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
-                body = _replace_first(body, "[文件]", "[文件不可用]")
+                body = _replace_first(body, _file_marker(reference), "[file:NOT SUPPORTED]")
 
         for reference in reply_references:
             reply, nested_diagnostics = await self._resolve_reply_reference(
@@ -326,11 +328,8 @@ class ResourceResolver:
                 replies.append(reply)
                 materializations.extend(reply.hermes_attachment_materializations)
                 diagnostics.extend(reply.diagnostics)
-                if reply.body == "[引用不可用]":
-                    body = _replace_first(body, "[引用]", "[引用不可用]")
             else:
                 diagnostics.extend(nested_diagnostics)
-                body = _replace_first(body, "[引用]", "[引用不可用]")
 
         for reference in forward_references:
             forward, nested_diagnostics = await self._resolve_forward_reference(
@@ -344,13 +343,21 @@ class ResourceResolver:
                 forwards.append(forward)
                 diagnostics.extend(forward.diagnostics)
                 if forward.diagnostics:
-                    body = _replace_first(body, "[转发]", "[转发不可用]")
+                    body = _replace_first(
+                        body,
+                        _forward_marker(reference),
+                        "[forward:NOT SUPPORTED]",
+                    )
                 for message_value in forward.messages:
                     materializations.extend(message_value.hermes_attachment_materializations)
                     diagnostics.extend(message_value.diagnostics)
             else:
                 diagnostics.extend(nested_diagnostics)
-                body = _replace_first(body, "[转发]", "[转发不可用]")
+                body = _replace_first(
+                    body,
+                    _forward_marker(reference),
+                    "[forward:NOT SUPPORTED]",
+                )
 
         return _ContentResolution(
             body=body,
@@ -503,7 +510,7 @@ class ResourceResolver:
                         sender_id=None,
                         sender_name=None,
                         timestamp=None,
-                        body="[引用不可用]",
+                        body="[reply:NOT SUPPORTED]",
                         segments=(),
                         diagnostics=(diagnostic,),
                     ),
@@ -528,7 +535,7 @@ class ResourceResolver:
                 diagnostics=(diagnostic,),
             ), (diagnostic,)
 
-        extracted = extract_segments(segments, self_id)
+        extracted = _extract_segments(segments, self_id)
         content = await self._resolve_content(
             body=extracted.body,
             media_references=extracted.media_resource_references,
@@ -560,52 +567,13 @@ class ResourceResolver:
         self_id: int,
         depth: int,
     ) -> tuple[ResolvedForward | None, tuple[ResourceDiagnostic, ...]]:
+        """只保留 forward 引用，不自动查询转发详情。"""
+
+        del scene, peer_id, self_id, depth
         forward_id = _optional_text(reference, "forward_id")
         if forward_id is None:
             return None, (_diagnostic("malformed", "forward", "forward ID is missing", None),)
-        if depth >= self._max_nested_depth:
-            diagnostic = _diagnostic(
-                "unsupported", "forward", "nested reference depth exceeded", forward_id
-            )
-            return ResolvedForward(forward_id, diagnostics=(diagnostic,)), (diagnostic,)
-        try:
-            envelope = await self._client.get_forwarded_messages(forward_id)
-            values = _data_sequence(envelope, "messages")
-            forwarded_messages = tuple(parse_forwarded_message(value) for value in values)
-        except Exception as error:  # noqa: BLE001 - resolver must downgrade Action failures
-            diagnostic = _diagnostic_from_error(
-                error, "forward", "forward lookup failed", forward_id
-            )
-            return ResolvedForward(forward_id, diagnostics=(diagnostic,)), (diagnostic,)
-
-        resolved_messages: list[ResolvedForwardedMessage] = []
-        for forwarded in forwarded_messages:
-            extracted = extract_segments(forwarded.segments, self_id)
-            content = await self._resolve_content(
-                body=extracted.body,
-                media_references=extracted.media_resource_references,
-                file_references=extracted.file_attachment_references,
-                forward_references=extracted.forward_references,
-                reply_references=extracted.reply_references,
-                scene=scene,
-                peer_id=peer_id,
-                self_id=self_id,
-                depth=depth + 1,
-            )
-            resolved_messages.append(
-                ResolvedForwardedMessage(
-                    time=forwarded.time,
-                    sender_name=forwarded.sender_name,
-                    avatar_url=forwarded.avatar_url,
-                    body=content.body,
-                    segments=forwarded.segments,
-                    message_seq=forwarded.message_seq,
-                    sender_id=None,
-                    hermes_attachment_materializations=content.materializations,
-                    diagnostics=content.diagnostics,
-                )
-            )
-        return ResolvedForward(forward_id, tuple(resolved_messages)), ()
+        return ResolvedForward(forward_id), ()
 
     async def _cache_url_with_helper(
         self,
@@ -739,7 +707,15 @@ def _materialization_from_path(
 
 
 def _segments_body(segments: tuple[Segment, ...], self_id: int) -> str:
-    return extract_segments(segments, self_id).body
+    return _extract_segments(segments, self_id).body
+
+
+def _extract_segments(segments: tuple[Segment, ...], self_id: int) -> ExtractedSegments:
+    """延迟加载入站 extractor，避免 ``milky`` 与 ``inbound`` 的导入循环。"""
+
+    from inbound.extractor import extract_segments
+
+    return extract_segments(segments, self_id)
 
 
 def _incoming_sender_name(message: IncomingMessage) -> str:
@@ -762,16 +738,38 @@ def _replace_first(body: str, old: str, new: str) -> str:
     return body.replace(old, new, 1)
 
 
-def _available_marker(kind: object) -> str:
-    return {"image": "[图片]", "record": "[语音]", "video": "[视频]"}.get(kind, "[媒体]")
+def _available_marker(reference: object) -> str:
+    kind = _field(reference, "kind")
+    if kind == "image":
+        summary = _optional_text(reference, "name")
+        resource_id = _optional_text(reference, "resource_id")
+        return f"[img:{summary or resource_id or 'NOT SUPPORTED'}]"
+    return {
+        "record": "[record:NOT SUPPORTED]",
+        "video": "[video:NOT SUPPORTED]",
+    }.get(kind, "[media:NOT SUPPORTED]")
 
 
 def _failure_marker(kind: object) -> str:
     return {
-        "image": "[图片不可用]",
-        "record": "[语音转写失败]",
-        "video": "[视频不可用]",
-    }.get(kind, "[媒体不可用]")
+        "image": "[img:NOT SUPPORTED]",
+        "record": "[record:NOT SUPPORTED]",
+        "video": "[video:NOT SUPPORTED]",
+    }.get(kind, "[media:NOT SUPPORTED]")
+
+
+def _file_marker(reference: object) -> str:
+    """返回入站 file placeholder。"""
+
+    file_id = _optional_text(reference, "file_id")
+    return f"[file:{file_id or 'NOT SUPPORTED'}]"
+
+
+def _forward_marker(reference: object) -> str:
+    """返回不展开的 forward placeholder。"""
+
+    forward_id = _optional_text(reference, "forward_id")
+    return f"[forward:{forward_id or 'NOT SUPPORTED'}]"
 
 
 def _media_mime(reference: object, kind: str) -> str:

@@ -31,6 +31,8 @@ SYSTEM_EVENT_TYPES = {
     "group_invitation",
     "friend_nudge",
     "group_nudge",
+    "group_member_increase",
+    "group_member_decrease",
     "group_mute",
     "group_whole_mute",
     "group_file_upload",
@@ -182,6 +184,23 @@ def test_message_fixture_preserves_inline_reply_and_delayed_forward_reference() 
     }
 
 
+def test_context_fixture_covers_optional_message_headers_and_boundaries() -> None:
+    """上下文 fixture 应覆盖完整和缺省 header 字段及边界文本。"""
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures/inbound_context/ordinary_messages.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert fixture["records"][0]["message_id"] == "9001"
+    assert fixture["records"][0]["reply_message_id"] == "8999"
+    assert "\r" in fixture["records"][0]["body"]
+    assert "<正文>" in fixture["records"][0]["body"]
+    assert "message_id" not in fixture["records"][1]
+    assert "reply_message_id" not in fixture["records"][1]
+
+
 def test_event_fixtures_cover_system_observation_and_unknown_extension() -> None:
     """系统事件应全部可观察，未知事件和 segment 应保留 raw 扩展边界。"""
 
@@ -199,6 +218,21 @@ def test_event_fixtures_cover_system_observation_and_unknown_extension() -> None
     assert unknown_segment["type"] == "future_segment_extension"
     assert unknown_segment["data"]["opaque"] == "仅供诊断"
     assert "[unknown]" not in json.dumps(unknown_message, ensure_ascii=False)
+
+
+def test_system_context_fixtures_cover_optional_details_and_invalid_chat_key() -> None:
+    """context-only 事件 fixture 应保留协议字段，且单独覆盖非法 chat key。"""
+
+    increase = load_fixture("events/system.group_member_increase.json")
+    minimal = load_fixture("events/system.group_member_increase.optional_missing.json")
+    decrease = load_fixture("events/system.group_member_decrease.json")
+    malformed = load_fixture("events/system.group_nudge.malformed.json")
+
+    assert increase["data"]["invitor_id"] == 800000002
+    assert minimal["data"]["operator_id"] is None
+    assert "invitor_id" not in minimal["data"]
+    assert "invitor_id" not in decrease["data"]
+    assert malformed["data"]["group_id"] == "not-a-group"
 
 
 def test_sse_fixtures_separate_outer_event_name_and_inner_business_type() -> None:

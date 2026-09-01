@@ -7,7 +7,7 @@ import inspect
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from gates import GateContext, GateRegistry
@@ -17,15 +17,18 @@ from milky.parser import ParseError, parse_event
 from milky.resources import ResolvedTriggerBatch, ResourceResolver
 from session import (
     ChatAdmissionCoordinator,
+    ContextOnlyEvent,
+    SystemContextBuffer,
     TtlDeduplicator,
     WaitBuffer,
-    render_channel_context,
+    render_ordered_context,
 )
 from will import WillInput
 
 from .canonical import CanonicalMessage, canonicalize_event
 from .commands import recognize_slash_command
 from .hermes_mapper import build_source, map_command_event, map_message_event
+from .system_events import parse_context_event
 
 Observer = Callable[[Event], Awaitable[object] | object]
 
@@ -60,6 +63,7 @@ class InboundPipeline:
         message_type_cls: type | None = None,
         observer: Observer | None = None,
         mute_tracker: object | None = None,
+        system_context_buffer: SystemContextBuffer | None = None,
     ) -> None:
         """创建一次入站 pipeline；不在构造阶段联网或启动任务。"""
 
@@ -77,6 +81,7 @@ class InboundPipeline:
         self._message_type_cls = message_type_cls
         self._observer = observer
         self._mute_tracker = mute_tracker
+        self._system_context = system_context_buffer or SystemContextBuffer(wait_buffer.max_size)
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._diagnostics: deque[str] = deque(maxlen=128)
         self._reply_costs = 0
@@ -141,6 +146,11 @@ class InboundPipeline:
             return PipelineResult(error.classification, reason=error.reason)
 
         if parsed_event.event_type != "message_receive":
+            context_result = parse_context_event(parsed_event)
+            if context_result.value is not None:
+                await self._store_context_event(context_result.value)
+            elif context_result.classification == "malformed":
+                self._record("system_context:malformed")
             log_event(
                 logger,
                 "milky_inbound_observe_only",
@@ -284,6 +294,10 @@ class InboundPipeline:
                 canonical.chat_key,
                 canonical,
                 ingress_sequence=ticket.ingress_sequence,
+            )
+            batch = replace(
+                batch,
+                system_context=self._system_context.drain(canonical.chat_key),
             )
             log_event(
                 logger,
@@ -499,6 +513,28 @@ class InboundPipeline:
                 reason="observer_failed",
             )
 
+    async def _store_context_event(self, event: ContextOnlyEvent) -> None:
+        """在 admission 内登记一条 context-only 系统事件。"""
+
+        async with self._admission.admit(event.chat_key) as ticket:
+            result = self._system_context.append(event, ingress_sequence=ticket.ingress_sequence)
+            if not result.accepted:
+                self._record(f"system_context:{result.reason}")
+                reason = "buffer_overflow"
+            else:
+                reason = "context_only"
+            log_event(
+                logger,
+                "milky_inbound_context_only",
+                logging.INFO,
+                stage="buffer",
+                scene="group" if event.chat_key.startswith("group:") else "friend",
+                chat_key=event.chat_key,
+                event_type=event.event_type,
+                ingress_sequence=ticket.ingress_sequence,
+                reason=reason,
+            )
+
     def _record(self, reason: str) -> None:
         self._diagnostics.append(reason)
 
@@ -516,6 +552,7 @@ class InboundPipeline:
             "message_type_cls": self._message_type_cls,
             "observer": self._observer,
             "mute_tracker": self._mute_tracker,
+            "system_context_buffer": self._system_context,
         }
         values.update(overrides)
         return type(self)(**values)
@@ -524,19 +561,37 @@ class InboundPipeline:
 def _render_resolved_history(batch: object, resolved_batch: ResolvedTriggerBatch) -> str | None:
     """使用 resolver 完成后的正文渲染历史上下文，不带当前消息。"""
 
-    records = []
-    for canonical, resolved in zip(batch.history, resolved_batch.history, strict=True):
+    records: list[tuple[int, object]] = []
+    sequences = getattr(batch, "history_ingress_sequences", ())
+    if not isinstance(sequences, tuple) or len(sequences) != len(batch.history):
+        sequences = tuple(range(len(batch.history)))
+    for sequence, canonical, resolved in zip(
+        sequences,
+        batch.history,
+        resolved_batch.history,
+        strict=True,
+    ):
         records.append(
-            _HistoryRecord(
-                chat_key=canonical.chat_key,
-                sender_name=canonical.sender_name,
-                sender_id=canonical.sender_id,
-                body=resolved.body,
-                message_id=canonical.message_id,
-                quote_message_id=canonical.quote_message_id,
+            (
+                sequence,
+                _HistoryRecord(
+                    chat_key=canonical.chat_key,
+                    sender_name=canonical.sender_name,
+                    sender_id=canonical.sender_id,
+                    body=resolved.body,
+                    message_id=canonical.message_id,
+                    quote_message_id=canonical.quote_message_id,
+                ),
             )
         )
-    return render_channel_context(records)
+    records.extend(
+        (
+            event.ingress_sequence or 0,
+            event,
+        )
+        for event in getattr(batch, "system_context", ())
+    )
+    return render_ordered_context(records)
 
 
 @dataclass(frozen=True, slots=True)

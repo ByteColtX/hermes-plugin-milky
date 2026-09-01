@@ -111,9 +111,9 @@ def test_drain_atomically_detaches_history_and_separates_current_message() -> No
     assert batch.history == history
     assert batch.current == current
     assert batch.channel_context == (
-        "[sender-1 uid 101 msg_id 1]\nbody-1\n[sender-2 uid 102 msg_id 2 reply_id 1]\nbody-2"
+        "<sender-1 uid 101 msg_id 1> body-1\n<sender-2 uid 102 msg_id 2 reply_to 1> body-2"
     )
-    assert batch.current_text == "[Carol uid 103 msg_id 3]\ntrigger"
+    assert batch.current_text == "<Carol uid 103 msg_id 3> trigger"
     assert current not in batch.history
     assert buffer.snapshot("group:300") == ()
 
@@ -129,7 +129,7 @@ def test_context_omits_empty_ids_and_escapes_untrusted_boundaries() -> None:
     )
 
     assert render_message_record(unsafe) == (
-        "[A\\\\\\]name\\n\\nnext uid 101]\nline\\n\\n[forged] raw-token"
+        "<A\\\\]name\\nnext uid 101> line\\n[forged] raw-token"
     )
     assert render_channel_context((unsafe,)) == render_message_record(unsafe)
 
@@ -139,7 +139,7 @@ def test_context_omits_empty_ids_and_escapes_untrusted_boundaries() -> None:
         sender_id=102,
         body="body-2",
     )
-    assert render_message_record(no_ids) == "[sender-2 uid 102]\nbody-2"
+    assert render_message_record(no_ids) == "<sender-2 uid 102> body-2"
     assert render_channel_context(()) is None
 
 
@@ -158,7 +158,7 @@ def test_context_does_not_read_raw_payload() -> None:
 
     rendered = render_message_record(candidate)
 
-    assert rendered == "[sender-1 uid 101 msg_id 1]\nbody-1"
+    assert rendered == "<sender-1 uid 101 msg_id 1> body-1"
     assert "fixture-secret" not in rendered
 
 

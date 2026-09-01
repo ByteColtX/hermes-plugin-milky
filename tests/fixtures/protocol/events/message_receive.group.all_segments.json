@@ -78,7 +78,10 @@
       },
       {
         "type": "light_app",
-        "data": {"app_name": "合成小程序", "json_payload": "{}"}
+        "data": {
+          "app_name": "合成小程序",
+          "json_payload": "{\"app\":\"contact\",\"meta\":{\"contact\":{\"type\":\"qq\",\"id\":800000004,\"labels\":[\"测试\",null]},\"nested\":{\"enabled\":true}},\"view\":\"ignored\",\"ver\":\"ignored\"}"
+        }
       },
       {
         "type": "xml",

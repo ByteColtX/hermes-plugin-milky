@@ -1,0 +1,10 @@
+{
+  "event_type": "group_nudge",
+  "time": 1700000074,
+  "self_id": 900000001,
+  "data": {
+    "group_id": "not-a-group",
+    "sender_id": 800000002,
+    "receiver_id": 900000001
+  }
+}

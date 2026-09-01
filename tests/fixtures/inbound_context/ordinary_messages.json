@@ -1,0 +1,20 @@
+{
+  "records": [
+    {
+      "sender_name": "发送者<一>\\二",
+      "sender_id": 800000010,
+      "message_id": "9001",
+      "reply_message_id": "8999",
+      "body": "第一行\r\n第二行 <正文>"
+    },
+    {
+      "sender_name": "无可选字段",
+      "sender_id": 800000011,
+      "body": "没有消息和回复 ID"
+    }
+  ],
+  "expected": {
+    "first": "<发送者\\<一\\>\\\\二 uid 800000010 msg_id 9001 reply_to 8999> 第一行\\n第二行 <正文>",
+    "second": "<无可选字段 uid 800000011> 没有消息和回复 ID"
+  }
+}

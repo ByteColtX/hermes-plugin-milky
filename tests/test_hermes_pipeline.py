@@ -221,8 +221,8 @@ def test_wait_history_is_context_only_and_current_message_is_not_repeated() -> N
 
     event = asyncio.run(scenario())
 
-    assert event.channel_context == "[合成名片 uid 800000002 msg_id 2001]\n历史消息"
-    assert event.text == "[合成名片 uid 800000002 msg_id 2002]\n@合成机器人触发消息"
+    assert event.channel_context == "<合成名片 uid 800000002 msg_id 2001> 历史消息"
+    assert event.text == "<合成名片 uid 800000002 msg_id 2002> @合成机器人触发消息"
     assert "触发消息" not in event.channel_context
     assert "历史消息" not in event.text
 

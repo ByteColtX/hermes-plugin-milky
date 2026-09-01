@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Literal
 
+from .context import ContextOnlyEvent
 from .identity import validate_chat_key
 
 _MAX_DIAGNOSTICS = 256
@@ -54,12 +55,29 @@ class DetachedTriggerBatch[T]:
     history: tuple[T, ...]
     current: T
     trigger_ingress_sequence: int = 0
+    history_ingress_sequences: tuple[int, ...] = ()
+    system_context: tuple[ContextOnlyEvent, ...] = ()
 
     @property
     def channel_context(self) -> str | None:
         """将历史消息渲染为 Hermes 的只读 channel_context。"""
 
-        return render_channel_context(self.history)
+        sequences = self.history_ingress_sequences
+        if len(sequences) != len(self.history):
+            sequences = tuple(range(len(self.history)))
+        regular = tuple(
+            (
+                sequence,
+                message,
+            )
+            for sequence, message in zip(
+                sequences,
+                self.history,
+                strict=False,
+            )
+        )
+        system = tuple((event.ingress_sequence or 0, event) for event in self.system_context)
+        return render_ordered_context((*regular, *system))
 
     @property
     def current_text(self) -> str:
@@ -201,6 +219,7 @@ class WaitBuffer[T]:
             history=tuple(entry.message for entry in entries),
             current=current,
             trigger_ingress_sequence=sequence,
+            history_ingress_sequences=tuple(entry.ingress_sequence for entry in entries),
         )
 
     def record_handoff_failure(
@@ -251,7 +270,7 @@ class WaitBuffer[T]:
 
 
 def render_message_record(message: object) -> str:
-    """按稳定紧凑格式渲染单条规范化消息，不读取 raw payload。"""
+    """按稳定单行尖括号格式渲染消息，不读取 raw payload。"""
 
     sender_name = _required_field(message, "sender_name")
     sender_id = _required_field(message, "sender_id")
@@ -269,8 +288,8 @@ def render_message_record(message: object) -> str:
     if message_id is not None:
         fields.extend(("msg_id", _escape_header(message_id)))
     if reply_id is not None:
-        fields.extend(("reply_id", _escape_header(reply_id)))
-    return f"[{' '.join(fields)}]\n{_escape_body(body)}"
+        fields.extend(("reply_to", _escape_header(reply_id)))
+    return f"<{' '.join(fields)}> {_escape_body(body)}"
 
 
 def render_channel_context(messages: Iterable[object]) -> str | None:
@@ -278,6 +297,27 @@ def render_channel_context(messages: Iterable[object]) -> str | None:
 
     records = tuple(render_message_record(message) for message in messages)
     return None if not records else "\n".join(records)
+
+
+def render_system_context_record(event: ContextOnlyEvent) -> str:
+    """渲染一条 context-only 系统事件。"""
+
+    if not isinstance(event, ContextOnlyEvent):
+        raise TypeError("event must be a ContextOnlyEvent")
+    return f"<event {_escape_header(event.event_type)}> {_escape_body(event.body)}"
+
+
+def render_ordered_context(records: Iterable[tuple[int, object]]) -> str | None:
+    """按 ingress sequence 合并普通历史和系统上下文。"""
+
+    ordered = sorted(records, key=lambda item: item[0])
+    rendered: list[str] = []
+    for _sequence, record in ordered:
+        if isinstance(record, ContextOnlyEvent):
+            rendered.append(render_system_context_record(record))
+        else:
+            rendered.append(render_message_record(record))
+    return None if not rendered else "\n".join(rendered)
 
 
 def _required_field(message: object, field_name: str) -> object:
@@ -294,14 +334,16 @@ def _escape_header(value: object) -> str:
     return (
         str(value)
         .replace("\\", "\\\\")
-        .replace("]", "\\]")
+        .replace("<", "\\<")
+        .replace(">", "\\>")
+        .replace("\r\n", "\\n")
         .replace("\r", "\\n")
         .replace("\n", "\\n")
     )
 
 
 def _escape_body(value: object) -> str:
-    return str(value).replace("\r", "\\n").replace("\n", "\\n")
+    return str(value).replace("\r\n", "\\n").replace("\r", "\\n").replace("\n", "\\n")
 
 
 def _validate_message_chat_key(message: object, chat_key: str) -> None:
@@ -332,4 +374,6 @@ __all__ = [
     "format_message_record",
     "render_channel_context",
     "render_message_record",
+    "render_ordered_context",
+    "render_system_context_record",
 ]

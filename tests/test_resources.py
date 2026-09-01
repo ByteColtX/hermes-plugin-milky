@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -151,8 +151,8 @@ def test_trigger_resolves_media_file_and_forward_with_separate_actions() -> None
 
     resolved = asyncio.run(ResourceResolver(client, hermes).resolve(result.value))
 
-    assert "[视频不可用]" in resolved.body
-    assert "[文件不可用]" in resolved.body
+    assert "[video:NOT SUPPORTED]" in resolved.body
+    assert "[file:NOT SUPPORTED]" in resolved.body
     assert len(resolved.hermes_attachment_materializations) == 2
     assert [item.kind for item in resolved.hermes_attachment_materializations] == [
         "image",
@@ -165,12 +165,10 @@ def test_trigger_resolves_media_file_and_forward_with_separate_actions() -> None
     assert [name for name, _ in hermes.url_calls] == ["image", "audio"]
     assert [name for name, _ in client.calls].count("get_resource_temp_url") == 3
     assert [name for name, _ in client.calls].count("get_group_file_download_url") == 1
-    assert [name for name, _ in client.calls].count("get_forwarded_messages") == 1
+    assert [name for name, _ in client.calls].count("get_forwarded_messages") == 0
     assert [name for name, _ in client.calls].count("get_message") == 0
     assert resolved.replies[0].body == "被引用的中性内容"
-    assert resolved.forwards[0].messages[0].body == "转发中的中性内容"
-    assert resolved.forwards[0].messages[0].sender_id is None
-    assert resolved.forwards[0].messages[0].avatar_url == ""
+    assert resolved.forwards[0].messages == ()
 
 
 def test_inline_reply_does_not_query_get_message() -> None:
@@ -186,6 +184,29 @@ def test_inline_reply_does_not_query_get_message() -> None:
     assert not any(name == "get_message" for name, _ in client.calls)
 
 
+def test_complete_reply_does_not_remove_another_reply_failure_marker() -> None:
+    """后续完整 reply 不得误删前一个失败 reply 的降级标记。"""
+
+    result = canonicalize_event(load_fixture("events/message_receive.friend.json"))
+    assert result.value is not None
+    client = make_client()
+    client.message_response = make_envelope({"message": {}})
+    message = replace(
+        result.value,
+        body="[reply:NOT SUPPORTED]",
+        reply_references=(
+            ReplyReference(message_seq=1001),
+            ReplyReference(message_seq=1000, complete=True),
+        ),
+    )
+
+    resolved = asyncio.run(ResourceResolver(client, FakeHermesMedia()).resolve(message))
+
+    assert resolved.body == "[reply:NOT SUPPORTED]"
+    assert [reply.message_seq for reply in resolved.replies] == [1001, 1000]
+    assert resolved.replies[1].body == ""
+
+
 def test_missing_private_file_hash_is_unsupported_before_action() -> None:
     """私聊 file 缺 hash 时不得调用私聊下载 Action。"""
 
@@ -199,7 +220,7 @@ def test_missing_private_file_hash_is_unsupported_before_action() -> None:
 
     resolved = asyncio.run(ResourceResolver(client, FakeHermesMedia()).resolve(result.value))
 
-    assert resolved.body == "[文件不可用]"
+    assert resolved.body == "[file:NOT SUPPORTED]"
     assert resolved.diagnostics[0].classification == "unsupported"
     assert not any(name == "get_private_file_download_url" for name, _ in client.calls)
 
@@ -217,7 +238,7 @@ def test_file_without_hermes_resource_entry_never_downloads_or_exposes_url() -> 
 
     file_diagnostics = [item for item in resolved.diagnostics if item.reference_kind == "file"]
     assert file_diagnostics[0].classification == "unsupported"
-    assert "[文件不可用]" in resolved.body
+    assert "[file:NOT SUPPORTED]" in resolved.body
     assert not any("cdn.example.invalid" in str(item) for item in resolved.diagnostics)
     assert not any(
         "/synthetic" in item.path for item in resolved.hermes_attachment_materializations
@@ -312,7 +333,7 @@ def test_malformed_resource_envelope_keeps_reference_diagnostic() -> None:
 
     resolved = asyncio.run(ResourceResolver(client, hermes).resolve(result.value))
 
-    assert resolved.body == "[图片不可用]"
+    assert resolved.body == "[img:NOT SUPPORTED]"
     assert resolved.diagnostics[0].classification == "malformed"
     assert resolved.diagnostics[0].reference_id == "fixture-image-resource"
     assert hermes.url_calls == []
@@ -350,16 +371,16 @@ def test_resource_and_reply_failures_keep_body_and_safe_diagnostics() -> None:
     resolved = asyncio.run(ResourceResolver(client, SimpleNamespace()).resolve(result.value))
 
     assert "中性文本" in resolved.body
-    assert "[图片不可用]" in resolved.body
-    assert "[转发不可用]" in resolved.body
+    assert "[img:NOT SUPPORTED]" in resolved.body
+    assert "[forward:fixture-forward-id]" in resolved.body
     assert {item.classification for item in resolved.diagnostics} >= {
         "rejected",
-        "transport_unknown",
         "unsupported",
     }
     assert all("cdn.example.invalid" not in str(item) for item in resolved.diagnostics)
     assert resolved.forward_results[0].forward_id == "fixture-forward-id"
     assert resolved.forward_results[0].messages == ()
+    assert not any(name == "get_forwarded_messages" for name, _ in client.calls)
 
 
 def test_remote_reply_is_fetched_only_when_inline_content_is_incomplete() -> None:
@@ -367,7 +388,7 @@ def test_remote_reply_is_fetched_only_when_inline_content_is_incomplete() -> Non
 
     client = make_client()
     message = SimpleNamespace(
-        body="[引用不可用]",
+        body="[reply:NOT SUPPORTED]",
         scene="friend",
         peer_id=800000001,
         self_id=900000001,
@@ -407,7 +428,7 @@ def test_failed_remote_reply_retains_target_id_and_placeholder() -> None:
         base_client.message_response,
     )
     message = SimpleNamespace(
-        body="[引用不可用]",
+        body="[reply:NOT SUPPORTED]",
         scene="friend",
         peer_id=800000001,
         self_id=900000001,
@@ -419,7 +440,7 @@ def test_failed_remote_reply_retains_target_id_and_placeholder() -> None:
 
     resolved = asyncio.run(ResourceResolver(client, SimpleNamespace()).resolve(message))
 
-    assert resolved.body == "[引用不可用]"
+    assert resolved.body == "[reply:NOT SUPPORTED]"
     assert resolved.replies[0].message_seq == 1005
     assert resolved.replies[0].diagnostics[0].reference_id == "1005"
     assert resolved.replies[0].diagnostics[0].classification == "transport_unknown"
@@ -475,7 +496,7 @@ def test_independent_trigger_resolutions_can_progress_concurrently() -> None:
         hermes = BlockingHermes()
         resolver = ResourceResolver(client, hermes)
         first = SimpleNamespace(
-            body="[图片]",
+            body="[img:fixture-a]",
             scene="friend",
             peer_id=800000001,
             self_id=900000001,
@@ -487,7 +508,7 @@ def test_independent_trigger_resolutions_can_progress_concurrently() -> None:
             reply_references=(),
         )
         second = SimpleNamespace(
-            body="[图片]",
+            body="[img:fixture-b]",
             scene="group",
             peer_id=700000001,
             self_id=900000001,

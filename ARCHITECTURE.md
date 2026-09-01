@@ -26,7 +26,8 @@ hermes-plugin-milky/
 ├── inbound/                    # canonical、normalizer、mapper 和流水线
 ├── gates/                      # 确定性入站门禁
 ├── will/                       # routing 和 willingness 决策
-├── session/                    # chat key、admission 和 wait buffer
+├── session/                    # chat key、admission、wait buffer 和 system context
+│   └── context.py              # 按 chat 隔离的 context-only 系统事件缓冲
 ├── state/                      # Bot 群禁言状态
 ├── outbound/                   # segment 格式化、路由和拆分
 │   └── standalone.py           # 独立 cron 的一次性文本投递
@@ -147,7 +148,7 @@ disconnect：取消任务并释放 HTTP/SSE、定时器和状态刷新资源
 | `inbound/` | 规范化消息、去重、映射和流水线 | 出站 Action |
 | `gates/` | 按固定顺序执行硬性门禁 | 网络、概率、发送和 Will 评分 |
 | `will/` | 决定 `wait` 或 `trigger` | 授权、网络和 Hermes Agent 调用 |
-| `session/` | 管理 chat key、短暂 admission 和有界 wait buffer | Hermes session store、Agent 队列 |
+| `session/` | 管理 chat key、短暂 admission、有界 wait buffer 和 system context | Hermes session store、Agent 队列 |
 | `state/mute_tracker.py` | 维护 Bot 的群禁言快照 | 消息正文、Will 和 Agent 状态 |
 | `outbound/` | 目标路由、segment 格式化、文件上传和结果 | 入站白名单、Will 分数 |
 | `adapter.py` | 连接 Hermes 生命周期和各组件 | 散落协议细节或业务策略 |
@@ -181,7 +182,7 @@ config  --->  __init__.py  --->  adapter.py
 
 ```text
 SSE /event
-  -> 只接受 message_receive
+  -> message_receive 进入普通入站；登记的系统事件进入 observe/context-only 分支
   -> tolerant parse / normalize
   -> canonical identity
   -> TTL dedup
@@ -249,6 +250,12 @@ follow-up、interrupt 或 pending 逻辑。交接失败只能重试同一 batch 
 Hermes core/cron 产生的启动、重启、告警和 cron 结果走反向的受信出站路径：
 Hermes 先解析 home channel 或显式目标，再调用同一个 outbound sender；该路径不创建
 canonical、Gate、Will、wait buffer 或 Agent turn。
+
+登记的 `group_nudge`、`friend_nudge`、`group_member_increase` 和
+`group_member_decrease` 事件不创建 canonical、dedup、Gate、Will 或 Hermes turn。它们在同
+chat admission 中获得 ingress sequence，写入独立有界的 system context FIFO，并只在下一次
+该 chat 的 trigger 中与普通 wait 历史按顺序合并；注入后立即原子清除，溢出丢弃最早记录并
+只保留安全诊断。其他系统事件继续 observe-only。
 
 ## 8. Gate、Will 和状态
 
@@ -318,12 +325,20 @@ observe-only。请求事件不自动批准或拒绝，文件上传事件不自�
 ### 9.3 Segment 和资源
 
 入站 tolerant parser 支持 text、mention、mention_all、face、reply、image、record、video、
-file、forward 及协议扩展，并保留 typed 数据和安全 raw。未知 segment 不得静默变成普通
-文本或 Agent 指令。
+file、forward、market_face、light_app、xml、markdown 及协议扩展，并保留 typed 数据和安全
+raw。正文使用稳定 placeholder：`face`、`img`、`record`、`video`、`file`、`forward`、
+`market_face`、`light_app` 和 `xml` 均带有明确类型；未知 segment 不得静默变成普通文本或
+Agent 指令。`light_app` 只展示 JSON payload 顶层 `meta` 根对象并递归保留其结构；缺少或
+无法解析 `meta` 时使用 `NOT SUPPORTED`。
 
 wait 阶段只保留资源引用，不下载。trigger 阶段才允许查询图片、文件或 reply。远端引用
 必须交给 Hermes 公共 media helper；插件不创建下载目录、media cache、SSRF 规则、权限
 规则或 Hermes 本地路径。
+
+`forward_id` 只保留为 `[forward:<forward_id>]` placeholder；普通 trigger 不调用
+`get_forwarded_messages`，详情查询必须由未来独立、授权的 QQ Tool 按需发起。
+完整 inline `reply` 只通过 `reply_to` header 和 Hermes reply metadata 表达，不在正文追加
+成功占位符；缺失或补全失败时使用类型化的 `[reply:NOT SUPPORTED]` 降级。
 
 ## 10. 出站边界
 
@@ -360,6 +375,7 @@ v0.1 不使用插件自有持久化数据库。插件内只有进程内、可丢
 
 - canonical TTL dedup；
 - 每 chat wait buffer；
+- 每 chat system context buffer；
 - 每 chat willingness 状态；
 - MuteTracker 群状态。
 
@@ -407,6 +423,10 @@ npx --yes @fission-ai/openspec@1.11.0 validate --changes --strict
 
 测试优先使用 fake Hermes、fake Milky transport、SSE fixture 和脱敏协议数据；真实 Milky
 smoke 只能从运行时环境读取凭证。新增行为先补 OpenSpec 对应契约或 fixture，再实现和测试。
+
+当前 `refine-inbound-context-rendering` 已有自动化证据覆盖单行上下文、结构化 placeholder、
+`light_app.meta` 投影、context-only 系统事件和 forward 不自动查询；其他未被当前 change
+覆盖的 Milky Action、WebHook、WebSocket fallback、自动 forward 展开和持久化状态仍未实现。
 
 在宣布能力可用前，必须有自动化证据证明：唯一入口、canonical/dedup 顺序、Gate/Will 分离、
 正确禁言字段、入站 Hermes 媒体所有权与出站 plugin materialization、文件 upload、temp/unknown/unsupported 降级、SendResult

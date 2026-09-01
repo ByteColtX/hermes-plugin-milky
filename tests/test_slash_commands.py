@@ -527,7 +527,7 @@ def test_fake_hermes_keeps_builtin_plugin_unknown_and_agent_paths_separate() -> 
     hermes = asyncio.run(scenario())
 
     assert hermes.routes == ["builtin", "builtin", "plugin", "unknown", "agent"]
-    assert hermes.agent_inputs == ["[合成好友 uid 800000001 msg_id 1205]\n普通正文"]
+    assert hermes.agent_inputs == ["<合成好友 uid 800000001 msg_id 1205> 普通正文"]
     assert hermes.agent_queue_creations == 0
 
 

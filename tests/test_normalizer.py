@@ -48,8 +48,12 @@ def test_normalizer_preserves_all_known_segments_and_strategy_features() -> None
         "markdown",
     ]
     assert normalized.body == (
-        "中性文本@合成机器人@全体[表情][引用][图片][语音][视频]"
-        "[文件][转发][市场表情][小程序][XML]### 中性内容"
+        "中性文本@合成机器人@全体[face:fixture-face][img:[合成图片]]"
+        "[record:NOT SUPPORTED][video:NOT SUPPORTED][file:fixture-file-id]"
+        "[forward:fixture-forward-id][market_face:NOT SUPPORTED]"
+        '[light_app:{"meta":{"contact":{"type":"qq","id":800000004,'
+        '"labels":["测试",null]},"nested":{"enabled":true}}}]'
+        "[xml:NOT SUPPORTED]### 中性内容"
     )
     assert normalized.strategy_text == "中性文本@合成机器人@全体### 中性内容"
     assert normalized.mention_kinds == ("self", "all")
@@ -135,7 +139,7 @@ def test_structured_only_message_remains_processable() -> None:
 
     assert result.classification == "accepted"
     assert result.value is not None
-    assert result.value.body == "[图片]"
+    assert result.value.body == "[img:fixture-image-resource]"
     assert result.value.strategy_text == ""
     assert result.value.has_image is True
 
@@ -154,7 +158,7 @@ def test_reply_missing_required_fields_is_malformed_without_fabricating_quote() 
     assert result.value is not None
     assert result.value.has_reply is True
     assert result.value.reply_message_seq is None
-    assert result.value.body == "[引用不可用]"
+    assert result.value.body == "[reply:NOT SUPPORTED]"
     assert "malformed_reply" in result.value.diagnostics
 
 
@@ -180,7 +184,8 @@ def test_inline_reply_does_not_need_remote_resolution() -> None:
     assert result.classification == "accepted"
     assert result.value is not None
     assert result.value.reply_message_seq == 1000
-    assert result.value.body.endswith("[引用]")
+    assert result.value.body == "朋友消息"
+    assert "[引用]" not in result.value.body
 
 
 def test_media_and_forward_only_store_references() -> None:
@@ -212,7 +217,7 @@ def test_incomplete_media_gets_explanatory_placeholder() -> None:
     result = normalize_event(payload)
 
     assert result.value is not None
-    assert result.value.body == "[图片不可用][文件不可用][转发不可用]"
+    assert result.value.body == ("[img:NOT SUPPORTED][file:NOT SUPPORTED][forward:NOT SUPPORTED]")
     assert "incomplete_media_reference" in result.value.diagnostics
 
 

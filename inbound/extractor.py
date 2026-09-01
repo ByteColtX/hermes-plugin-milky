@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -169,20 +170,19 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
                 )
             )
             if complete:
-                body_parts.append("[引用]")
                 if reply_message_seq is None:
                     reply_message_seq = segment.message_seq
             else:
-                body_parts.append("[引用不可用]")
+                body_parts.append("[reply:NOT SUPPORTED]")
                 _append_once(diagnostics, "malformed_reply")
             continue
 
         if isinstance(segment, ImageSegment):
             has_supported_content = True
             has_image = True
-            available = _has_text(segment.resource_id) or _has_text(segment.temp_url)
-            body_parts.append("[图片]" if available else "[图片不可用]")
-            if not available:
+            marker = _image_marker(segment)
+            body_parts.append(marker)
+            if marker == "[img:NOT SUPPORTED]":
                 _append_once(diagnostics, "incomplete_media_reference")
             media_resource_references.append(
                 MediaResourceReference(
@@ -199,9 +199,8 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
 
         if isinstance(segment, RecordSegment):
             has_supported_content = True
-            available = _has_text(segment.resource_id) or _has_text(segment.temp_url)
-            body_parts.append("[语音]" if available else "[语音不可用]")
-            if not available:
+            body_parts.append("[record:NOT SUPPORTED]")
+            if not (_has_text(segment.resource_id) or _has_text(segment.temp_url)):
                 _append_once(diagnostics, "incomplete_media_reference")
             media_resource_references.append(
                 MediaResourceReference(
@@ -217,9 +216,8 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
 
         if isinstance(segment, VideoSegment):
             has_supported_content = True
-            available = _has_text(segment.resource_id) or _has_text(segment.temp_url)
-            body_parts.append("[视频]" if available else "[视频不可用]")
-            if not available:
+            body_parts.append("[video:NOT SUPPORTED]")
+            if not (_has_text(segment.resource_id) or _has_text(segment.temp_url)):
                 _append_once(diagnostics, "incomplete_media_reference")
             media_resource_references.append(
                 MediaResourceReference(
@@ -235,9 +233,9 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
 
         if isinstance(segment, FileSegment):
             has_supported_content = True
-            available = _has_text(segment.file_id) or _has_text(segment.file_name)
-            body_parts.append("[文件]" if available else "[文件不可用]")
-            if not available:
+            marker = _identifier_marker("file", segment.file_id)
+            body_parts.append(marker)
+            if marker == "[file:NOT SUPPORTED]":
                 _append_once(diagnostics, "incomplete_media_reference")
             file_attachment_references.append(
                 FileAttachmentReference(
@@ -253,9 +251,9 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
 
         if isinstance(segment, ForwardSegment):
             has_supported_content = True
-            available = _has_text(segment.forward_id)
-            body_parts.append("[转发]" if available else "[转发不可用]")
-            if not available:
+            marker = _identifier_marker("forward", segment.forward_id)
+            body_parts.append(marker)
+            if marker == "[forward:NOT SUPPORTED]":
                 _append_once(diagnostics, "incomplete_media_reference")
             forward_references.append(
                 ForwardReference(
@@ -270,22 +268,25 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
 
         if isinstance(segment, FaceSegment):
             has_supported_content = True
-            body_parts.append("[表情]")
+            body_parts.append(_identifier_marker("face", segment.face_id))
             continue
 
         if isinstance(segment, MarketFaceSegment):
             has_supported_content = True
-            body_parts.append("[市场表情]")
+            body_parts.append("[market_face:NOT SUPPORTED]")
             continue
 
         if isinstance(segment, LightAppSegment):
             has_supported_content = True
-            body_parts.append("[小程序]")
+            marker = _light_app_marker(segment.json_payload)
+            body_parts.append(marker)
+            if marker == "[light_app:NOT SUPPORTED]":
+                _append_once(diagnostics, "malformed_light_app")
             continue
 
         if isinstance(segment, XmlSegment):
             has_supported_content = True
-            body_parts.append("[XML]")
+            body_parts.append("[xml:NOT SUPPORTED]")
             continue
 
         if isinstance(segment, UnknownSegment):
@@ -346,6 +347,45 @@ def _reply_is_complete(segment: ReplySegment) -> bool:
 def _mention_display(segment: MentionSegment) -> str:
     name = segment.name.strip() if isinstance(segment.name, str) else ""
     return f"@{name or segment.user_id}"
+
+
+def _identifier_marker(kind: str, value: object) -> str:
+    """为带 ID 的 segment 生成稳定 placeholder。"""
+
+    identifier = value.strip() if isinstance(value, str) else ""
+    return f"[{kind}:{identifier or 'NOT SUPPORTED'}]"
+
+
+def _image_marker(segment: ImageSegment) -> str:
+    """按 summary、resource_id 顺序生成图片 placeholder。"""
+
+    summary = segment.summary.strip() if isinstance(segment.summary, str) else ""
+    if summary:
+        return f"[img:{summary}]"
+    return _identifier_marker("img", segment.resource_id)
+
+
+def _light_app_marker(payload: str | None) -> str:
+    """只投影 light app 顶层 meta，并保留其完整 JSON 值。"""
+
+    if not isinstance(payload, str) or not payload.strip():
+        return "[light_app:NOT SUPPORTED]"
+    try:
+        value = json.loads(payload)
+    except (TypeError, ValueError):
+        return "[light_app:NOT SUPPORTED]"
+    if not isinstance(value, Mapping) or not isinstance(value.get("meta"), Mapping):
+        return "[light_app:NOT SUPPORTED]"
+    try:
+        projected = json.dumps(
+            {"meta": value["meta"]},
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        return "[light_app:NOT SUPPORTED]"
+    return f"[light_app:{projected}]"
 
 
 def _has_text(value: object) -> bool:

@@ -1,0 +1,10 @@
+{
+  "event_type": "group_member_increase",
+  "time": 1700000073,
+  "self_id": 900000001,
+  "data": {
+    "group_id": 700000001,
+    "user_id": 800000005,
+    "operator_id": null
+  }
+}
