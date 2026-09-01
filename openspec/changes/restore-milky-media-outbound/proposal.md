@@ -18,6 +18,9 @@ host 仍需要的本地路径转换。应当重构当前方案，恢复 plugin �
 - 保持 `http(s)://` 和显式 `base64://` 原样传递，不在 plugin 下载远端 URI 或重复解码。
 - 删除对 Hermes outbound materialization seam 的运行时依赖；当前 Hermes host 无需修改
   即可进入 Milky native media/file 发送边界。
+- 在 Agent-facing platform hint 和 QQ tools 说明中明确：本地媒体通过通用
+  `send_message` 的 `MEDIA:<local_path>` 入口发送，不因固定 QQ ToolSpec 列表没有
+  `send_video` 等名称而误判能力不存在。
 - 图片、语音和视频继续发送 native message segment，文档继续使用独立 file upload。
 - 补充真实本地临时文件、路径格式、大小边界、失败分类和 host dispatch 回归。
 

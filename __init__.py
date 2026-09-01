@@ -12,12 +12,15 @@ if _PLUGIN_ROOT not in sys.path:
 
 PLATFORM_HINT = (
     "You are sending and receiving messages via Hermes's Milky QQ platform.\n"
-    "Use `at` to explicitly notify a user, in the format [CQ:at,qq=<uid>]; use `reply` to reply to a specific message, "
-    "in the format [CQ:reply,id=<msg_id>] (e.g. task-completion notices, answers to questions).\n"
-    "When both are needed, place them at the very start of the message in the order reply, then at; otherwise, send plain text only.\n"
-    "uid and msg_id must come only from real decimal fields in the current message or channel_context — never guess them or use qq=all.\n"
-    "Load the plugin skill `hermes-plugin-milky:qq-reference` as needed for CQ code details, "
-    "and `hermes-plugin-milky:qq-tools` as needed for QQ tool usage."
+    "For attachments, include `MEDIA:<local_path>` in the reply (or in `send_message`'s `message` arg), e.g. `MEDIA:~/path/to/clip.mp4`; "
+    "Hermes routes it to Milky's native media/file upload by type. Don't claim Milky can't send media/files unless the send fails, "
+    "and never send the raw local path as chat text. `MEDIA:` is separate from the fixed QQ ToolSpec list; use plain text when no attachment is needed.\n"
+    "Use `at` to notify a user — [CQ:at,qq=<uid>] — and `reply` to reply to a specific message — [CQ:reply,id=<msg_id>] "
+    "(e.g. task-completion notices, answers to questions).\n"
+    "When both are needed, order them reply then at at the very start of the message; either can combine with a `MEDIA:` directive.\n"
+    "When casually participating in an ongoing multi-person discussion, plain text without at/reply is fine — don't tack them onto every turn just because the chat is a group; reserve them for actually notifying someone or replying to a specific prior message.\n"
+    "uid and msg_id must come only from real decimal fields in the current message or channel_context — never guess or use qq=all.\n"
+    "Load `hermes-plugin-milky:qq-reference` for CQ code details, or `hermes-plugin-milky:qq-tools` for QQ tool usage."
 )
 
 

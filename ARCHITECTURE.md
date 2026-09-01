@@ -282,6 +282,11 @@ SSE receive loop 必须处理 `event:`、多行 `data:`、空行边界、断线�
   `upload_group_file` / `upload_private_file`，不塞入 message segment；未实现的编辑、撤回、reaction
   等能力返回 `unsupported`，不报告假成功。
 
+Agent 的本地附件通过 Hermes 的 `MEDIA:<local_path>` 指令进入上述入口：普通回复把指令放在
+最终回复中，显式调用通用 `send_message` 时把指令放在 `message` 参数中。Hermes 按扩展名调用
+`send_image_file`、`send_voice`、`send_video` 或 `send_document`。该指令是平台发送约定，不是
+17 个显式 QQ ToolSpec；Agent 不应因为 ToolSpec 列表没有 `send_video` 而判断 Milky 没有媒体发送能力。
+
 出站收到本地路径、`Path` 或 `file://localhost` 时，只读取一次常规、非空且不超过 8 MiB 的文件并
 生成 `base64://`；合法 `http(s)://` 和显式 `base64://` 原样保留，不下载或解码。文件上传携带
 安全文件名，不能假定 Milky 能访问 plugin 的本地路径。每个可能有副作用的 Action 最多提交一次；

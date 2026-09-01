@@ -68,6 +68,7 @@ agent:
   gateway_auto_continue_freshness: 3600
   gateway_notify_interval: 180  # 每 3 分钟发一次“仍在处理”
   session_stall_timeout: 300    # 排队且无进展 5 分钟时提醒
+  image_input_mode: native      # 改用原生视觉处理，速度优先，准确度会有所牺牲
 
 # 关闭自动建议创建 Skill
 skills:
@@ -222,6 +223,13 @@ cron 为每次投递创建并关闭临时 Milky client，目前只支持无附�
 | `MilkyAdapter` | 实现 Hermes `BasePlatformAdapter` 的连接、停止、入站交接和出站委托 |
 | `MilkyOutboundSender` | 校验 `group:/dm:` 目标，格式化文本和 native segment，并调用 Milky Action/upload |
 | `SlashCommandService` | 管理 adapter 生命周期内的唯一活动 client，处理无参数 `/milky` |
+
+Agent 在普通回复中发送本地图片、语音、视频或文档时，应在最终回复中包含
+`MEDIA:<local_path>`，例如 `MEDIA:~/path/to/clip.mp4`；显式调用 Hermes 内置的 `send_message`
+时，则在其 `message` 中包含同一指令。Hermes 会按文件类型调用本插件的 `send_image_file`、
+`send_voice`、`send_video` 或 `send_document`；其中图片、语音和视频使用 Milky native segment，
+文档使用独立 file upload。`MEDIA:` 是通用发送入口，不属于下方 17 个显式 QQ ToolSpec；只有
+发送入口返回失败时才应报告发送失败。
 
 注册后，`connect()` 先完成 `get_login_info`、`get_group_list` 和每个群的 bot 成员状态同步，
 再启动 SSE 并开放普通消息入口；`disconnect()` 会取消 event/pipeline/TTL 任务、解除

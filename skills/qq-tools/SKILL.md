@@ -12,6 +12,12 @@ metadata:
 文字说明不注册工具，文字说明不执行也不扩大工具能力，未列出的 Action 不可调用。每个工具只
 调用同名的 `POST /api/{operationId}`。
 
+本 skill 的 17 个 ToolSpec 不含媒体发送。需发送本地图片、音频、视频或文档时，在回复中包含
+`MEDIA:<local_path>`（如 `MEDIA:~/path/to/clip.mp4`）；显式使用 `send_message` 工具时，同一
+指令放入其 `message` 参数。Hermes 按扩展名路由至 Milky 的原生媒体/文件上传入口。除非发送失败，
+不得声称 Milky 不支持媒体或文件发送，也不要把本地路径当普通文本发送。`MEDIA:` 不扩大本 skill
+的 ToolSpec 范围。
+
 ## 调用规则
 
 - 入参必须是 JSON 对象，只传下表字段；禁止额外字段、别名和字符串伪装的数字。

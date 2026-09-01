@@ -112,7 +112,7 @@ class SkillAndPlatformContext:
 
 
 def test_root_registers_split_qq_skills_and_stable_platform_hint(monkeypatch) -> None:
-    """根入口应登记拆分后的插件 skill，并只提供不含逐轮身份的基础提示。"""
+    """根入口应登记插件 skill，并提供明确的文本、控制码和媒体入口提示。"""
 
     set_valid_environment(monkeypatch)
     entry, module_name = load_plugin_entry()
@@ -129,9 +129,15 @@ def test_root_registers_split_qq_skills_and_stable_platform_hint(monkeypatch) ->
         hint = context.platforms[0]["platform_hint"]
         assert "[CQ:at,qq=<uid>]" in hint
         assert "[CQ:reply,id=<msg_id>]" in hint
-        assert "Use `at` to explicitly notify a user" in hint
-        assert "use `reply` to reply to a specific message" in hint
-        assert "otherwise, send plain text only" in hint
+        assert "For attachments, include `MEDIA:<local_path>` in the reply" in hint
+        assert "`send_message`'s `message` arg" in hint
+        assert "MEDIA:<local_path>" in hint
+        assert "native media/file upload by type" in hint
+        assert "Don't claim Milky can't send media/files unless the send fails" in hint
+        assert "use plain text when no attachment is needed" in hint
+        assert "Use `at` to notify a user" in hint
+        assert "`reply` to reply to a specific message" in hint
+        assert "otherwise, send plain text only" not in hint
         assert "hermes-plugin-milky:qq-reference" in hint
         assert "hermes-plugin-milky:qq-tools" in hint
         assert "101" not in hint
@@ -257,6 +263,11 @@ def test_qq_skills_are_split_and_do_not_add_tools() -> None:
         "reject_friend_request",
     ):
         assert tool_name not in cq_skill
+
+    assert "MEDIA:<local_path>" in tools_skill
+    assert "send_message" in tools_skill
+    assert "不含媒体发送" in tools_skill
+    assert "在回复中包含" in tools_skill
 
     assert "[CQ:" not in tools_skill
     assert "文字说明不注册" in tools_skill

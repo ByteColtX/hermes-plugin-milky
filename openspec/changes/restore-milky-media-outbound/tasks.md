@@ -30,6 +30,7 @@
 - [x] 5.2 在当前 Hermes runtime 上执行真实 host dispatch、fake Milky 和 local HTTP 回归；验证本地附件不再返回 seam 缺失，并且失败不执行用户可见 fallback
 - [x] 5.3 运行媒体、sender、adapter、outbound 和集成测试，并执行 `uv run pytest`、`uv run ruff check .`、`uv run ruff format --check .`、`uv build` 和 `git diff --check`；将失败按协议、Hermes API、媒体、并发、权限或测试基础设施分类
 - [x] 5.4 执行 `npx --yes @fission-ai/openspec@1.11.0 validate --changes --strict`；验证 change 的 proposal、delta spec、design 和 tasks 一致，并记录真实 Milky 写入 smoke 未授权时未执行
+- [x] 5.5 明确 Agent 使用 `send_message` 的 `MEDIA:<local_path>` 发送本地媒体，避免将固定 QQ ToolSpec 列表误判为完整出站能力；增加平台提示、工具说明和入口回归断言
 
 ## Evidence ledger
 
@@ -42,3 +43,4 @@
 | 质量门禁 | `uv run pytest -q`；`uv run ruff check .`；`uv run ruff format --check .`；`uv build`；`git diff --check` | `509 passed, 22 skipped`；ruff check 通过；format 通过（191 files）；build 成功；diff check 通过 | 无协议、Hermes API、媒体、并发、权限或测试基础设施失败 |
 | OpenSpec | `npx --yes @fission-ai/openspec@1.11.0 validate --changes --strict` | `1 passed, 0 failed` | proposal、delta spec、design、tasks 一致 |
 | 真实环境 | 已在 `orb -m hermes-dev` 只读检查实际 plugin、host 方法和部署路径；fake Milky 与 local HTTP fixture 已执行 | 证实当前 host 仍传本地路径；部署 plugin 已包含本地读取和 Base64 编码；未执行 Milky 写入/上传 smoke | 分类为已确认的 plugin 媒体回归且已完成代码级修正；真实视频发送仍需用户明确授权后再观察 native Action |
+| Agent 能力提示 | `uv run pytest -q tests/test_plugin_entry.py`；静态检查 `PLATFORM_HINT`、`skills/qq-tools/SKILL.md`、README 和架构说明 | 通过：平台提示明确普通最终回复和 `send_message` 两种 `MEDIA:<local_path>` 入口，并明确不以 QQ ToolSpec 清单推断媒体能力 | 修复 Agent 能力发现歧义；未改变 ToolSpec 数量、Milky Action 或安全边界 |

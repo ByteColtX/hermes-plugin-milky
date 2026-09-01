@@ -12,11 +12,25 @@
 MUST 使用对应目标的独立 file upload。系统 MUST 不依赖 Hermes outbound materialization
 seam，不把媒体降级成路径文本，也不使用 Hermes 基类的纯文本 fallback。
 
+Agent-facing Milky guidance MUST identify the `MEDIA:<local_path>` directive as the native
+local-attachment entry point for images, audio, video and documents. In a normal reply, the
+directive MUST be placed in the final response; when the Agent explicitly calls Hermes
+`send_message`, the directive MUST be placed in its `message` argument. The guidance MUST
+distinguish this entry point from the fixed QQ ToolSpec list and MUST NOT instruct the Agent to use
+plain text when an attachment was requested. The Agent MUST report missing media capability only
+after the send entry point returns a failure.
+
 #### Scenario: Agent 请求发送本地视频
 
 - **WHEN** Hermes host 将一个存在的本地视频路径传给 Milky adapter
 - **THEN** plugin SHALL 读取该常规文件并生成 `base64://` URI
 - **AND** SHALL 将 URI 放入 `video` segment 并调用合法目标对应的 message Action
+
+#### Scenario: Agent 通过通用发送入口请求本地视频
+
+- **WHEN** Agent 需要发送本地视频，且生成 `MEDIA:<local_path>` 发送指令
+- **THEN** Hermes SHALL 将该指令解析为 Milky adapter 的 `send_video` 入口
+- **AND** Agent SHALL NOT 因固定 QQ ToolSpec 列表没有 `send_video` 而报告媒体能力不存在
 
 #### Scenario: Agent 请求发送本地图片、语音或视频
 
