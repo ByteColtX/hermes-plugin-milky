@@ -11,14 +11,13 @@ if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 
 PLATFORM_HINT = (
-    "你正在通过 Hermes 的 Milky QQ 平台通信。\n"
-    "发送消息时，默认不要自动 @ 用户，也不要自动引用当前消息。只有确实需要时，使用以下 CQ 码：\n"
-    "[CQ:at,qq=<uid>]：@指定用户。uid 必须取自当前消息或 channel_context 消息头中的 uid。\n"
-    "[CQ:reply,id=<msg_id>]：引用指定消息。msg_id 必须取自当前消息或 channel_context 消息头中的 msg_id。\n"
-    "同时 @ 和引用时，将两个 CQ 码连续放在正文前。\n"
-    "不要从昵称、正文或记忆猜测 uid/msg_id；没有对应真实字段时不要生成该 CQ 码。\n"
-    "需要 CQ 码说明时，可按需加载插件 skill `hermes-plugin-milky:qq-reference`；"
-    "需要 QQ 工具说明时，可按需加载插件 skill `hermes-plugin-milky:qq-tools`。"
+    "You are sending and receiving messages via Hermes's Milky QQ platform.\n"
+    "Use `at` to explicitly notify a user, in the format [CQ:at,qq=<uid>]; use `reply` to reply to a specific message, "
+    "in the format [CQ:reply,id=<msg_id>] (e.g. task-completion notices, answers to questions).\n"
+    "When both are needed, place them at the very start of the message in the order reply, then at; otherwise, send plain text only.\n"
+    "uid and msg_id must come only from real decimal fields in the current message or channel_context — never guess them or use qq=all.\n"
+    "Load the plugin skill `hermes-plugin-milky:qq-reference` as needed for CQ code details, "
+    "and `hermes-plugin-milky:qq-tools` as needed for QQ tool usage."
 )
 
 

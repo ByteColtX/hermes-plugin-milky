@@ -129,8 +129,9 @@ def test_root_registers_split_qq_skills_and_stable_platform_hint(monkeypatch) ->
         hint = context.platforms[0]["platform_hint"]
         assert "[CQ:at,qq=<uid>]" in hint
         assert "[CQ:reply,id=<msg_id>]" in hint
-        assert "默认不要自动 @ 用户" in hint
-        assert "不要自动引用当前消息" in hint
+        assert "Use `at` to explicitly notify a user" in hint
+        assert "use `reply` to reply to a specific message" in hint
+        assert "otherwise, send plain text only" in hint
         assert "hermes-plugin-milky:qq-reference" in hint
         assert "hermes-plugin-milky:qq-tools" in hint
         assert "101" not in hint

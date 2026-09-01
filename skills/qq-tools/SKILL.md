@@ -1,199 +1,70 @@
 ---
 name: qq-tools
-description: Milky QQ Agent 显式 ToolSpec 参考：QQ 查询、好友/群操作、消息撤回、群信息与成员查询、群成员禁言和全员禁言；说明 operationId、参数、权限、目标和副作用边界。
+description: Reference for Milky QQ Agent's explicit ToolSpec calls — fixed operationIds, strict parameter schemas, admin-only restrictions, and side-effect boundaries. Use when calling or explaining a specific QQ tool (friend requests, forwarded messages, private file transfer, group member/admin actions, mute, poke, message recall, card likes) and you need the exact operationId, required parameters, or permission constraints.
 metadata:
-  short-description: Milky QQ 工具参数、权限与调用边界
+  short-description: Milky QQ 工具入参与权限
   keywords: "Milky, QQ, Hermes, ToolSpec, operationId, 好友, 好友请求, 合并转发, 私聊文件, 群聊, 群成员, 名片点赞, 戳一戳, 撤回消息, 群管理, 禁言, 全员禁言, group_id, user_id, initiator_uid, forward_id, file_hash, message_seq"
 ---
 
 # Milky QQ tools
 
-本 skill 面向需要发现、选择或调用 Milky QQ Agent 工具的场景，包括：查询合并转发消息、
-查询私聊文件链接、群成员和好友关系管理，以及现有的名片点赞、好友或群戳一戳、撤回群消息、
-查询群和群成员、设置群成员禁言、设置群全员禁言。
+本 skill 只解释当前已注册的 17 个 Hermes ToolSpec。工具名与 Milky `operationId` 相同；
+文字说明不注册工具，文字说明不执行也不扩大工具能力，未列出的 Action 不可调用。每个工具只
+调用同名的 `POST /api/{operationId}`。
 
-工具名称与 Milky API 的 `operationId` 一致。本 skill 只解释当前已注册的 17 个 Hermes
-ToolSpec；文字说明不注册工具，文字说明不执行也不扩大工具能力，也不把未列出的 Milky Action 变成可用能力。实际可用性、
-参数校验和服务端返回结果始终以 Hermes 当前发现的 ToolSpec 与 Milky 响应为准。
+## 调用规则
 
-## 先看：权限与副作用速查
+- 入参必须是 JSON 对象，只传下表字段；禁止额外字段、别名和字符串伪装的数字。
+- `group_id`、`user_id` 是整数 `10001..4294967295`；`message_seq`、`count`、`duration`、
+  `limit` 是整数 `0..9007199254740991`；均不接受 `bool`。
+- `forward_id`、`file_id`、`file_hash`、`initiator_uid` 必须是非空字符串；`reason` 是字符串或
+  `null`。其余可选字段按 schema 的布尔值或 `null` 传递。
+- `?` 表示可省略。省略字段与显式传 `null` 不同：插件不会自行补默认字段，显式 `null` 会按原样
+ 进入 Action body。需要成功率时，优先只传必填字段；需要开关/时长时传明确的 `true`/`false` 或整数。
+- ID 必须来自当前消息/上下文或用户明确提供：不要从昵称、正文或模糊描述猜测。`message_seq` 是
+  Milky 远端消息序号，不是时间戳或随机数；`initiator_uid` 是好友请求返回的 UID，不是 QQ 号。
+- 私聊文件查询必须同时提供 `file_id` 和 `file_hash`；只有文件名不能调用。
+- `no_cache=true` 表示要求绕过缓存；不需要时省略。`temp` 会话没有对应的工具目标。
 
-| 工具 | 类型 | 关键权限或前置条件 |
-| --- | --- | --- |
-| `send_profile_like` | 写操作 | 目标 QQ 号必须明确；点赞数量受服务端限制和频控约束。 |
-| `send_friend_nudge` | 写操作 | 目标应为好友私聊对象；`is_self` 只表示是否戳自己，默认 `false`。 |
-| `send_group_nudge` | 写操作 | `user_id` 应是目标群成员；Bot 的群成员关系和其他权限由服务端判断。 |
-| `recall_group_message` | 写操作 | 普通成员只能在 2 分钟内撤回 Bot 自己的群消息；Bot 为群管理员时可不限时间撤回任何人的群消息，包括自己发送的消息。 |
-| `get_group_info` | 只读查询 | OpenAPI 未声明额外群管理权限；能否查询目标群由 Milky 服务端的账号可见范围决定。 |
-| `get_group_member_list` | 只读查询 | OpenAPI 未声明额外群管理权限；目标群和可见成员范围由 Milky 服务端判断。 |
-| `get_group_member_info` | 只读查询 | OpenAPI 未声明额外群管理权限；目标群成员关系和可见范围由 Milky 服务端判断。 |
-| `set_group_member_mute` | 写操作 | Bot 必须具备目标群管理权限（群主或管理员）；`duration=0` 表示取消禁言。 |
-| `set_group_whole_mute` | 写操作 | Bot 必须具备目标群管理权限（群主或管理员）；`is_mute=false` 表示取消全员禁言。 |
-| `get_forwarded_messages` | 只读查询 | 只按明确的 `forward_id` 查询；结果不会自动进入 Hermes turn。 |
-| `get_private_file_download_url` | 只读查询 | 只按明确的文件字段查询；插件不会下载、缓存或解码链接。 |
-| `kick_group_member` | 写操作 | Bot 必须具备目标群管理权限；状态未知时不会自动重试。 |
-| `quit_group` | 写操作 | 退出目标群是不可逆远端操作；不会回退其他群或默认目标。 |
-| `delete_friend` | 写操作 | 删除好友关系只接受明确 QQ 号；不会由好友事件自动触发。 |
-| `get_friend_requests` | 只读查询 | 只查询请求，不自动接受、拒绝或修改本地状态。 |
-| `accept_friend_request` | 写操作 | 必须明确提供好友请求 `initiator_uid`；不会由请求事件自动触发。 |
-| `reject_friend_request` | 写操作 | 必须明确提供好友请求 `initiator_uid`；`reason` 不写入审计日志。 |
+## 工具与入参
 
-撤回、戳一戳、点赞和禁言都会产生外部副作用。调用前必须确认目标和动作来自当前用户
-意图；权限不足、目标不合法或服务端拒绝时，不应改用其他 Action 猜测或重试。
+### 好友、群和消息
 
-## 通用参数规则
+- `send_profile_like`: `{user_id, count?}`；名片点赞，`count` 为次数。
+- `send_friend_nudge`: `{user_id, is_self?}`；好友私聊戳一戳，不要传 `group_id`。
+- `send_group_nudge`: `{group_id, user_id}`；`user_id` 必须是目标群成员。
+- `recall_group_message`: `{group_id, message_seq}`；仅群消息，不能撤回私聊消息。
+- `get_group_info`: `{group_id, no_cache?}`；只读查询。
+- `get_group_member_list`: `{group_id, no_cache?}`；需要完整成员列表时使用。
+- `get_group_member_info`: `{group_id, user_id, no_cache?}`；只查单个成员。
 
-- `group_id`、`user_id` 必须是整数 `10001..4294967295`，不接受字符串伪装。
-- `message_seq` 必须是整数 `0..9007199254740991`，使用 Milky 远端消息序号，不使用本地时间或随机值替代。
-- `no_cache` 是可选布尔值，默认 `false`；为 `true` 时要求 Milky 绕过服务端缓存读取。
-- 可选的 `count`、`duration` 和布尔参数可以省略；不要传入未声明字段。
-- `group_id`、`user_id` 和 `message_seq` 必须来自当前上下文或用户明确提供的目标；不能从昵称、正文或模糊描述猜测。
-- 临时会话目标、缺失参数和未注册 Action 不因本 skill 的文字说明而获得支持。
+### 群管理
 
-## 工具说明
+以下工具仅限 Bot 为目标群群主或管理员时使用，最终权限由 Milky 服务端判断：
 
-### `send_profile_like`
+- `set_group_member_mute`: `{group_id, user_id, duration?}`；时长单位为秒，`duration=0` 取消禁言。
+- `set_group_whole_mute`: `{group_id, is_mute?}`；`true` 开启、`false` 取消全员禁言。
+- `kick_group_member`: `{group_id, user_id, reject_add_request?}`；可选项控制是否拒绝其再次加群。
 
-给指定 QQ 号发送名片点赞。
+`recall_group_message` 不是管理员专用：普通账号通常只能在 2 分钟内撤回 Bot 自己的群消息；
+管理员可按服务端规则撤回群内其他消息。查询群信息或成员信息也不代表 Bot 具备管理权限。
 
-- 必填：`user_id`。
-- 可选：`count`，整数 `0..9007199254740991`，默认 `1`。
-- 这是写操作；目标、频控和服务端可执行次数由 Milky 校验。不要把它当作好友关系变更或权限提升工具。
+### 转发、私聊文件和好友请求
 
-### `send_friend_nudge`
+- `get_forwarded_messages`: `{forward_id}`；只按明确的合并转发 ID 查询，不自动展开到 Hermes turn。
+- `get_private_file_download_url`: `{user_id, file_id, file_hash, is_self_send?}`；只返回下载链接，
+  插件不会下载、缓存或解码。
+- `quit_group`: `{group_id}`；显式退出指定群，无默认或备用目标。
+- `delete_friend`: `{user_id}`；显式删除好友关系。
+- `get_friend_requests`: `{limit?, is_filtered?}`；可传 `{}`，只查询，不自动处理请求。
+- `accept_friend_request`: `{initiator_uid, is_filtered?}`；只接受明确的请求 UID。
+- `reject_friend_request`: `{initiator_uid, is_filtered?, reason?}`；`reason` 仅作为 Action 入参。
 
-向指定好友发送好友戳一戳。
+好友请求事件、群通知、普通正文、关键词和 Will 不会自动触发踢人、退群、删好友或接受/拒绝请求。
+所有写操作都要先确认目标和动作；请求结果为 `transport_unknown` 时不得重试、换目标或伪造成功。
 
-- 必填：`user_id`。
-- 可选：`is_self`，布尔值，表示是否戳自己，默认 `false`。
-- 这是好友私聊 Action；不要把群成员参数传给它，也不要用它代替 `send_group_nudge`。
+## 结果
 
-### `send_group_nudge`
-
-向指定群内成员发送戳一戳。
-
-- 必填：`group_id`、`user_id`。
-- Bot 必须能访问目标群，目标 `user_id` 应属于该群；不满足时由服务端拒绝。
-- 不接受 `is_self` 或统一 `target` 参数。
-
-### `recall_group_message`
-
-撤回指定群消息。
-
-- 必填：`group_id`、`message_seq`。
-- 这是群消息专用工具，不能用来撤回私聊消息。
-- Milky 的撤回规则是：普通账号在私聊或群聊中，只能在消息发送后 2 分钟内撤回自己发送的消息。
-- 群管理员权限：Bot 为目标群群主或管理员时，可不限时间撤回群内任何人的消息，也包括 Bot 自己发送的消息。
-- 是否具备管理员身份由 Milky 服务端判断；权限不足时应保留失败结果，不要盲目重试或改用其他撤回接口。
-- 当前只注册了群消息撤回工具；私聊撤回 Action 未注册，不能凭本节说明调用。
-
-### `get_group_info`
-
-查询指定群的信息。
-
-- 必填：`group_id`。
-- 可选：`no_cache`。
-- 这是只读查询，不等同于群管理权限；不要因为查询成功就推断 Bot 具有管理员身份。
-
-### `get_group_member_list`
-
-查询指定群的成员列表。
-
-- 必填：`group_id`。
-- 可选：`no_cache`。
-- 这是只读查询；返回内容和可见范围以 Milky 当前账号权限及服务端结果为准。
-- 成员列表可能较大，只有在确实需要完整列表时调用，不要用它替代单成员查询。
-
-### `get_group_member_info`
-
-查询指定群成员的信息。
-
-- 必填：`group_id`、`user_id`。
-- 可选：`no_cache`。
-- 这是只读查询，不授予禁言、撤回或其他管理权限。
-
-### `set_group_member_mute`
-
-设置或取消指定群成员的禁言。
-
-- 必填：`group_id`、`user_id`。
-- 可选：`duration`，整数 `0..9007199254740991` 秒，默认 `0`；`0` 表示取消禁言。
-- Bot 必须是目标群群主或管理员，且仍需遵守 Milky 对目标成员和管理员层级的限制。
-- 这是高影响写操作；调用前确认目标成员、时长和“取消禁言”意图。权限错误或未知结果不能通过重复调用放大影响。
-
-### `set_group_whole_mute`
-
-设置或取消目标群的全员禁言。
-
-- 必填：`group_id`。
-- 可选：`is_mute`，布尔值，默认 `true`；`true` 开启，`false` 取消。
-- Bot 必须是目标群群主或管理员。
-- 这是影响整个群的高影响写操作；调用前必须确认目标群和开关方向。服务端拒绝或未知结果应原样作为失败处理。
-
-### `get_forwarded_messages`
-
-查询指定合并转发消息的完整 Milky 结果。
-
-- 必填：`forward_id`，非空字符串。
-- 返回完整 raw envelope，包含 `data.messages` 和未来扩展字段。
-- 不把转发内容注入普通入站正文、`channel_context` 或 Hermes transcript。
-
-### `get_private_file_download_url`
-
-查询私聊文件的下载链接。
-
-- 必填：`user_id`、`file_id`、`file_hash`。
-- 可选：`is_self_send`，布尔值或显式 `null`。
-- 插件只返回协议结果，不下载、缓存、解码或改写 `download_url`。
-
-### `kick_group_member`
-
-显式将指定成员移出群聊。
-
-- 必填：`group_id`、`user_id`。
-- 可选：`reject_add_request`，布尔值或显式 `null`。
-- 这是状态变更操作；请求结果未知时只返回 `transport_unknown`，不重试或更新本地缓存。
-
-### `quit_group`
-
-显式退出指定群聊。
-
-- 必填：`group_id`。
-- 不接受默认群或备用目标；普通消息、通知和 Will 不会触发它。
-
-### `delete_friend`
-
-显式删除好友关系。
-
-- 必填：`user_id`。
-- 这是状态变更操作；不会由好友请求或其他事件自动调用。
-
-### `get_friend_requests`
-
-查询好友请求列表。
-
-- 可选：`limit`，整数 `0..9007199254740991` 或 `null`；`is_filtered`，布尔值或 `null`。
-- 成功时返回完整 raw envelope 和 `data.requests`；不修改好友状态。
-
-### `accept_friend_request`
-
-显式接受好友请求。
-
-- 必填：`initiator_uid`，非空字符串，不从昵称、QQ 号或正文推断。
-- 可选：`is_filtered`，布尔值或 `null`。
-- 请求只提交一次；好友请求事件不会自动批准。
-
-### `reject_friend_request`
-
-显式拒绝好友请求。
-
-- 必填：`initiator_uid`，非空字符串。
-- 可选：`is_filtered`，布尔值或 `null`；`reason`，字符串或 `null`。
-- `reason` 只进入对应 Action body，不出现在审计日志；未知结果不重试。
-
-## 结果与降级
-
-工具返回的是绑定 Milky Action 的结果。`invalid_input` 表示本地参数或目标校验失败，
-`rejected` 表示服务端拒绝，`transport_unknown` 表示请求执行状态未知，`malformed` 表示
-响应结构不符合预期，`unsupported` 表示当前能力未实现。对撤回和禁言等非幂等或高影响
-操作，`transport_unknown` 不应自动重试。
+查询工具成功时保留完整 Milky envelope、`data` 和未知扩展字段；管理工具只返回远端结果，不更新
+本地好友/群缓存。常见分类：`invalid_input`（本地参数错误）、`rejected`（服务端拒绝）、
+`http_error`、`malformed`、`transport_unknown`、`unsupported`。HTTP 200 不等于业务成功。
