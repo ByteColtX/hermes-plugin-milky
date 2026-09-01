@@ -42,6 +42,12 @@
 - [x] 7.2 在 trigger 资源成功解析后使用 helper 返回路径 basename 重写对应 image placeholder，并保持 `media_urls` 顺序一致
 - [x] 7.3 更新文档和证据台账，运行相关测试、完整质量门禁与 OpenSpec strict 校验
 
+## 8. 字段化入站 placeholder
+
+- [x] 8.1 增加 `@全体成员`、image `file_name`、file `file_id/file_name`、forward `forward_id` 和 market_face `summary` 的契约测试
+- [x] 8.2 修改 extractor/resolver，保留协议字段并避免资源失败覆盖 file/forward 的可读标识
+- [x] 8.3 更新文档和证据台账，运行完整质量门禁与 OpenSpec strict 校验
+
 ## Evidence ledger
 
 | 阶段 | 命令/证据 | 结果 | 反馈分类与下一步 |
@@ -49,7 +55,8 @@
 | 规划 | 已读取 `AGENTS.md`、`ARCHITECTURE.md`、现有主 specs、已完成媒体 change artifacts，并通过 Milky OpenAPI MCP 核对 v1.3.0 的 segment/event 枚举 | 已完成 | 新范围固定为入站 context 渲染、`light_app.meta`、forward 查询边界和 context-only 系统事件 |
 | fixture/实现 | `uv run pytest -q tests/test_inbound_context_rendering.py tests/test_protocol_fixtures.py` | 17 passed | 已覆盖单行 context、14 类 segment、可变 `meta`、系统事件字段和脱敏边界 |
 | 集成 | `uv run pytest -q tests/test_inbound_context_rendering.py tests/test_normalizer.py tests/test_canonical.py tests/test_resources.py tests/test_wait_buffer.py tests/test_admission.py tests/test_milky_event_stream.py tests/test_hermes_pipeline.py tests/test_protocol_fixtures.py` | 113 passed, 2 skipped | 格式、协议、资源、并发和安全相关回归未发现失败 |
-| 质量门禁 | `uv run pytest -q`；`uv run ruff check .`；`uv run ruff format --check .`；`uv build`；`git diff --check` | 522 passed, 22 skipped；其余均通过 | 未执行真实 Milky 写入或发送 smoke |
+| 质量门禁 | `uv run pytest -q`；`uv run ruff check .`；`uv run ruff format --check .`；`uv build`；`git diff --check` | 523 passed, 22 skipped；其余均通过 | 未执行真实 Milky 写入或发送 smoke |
 | OpenSpec | `npx --yes @fission-ai/openspec@1.11.0 validate --changes --strict` | 2 passed, 0 failed | 未执行真实 Milky 写入或发送 smoke；change artifacts 一致 |
 | 实测回归修复 | `rg` 运行时 placeholder 审计；`uv run pytest -q tests/test_inbound_context_rendering.py tests/test_normalizer.py tests/test_resources.py tests/test_hermes_pipeline.py`；混合 reply 回归 | 未发现旧类型 placeholder；42 passed | 完整 inline reply 仅保留 `reply_to` header；移除 resolver 中会误删其他失败 reply 标记的旧兼容分支 |
-| 图片占位符回归 | `uv run pytest -q tests/test_resources.py tests/test_inbound_context_rendering.py tests/test_normalizer.py tests/test_hermes_pipeline.py`；`uv run pytest -q`；Hermes core `gateway/platforms/base.py` 只读核对 | 44 passed；全量 522 passed, 22 skipped；确认 helper 使用 `img_<12位随机十六进制><ext>` | 成功图片占位符改用 helper 返回 basename；失败时使用 `[img:NOT SUPPORTED]`；未执行真实 Milky 写入或发送 smoke |
+| 图片占位符回归 | `uv run pytest -q tests/test_resources.py tests/test_inbound_context_rendering.py tests/test_normalizer.py tests/test_hermes_pipeline.py`；`uv run pytest -q`；Hermes core `gateway/platforms/base.py` 只读核对 | 44 passed；全量 523 passed, 22 skipped；确认 helper 使用 `img_<12位随机十六进制><ext>` | 成功图片占位符改用 helper basename 并标注 `file_name`；失败时使用 `[img:file_name=NOT SUPPORTED]`；未执行真实 Milky 写入或发送 smoke |
+| 字段化 placeholder 回归 | `uv run pytest -q tests/test_normalizer.py tests/test_resources.py tests/test_inbound_context_rendering.py tests/test_canonical.py`；旧格式运行时扫描 | 63 passed；代码路径未发现旧格式 | 全体 mention、image/file/forward/market_face 均改为显式字段格式；文件 ID/名称在资源失败时保留 |

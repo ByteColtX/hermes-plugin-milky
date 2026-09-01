@@ -9,12 +9,13 @@ segment 的 typed 内容与必要 raw 字段。`image`、`record`、`video` SHAL
 SHALL 生成独立的 `file_attachment_references`，保留 `file_id`、`file_name`、`file_size`、
 可选 `file_hash`，不得将其放入前一集合。
 
-规范化正文 MUST 按原顺序使用以下可解释展示：`face` 为 `[face:<face_id>]`；`image` 为
-`[img:<summary>]`，没有 summary 时回退为 `[img:<resource_id>]`；`record` 为
-`[record:NOT SUPPORTED]`；`video` 为 `[video:NOT SUPPORTED]`；`file` 为
-`[file:<file_id>]`；`forward` 为 `[forward:<forward_id>]`；`market_face` 为
-`[market_face:NOT SUPPORTED]`；`xml` 为 `[xml:NOT SUPPORTED]`。缺少对应标识时，相关
-placeholder MUST 使用 `NOT SUPPORTED`，不得补造 ID。
+规范化正文 MUST 按原顺序使用以下可解释展示：`face` 为 `[face:<face_id>]`；mention_all 为
+`@全体成员`；`image` 为 `[img:file_name=<summary>]`，没有 summary 时回退为
+`[img:file_name=<resource_id>]`；`record` 为 `[record:NOT SUPPORTED]`；`video` 为
+`[video:NOT SUPPORTED]`；`file` 为 `[file:file_id=<file_id>,file_name=<file_name>]`；
+`forward` 为 `[forward:forward_id=<forward_id>]`；`market_face` 为
+`[market_face:summary=<summary>]`；`xml` 为 `[xml:NOT SUPPORTED]`。缺少对应字段时，
+字段值 MUST 使用 `NOT SUPPORTED`，不得补造 ID 或文件名。
 
 `light_app` SHALL 解析 `json_payload`。当 payload 是 JSON object 且存在 `meta` 字段时，
 正文 MUST 以 `[light_app:{"meta":...}]` 开始，并完整递归保留 `meta` 字段下的所有 key、
@@ -28,10 +29,10 @@ segment 类型。payload 无法解析或没有 `meta` 字段时，正文 MUST �
 时，正文 MAY 使用 `[reply:NOT SUPPORTED]`，并保留 malformed 或安全资源诊断。
 
 normalizer 阶段生成的 image placeholder 是临时展示。trigger 阶段 image 经 Hermes image helper
-成功落盘后，最终正文 MUST 将对应 image placeholder 替换为 helper 返回本地路径的 basename，且
-该 basename MUST 与交给 Hermes `media_urls` 的对应路径 basename 一致。helper 不可用、下载失败
-或返回无效本地路径时，正文 MUST 使用 `[img:NOT SUPPORTED]`；不得继续使用 `summary` 作为成功
-占位文件名。
+成功落盘后，最终正文 MUST 将对应 image placeholder 替换为
+`[img:file_name=<basename>]`，其中 `<basename>` MUST 与交给 Hermes `media_urls` 的对应路径
+basename 一致。helper 不可用、下载失败或返回无效本地路径时，正文 MUST 使用
+`[img:file_name=NOT SUPPORTED]`；不得继续使用 `summary` 作为成功占位文件名。
 
 `file` 只属于入站消息，不属于 outgoing message segment。除架构明确允许主消息
 `message_seq` 缺失并进入 `no_stable_message_id` 降级外，规范化 SHALL 不补造 OpenAPI 必填
@@ -90,7 +91,7 @@ normalizer 阶段生成的 image placeholder 是临时展示。trigger 阶段 im
 #### Scenario: image placeholder follows Hermes basename
 
 - **WHEN** trigger 阶段 image helper 成功返回本地落盘路径
-- **THEN** 最终正文 SHALL 使用 `[img:<returned basename>]`
+- **THEN** 最终正文 SHALL 使用 `[img:file_name=<returned basename>]`
 - **AND** `<returned basename>` SHALL 与 Hermes `media_urls` 中对应路径的 basename 相同
 - **AND** SHALL 不使用 image `summary` 作为最终成功占位文件名
 
@@ -103,8 +104,24 @@ normalizer 阶段生成的 image placeholder 是临时展示。trigger 阶段 im
 #### Scenario: image helper failure keeps typed fallback
 
 - **WHEN** image helper 不可用、下载失败或返回无效路径
-- **THEN** 对应正文 SHALL 使用 `[img:NOT SUPPORTED]`
+- **THEN** 对应正文 SHALL 使用 `[img:file_name=NOT SUPPORTED]`
 - **AND** SHALL 不泄露远端 URL 或本地完整路径
+
+#### Scenario: file placeholder preserves protocol fields
+
+- **WHEN** file segment 提供 `file_id` 和 `file_name`，且资源 Action 不可用或失败
+- **THEN** 正文 SHALL 使用 `[file:file_id=<file_id>,file_name=<file_name>]`
+- **AND** SHALL 不用笼统的 `[file:NOT SUPPORTED]` 覆盖已有字段
+
+#### Scenario: forward placeholder labels its identifier
+
+- **WHEN** 消息包含 forward segment
+- **THEN** 正文 SHALL 使用 `[forward:forward_id=<forward_id>]`
+
+#### Scenario: market face placeholder keeps summary
+
+- **WHEN** market_face segment 提供 summary
+- **THEN** 正文 SHALL 使用 `[market_face:summary=<summary>]`
 
 ### Requirement: 规范化结果必须提供稳定策略特征
 

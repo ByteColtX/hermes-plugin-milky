@@ -332,14 +332,16 @@ Agent 指令。`light_app` 只展示 JSON payload 顶层 `meta` 根对象并递�
 无法解析 `meta` 时使用 `NOT SUPPORTED`。
 
 image 的 normalizer placeholder 只作为资源解析前的临时展示。trigger 阶段成功调用 Hermes
-image helper 后，最终正文使用 helper 返回本地路径的 basename，并与交给 Hermes 的对应
-`media_urls` basename 保持一致；helper 失败或返回无效路径时使用 `[img:NOT SUPPORTED]`。
+image helper 后，最终正文使用 `[img:file_name=<basename>]`，其中 basename 来自 helper 返回
+本地路径，并与交给 Hermes 的对应 `media_urls` basename 保持一致；helper 失败或返回无效路径
+时使用 `[img:file_name=NOT SUPPORTED]`。全体提及使用 `@全体成员`；file、forward 和
+market_face placeholder 分别保留 `file_id/file_name`、`forward_id` 和 `summary`。
 
 wait 阶段只保留资源引用，不下载。trigger 阶段才允许查询图片、文件或 reply。远端引用
 必须交给 Hermes 公共 media helper；插件不创建下载目录、media cache、SSRF 规则、权限
 规则或 Hermes 本地路径。
 
-`forward_id` 只保留为 `[forward:<forward_id>]` placeholder；普通 trigger 不调用
+`forward_id` 只保留为 `[forward:forward_id=<forward_id>]` placeholder；普通 trigger 不调用
 `get_forwarded_messages`，详情查询必须由未来独立、授权的 QQ Tool 按需发起。
 完整 inline `reply` 只通过 `reply_to` header 和 Hermes reply metadata 表达，不在正文追加
 成功占位符；缺失或补全失败时使用类型化的 `[reply:NOT SUPPORTED]` 降级。

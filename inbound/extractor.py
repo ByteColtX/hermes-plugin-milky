@@ -148,8 +148,8 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
 
         if isinstance(segment, MentionAllSegment):
             has_supported_content = True
-            body_parts.append("@全体")
-            strategy_parts.append("@全体")
+            body_parts.append("@全体成员")
+            strategy_parts.append("@全体成员")
             if "all" not in mention_kinds:
                 mention_kinds.append("all")
             continue
@@ -182,7 +182,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
             has_image = True
             marker = _image_marker(segment)
             body_parts.append(marker)
-            if marker == "[img:NOT SUPPORTED]":
+            if marker == "[img:file_name=NOT SUPPORTED]":
                 _append_once(diagnostics, "incomplete_media_reference")
             media_resource_references.append(
                 MediaResourceReference(
@@ -233,9 +233,9 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
 
         if isinstance(segment, FileSegment):
             has_supported_content = True
-            marker = _identifier_marker("file", segment.file_id)
+            marker = _file_marker(segment.file_id, segment.file_name)
             body_parts.append(marker)
-            if marker == "[file:NOT SUPPORTED]":
+            if segment.file_id is None or segment.file_name is None:
                 _append_once(diagnostics, "incomplete_media_reference")
             file_attachment_references.append(
                 FileAttachmentReference(
@@ -251,9 +251,9 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
 
         if isinstance(segment, ForwardSegment):
             has_supported_content = True
-            marker = _identifier_marker("forward", segment.forward_id)
+            marker = _forward_marker(segment.forward_id)
             body_parts.append(marker)
-            if marker == "[forward:NOT SUPPORTED]":
+            if segment.forward_id is None:
                 _append_once(diagnostics, "incomplete_media_reference")
             forward_references.append(
                 ForwardReference(
@@ -273,7 +273,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
 
         if isinstance(segment, MarketFaceSegment):
             has_supported_content = True
-            body_parts.append("[market_face:NOT SUPPORTED]")
+            body_parts.append(f"[market_face:summary={_placeholder_value(segment.summary)}]")
             continue
 
         if isinstance(segment, LightAppSegment):
@@ -357,12 +357,30 @@ def _identifier_marker(kind: str, value: object) -> str:
 
 
 def _image_marker(segment: ImageSegment) -> str:
-    """按 summary、resource_id 顺序生成图片 placeholder。"""
+    """按 summary、resource_id 顺序生成图片临时 placeholder。"""
 
     summary = segment.summary.strip() if isinstance(segment.summary, str) else ""
-    if summary:
-        return f"[img:{summary}]"
-    return _identifier_marker("img", segment.resource_id)
+    return f"[img:file_name={summary or _placeholder_value(segment.resource_id)}]"
+
+
+def _file_marker(file_id: object, file_name: object) -> str:
+    """生成包含 file ID 和文件名的入站 placeholder。"""
+
+    return f"[file:file_id={_placeholder_value(file_id)},file_name={_placeholder_value(file_name)}]"
+
+
+def _forward_marker(forward_id: object) -> str:
+    """生成包含 forward ID 的入站 placeholder。"""
+
+    return f"[forward:forward_id={_placeholder_value(forward_id)}]"
+
+
+def _placeholder_value(value: object) -> str:
+    """返回 placeholder 字段值；缺失值统一使用安全标识。"""
+
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "NOT SUPPORTED"
 
 
 def _light_app_marker(payload: str | None) -> str:

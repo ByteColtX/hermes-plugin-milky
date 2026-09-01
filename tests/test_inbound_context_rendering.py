@@ -78,9 +78,10 @@ def test_segment_placeholders_keep_order_and_variable_light_app_meta() -> None:
     result = normalize_event(load_fixture("events/message_receive.group.all_segments.json"))
     assert result.value is not None
     assert result.value.body == (
-        "中性文本@合成机器人@全体[face:fixture-face][img:[合成图片]]"
-        "[record:NOT SUPPORTED][video:NOT SUPPORTED][file:fixture-file-id]"
-        "[forward:fixture-forward-id][market_face:NOT SUPPORTED]"
+        "中性文本@合成机器人@全体成员[face:fixture-face]"
+        "[img:file_name=[合成图片]][record:NOT SUPPORTED][video:NOT SUPPORTED]"
+        "[file:file_id=fixture-file-id,file_name=fixture.txt]"
+        "[forward:forward_id=fixture-forward-id][market_face:summary=[合成市场表情]]"
         '[light_app:{"meta":{"contact":{"type":"qq","id":800000004,'
         '"labels":["测试",null]},"nested":{"enabled":true}}}]'
         "[xml:NOT SUPPORTED]### 中性内容"
@@ -96,6 +97,29 @@ def test_segment_placeholders_keep_order_and_variable_light_app_meta() -> None:
     assert missing_result.value is not None
     assert missing_result.value.body == ("[light_app:NOT SUPPORTED][light_app:NOT SUPPORTED]")
     assert "malformed_light_app" in missing_result.value.diagnostics
+
+
+def test_file_placeholder_preserves_id_and_name_from_segment_data() -> None:
+    """file placeholder 应原样保留 segment 提供的 ID 和文件名。"""
+
+    from inbound.normalizer import normalize_event
+
+    payload = load_fixture("events/message_receive.friend.json")
+    payload["data"]["segments"] = [
+        {
+            "type": "file",
+            "data": {
+                "file_id": "/fixture-file-id",
+                "file_name": "logs.txt",
+                "file_size": 8,
+            },
+        }
+    ]
+
+    result = normalize_event(payload)
+
+    assert result.value is not None
+    assert result.value.body == "[file:file_id=/fixture-file-id,file_name=logs.txt]"
 
 
 def test_system_events_render_only_confirmed_fields() -> None:
@@ -173,7 +197,7 @@ def test_forward_resolution_does_not_query_forwarded_messages() -> None:
     assert not any(name == "get_forwarded_messages" for name, _ in client.calls)
     assert resolved.forwards[0].forward_id == "fixture-forward-id"
     assert resolved.forwards[0].messages == ()
-    assert "[forward:fixture-forward-id]" in resolved.body
+    assert "[forward:forward_id=fixture-forward-id]" in resolved.body
 
 
 def test_pipeline_merges_context_events_by_ingress_and_does_not_create_turn() -> None:

@@ -29,14 +29,14 @@ NOT 自行拼接 Hermes 本地路径或接管缓存和 SSRF 规则。
 #### Scenario: forward 只保留引用 ID
 
 - **WHEN** detached batch 或当前消息包含 `forward` segment
-- **THEN** 正文 SHALL 保留 `[forward:<forward_id>]`
+- **THEN** 正文 SHALL 保留 `[forward:forward_id=<forward_id>]`
 - **AND** 资源 resolver SHALL NOT 自动调用 `get_forwarded_messages`
 - **AND** forward SHALL 不因 trigger 自动展开为嵌套正文
 
 #### Scenario: trigger 补全 forward
 
 - **WHEN** detached batch 或当前消息包含 forward segment 且 trigger 已发生
-- **THEN** 系统 SHALL 保留 forward_id 和 `[forward:<forward_id>]` placeholder
+- **THEN** 系统 SHALL 保留 forward_id 和 `[forward:forward_id=<forward_id>]` placeholder
 - **AND** 资源 resolver SHALL NOT 自动调用 `get_forwarded_messages`
 - **AND** 后续详情查询 SHALL 留给独立 QQ Tool
 
@@ -45,7 +45,7 @@ NOT 自行拼接 Hermes 本地路径或接管缓存和 SSRF 规则。
 - **WHEN** trigger 处理带有 `file_id` 的 group 或 friend 文件引用
 - **THEN** group SHALL 调用 `get_group_file_download_url`，friend 在 hash 可用时 SHALL 调用
   `get_private_file_download_url`
-- **AND** 没有已确认的 Hermes 文件入口时 SHALL 保留 `[file:<file_id>]` 或不可用占位
+- **AND** 没有已确认的 Hermes 文件入口时 SHALL 保留 `[file:file_id=<file_id>,file_name=<file_name>]`
 
 #### Scenario: trigger 获取群文件下载链接
 
@@ -58,12 +58,14 @@ NOT 自行拼接 Hermes 本地路径或接管缓存和 SSRF 规则。
 
 - **WHEN** trigger 处理 private 文件引用且缺少 `file_hash`
 - **THEN** 系统 SHALL 不调用 `get_private_file_download_url`
-- **AND** SHALL 记录 `unsupported` 或 `malformed` 诊断并生成文件不可用占位
+- **AND** SHALL 记录 `unsupported` 或 `malformed` 诊断并保留
+  `[file:file_id=<file_id>,file_name=<file_name>]`
 
 #### Scenario: file 没有确认的 Hermes 入口
 
 - **WHEN** Milky file Action 返回 download_url 但当前 Hermes 没有确认文件入口
-- **THEN** 系统 SHALL 保留 file_id、文件名和文件不可用 placeholder
+- **THEN** 系统 SHALL 保留 file_id、文件名和
+  `[file:file_id=<file_id>,file_name=<file_name>]`
 - **AND** SHALL 记录 `unsupported`
 - **AND** SHALL NOT 把 URL 当成本地路径或执行插件侧下载
 

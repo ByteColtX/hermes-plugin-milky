@@ -320,7 +320,6 @@ class ResourceResolver:
                 materializations.append(resolved)
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
-                body = _replace_first(body, _file_marker(reference), "[file:NOT SUPPORTED]")
 
         for reference in reply_references:
             reply, nested_diagnostics = await self._resolve_reply_reference(
@@ -348,22 +347,11 @@ class ResourceResolver:
             if forward is not None:
                 forwards.append(forward)
                 diagnostics.extend(forward.diagnostics)
-                if forward.diagnostics:
-                    body = _replace_first(
-                        body,
-                        _forward_marker(reference),
-                        "[forward:NOT SUPPORTED]",
-                    )
                 for message_value in forward.messages:
                     materializations.extend(message_value.hermes_attachment_materializations)
                     diagnostics.extend(message_value.diagnostics)
             else:
                 diagnostics.extend(nested_diagnostics)
-                body = _replace_first(
-                    body,
-                    _forward_marker(reference),
-                    "[forward:NOT SUPPORTED]",
-                )
 
         return _ContentResolution(
             body=body,
@@ -749,7 +737,7 @@ def _available_marker(reference: object) -> str:
     if kind == "image":
         summary = _optional_text(reference, "name")
         resource_id = _optional_text(reference, "resource_id")
-        return f"[img:{summary or resource_id or 'NOT SUPPORTED'}]"
+        return f"[img:file_name={summary or resource_id or 'NOT SUPPORTED'}]"
     return {
         "record": "[record:NOT SUPPORTED]",
         "video": "[video:NOT SUPPORTED]",
@@ -764,29 +752,15 @@ def _image_path_marker(path: object) -> str:
     basename = path.replace("\\", "/").rsplit("/", 1)[-1]
     if not basename or basename in {".", ".."}:
         raise ValueError("Hermes image helper returned an invalid basename")
-    return f"[img:{basename}]"
+    return f"[img:file_name={basename}]"
 
 
 def _failure_marker(kind: object) -> str:
     return {
-        "image": "[img:NOT SUPPORTED]",
+        "image": "[img:file_name=NOT SUPPORTED]",
         "record": "[record:NOT SUPPORTED]",
         "video": "[video:NOT SUPPORTED]",
     }.get(kind, "[media:NOT SUPPORTED]")
-
-
-def _file_marker(reference: object) -> str:
-    """返回入站 file placeholder。"""
-
-    file_id = _optional_text(reference, "file_id")
-    return f"[file:{file_id or 'NOT SUPPORTED'}]"
-
-
-def _forward_marker(reference: object) -> str:
-    """返回不展开的 forward placeholder。"""
-
-    forward_id = _optional_text(reference, "forward_id")
-    return f"[forward:{forward_id or 'NOT SUPPORTED'}]"
 
 
 def _media_mime(reference: object, kind: str) -> str:

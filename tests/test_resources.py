@@ -152,7 +152,7 @@ def test_trigger_resolves_media_file_and_forward_with_separate_actions() -> None
     resolved = asyncio.run(ResourceResolver(client, hermes).resolve(result.value))
 
     assert "[video:NOT SUPPORTED]" in resolved.body
-    assert "[file:NOT SUPPORTED]" in resolved.body
+    assert "[file:file_id=fixture-file-id,file_name=fixture.txt]" in resolved.body
     assert len(resolved.hermes_attachment_materializations) == 2
     assert [item.kind for item in resolved.hermes_attachment_materializations] == [
         "image",
@@ -162,7 +162,7 @@ def test_trigger_resolves_media_file_and_forward_with_separate_actions() -> None
         "image",
         "record",
     ]
-    assert "[img:img_fixture123456.jpg]" in resolved.body
+    assert "[img:file_name=img_fixture123456.jpg]" in resolved.body
     assert [name for name, _ in hermes.url_calls] == ["image", "audio"]
     assert [name for name, _ in client.calls].count("get_resource_temp_url") == 3
     assert [name for name, _ in client.calls].count("get_group_file_download_url") == 1
@@ -221,7 +221,7 @@ def test_missing_private_file_hash_is_unsupported_before_action() -> None:
 
     resolved = asyncio.run(ResourceResolver(client, FakeHermesMedia()).resolve(result.value))
 
-    assert resolved.body == "[file:NOT SUPPORTED]"
+    assert resolved.body == "[file:file_id=fixture-private-file,file_name=a.zip]"
     assert resolved.diagnostics[0].classification == "unsupported"
     assert not any(name == "get_private_file_download_url" for name, _ in client.calls)
 
@@ -239,7 +239,7 @@ def test_file_without_hermes_resource_entry_never_downloads_or_exposes_url() -> 
 
     file_diagnostics = [item for item in resolved.diagnostics if item.reference_kind == "file"]
     assert file_diagnostics[0].classification == "unsupported"
-    assert "[file:NOT SUPPORTED]" in resolved.body
+    assert "[file:file_id=fixture-file-id,file_name=fixture.txt]" in resolved.body
     assert not any("cdn.example.invalid" in str(item) for item in resolved.diagnostics)
     assert not any(
         "/synthetic" in item.path for item in resolved.hermes_attachment_materializations
@@ -363,7 +363,9 @@ def test_image_placeholders_follow_helper_basenames_in_segment_order() -> None:
         ResourceResolver(make_client(), SequentialHermes()).resolve(result.value)
     )
 
-    assert resolved.body == "[img:img_first123456.jpg][img:img_second123456.jpg]"
+    assert resolved.body == (
+        "[img:file_name=img_first123456.jpg][img:file_name=img_second123456.jpg]"
+    )
     assert [
         item.path.rsplit("/", 1)[-1] for item in resolved.hermes_attachment_materializations
     ] == [
@@ -402,7 +404,7 @@ def test_failed_image_helper_keeps_typed_placeholder_without_path() -> None:
         ResourceResolver(make_client(), InvalidPathHermes()).resolve(result.value)
     )
 
-    assert resolved.body == "[img:NOT SUPPORTED]"
+    assert resolved.body == "[img:file_name=NOT SUPPORTED]"
     assert resolved.hermes_attachment_materializations == ()
     assert all("cdn.example.invalid" not in str(item) for item in resolved.diagnostics)
 
@@ -422,7 +424,7 @@ def test_malformed_resource_envelope_keeps_reference_diagnostic() -> None:
 
     resolved = asyncio.run(ResourceResolver(client, hermes).resolve(result.value))
 
-    assert resolved.body == "[img:NOT SUPPORTED]"
+    assert resolved.body == "[img:file_name=NOT SUPPORTED]"
     assert resolved.diagnostics[0].classification == "malformed"
     assert resolved.diagnostics[0].reference_id == "fixture-image-resource"
     assert hermes.url_calls == []
@@ -460,8 +462,8 @@ def test_resource_and_reply_failures_keep_body_and_safe_diagnostics() -> None:
     resolved = asyncio.run(ResourceResolver(client, SimpleNamespace()).resolve(result.value))
 
     assert "中性文本" in resolved.body
-    assert "[img:NOT SUPPORTED]" in resolved.body
-    assert "[forward:fixture-forward-id]" in resolved.body
+    assert "[img:file_name=NOT SUPPORTED]" in resolved.body
+    assert "[forward:forward_id=fixture-forward-id]" in resolved.body
     assert {item.classification for item in resolved.diagnostics} >= {
         "rejected",
         "unsupported",
@@ -585,7 +587,7 @@ def test_independent_trigger_resolutions_can_progress_concurrently() -> None:
         hermes = BlockingHermes()
         resolver = ResourceResolver(client, hermes)
         first = SimpleNamespace(
-            body="[img:fixture-a]",
+            body="[img:file_name=fixture-a]",
             scene="friend",
             peer_id=800000001,
             self_id=900000001,
@@ -597,7 +599,7 @@ def test_independent_trigger_resolutions_can_progress_concurrently() -> None:
             reply_references=(),
         )
         second = SimpleNamespace(
-            body="[img:fixture-b]",
+            body="[img:file_name=fixture-b]",
             scene="group",
             peer_id=700000001,
             self_id=900000001,

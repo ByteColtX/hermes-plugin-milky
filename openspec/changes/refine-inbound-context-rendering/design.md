@@ -59,7 +59,7 @@ trigger 时在同一短暂 admission 保护下取出，并与普通 wait 历史�
 ### 4. Forward 采用引用展示与后续显式查询分离
 
 normalizer 保留 `forward_id` 和既有 raw/reference 信息；普通 resolver 不调用
-`get_forwarded_messages`，正文仅渲染 `[forward:<forward_id>]`。未来 QQ Tool 如需查看详情，
+`get_forwarded_messages`，正文仅渲染 `[forward:forward_id=<forward_id>]`。未来 QQ Tool 如需查看详情，
 应在独立工具契约中定义授权、参数校验、查询结果和上下文注入方式。
 
 ### 5. 图片占位符以后端实际落盘 basename 为准
@@ -67,9 +67,16 @@ normalizer 保留 `forward_id` 和既有 raw/reference 信息；普通 resolver 
 normalizer 阶段只能使用临时的 image placeholder，因为 Hermes image helper 尚未执行。trigger
 阶段成功调用 helper 后，resolver 读取其返回本地路径的 basename，并按 image segment 顺序替换
 对应 placeholder。这样最终交给 Hermes 的正文与 `media_urls` 使用同一个实际文件名；helper 失败或
-不可用时保留 `[img:NOT SUPPORTED]`。不修改 Hermes core，也不尝试让 helper 接受原始文件名。
+不可用时保留 `[img:file_name=NOT SUPPORTED]`。不修改 Hermes core，也不尝试让 helper 接受原始文件名。
 
-### 6. 系统事件使用事件字段生成固定自然语言
+### 6. 结构化 placeholder 显式标注协议字段
+
+普通正文中的全体提及使用 `@全体成员`。image 成功资源使用 Hermes helper 返回 basename，形成
+`[img:file_name=<basename>]`；file 保留 `file_id` 和 `file_name`，forward 保留 `forward_id`，
+market_face 保留 `summary`。资源失败时保留已经生成的字段化引用，不用笼统的 `NOT SUPPORTED`
+覆盖仍可读的协议字段；缺失字段自身才使用 `NOT SUPPORTED`。
+
+### 7. 系统事件使用事件字段生成固定自然语言
 
 `group_nudge` 仅输出发送者和接收者 UID；成员增加/减少输出稳定动作文本和协议字段 JSON
 Details。display action、动作图片 URL 以及未登记扩展字段不进入该事件的 body。事件只进入

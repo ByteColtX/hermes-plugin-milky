@@ -81,7 +81,7 @@ def test_canonical_record_uses_event_identity_and_stable_group_display_name() ->
     assert result.value.timestamp == 1700000020
     assert result.value.sender_name == "合成名片"
     assert result.value.body.startswith("中性文本")
-    assert "[img:[合成图片]]" in result.value.body
+    assert "[img:file_name=[合成图片]]" in result.value.body
     assert result.value.mention_kind == "self"
     assert result.value.mention_kinds == ("self", "all")
     assert result.value.mention_signals == ("self", "all")
