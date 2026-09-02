@@ -55,9 +55,23 @@ MUST 按 Milky segment schema 生成；图片、语音和视频等媒体 MUST �
 
 #### Scenario: CQ-compatible 控制码
 
-- **WHEN** Hermes 提供含有可确认转换的 at 或 reply CQ-compatible 控制码的文本
-- **THEN** 请求 body SHALL 包含对应的 Milky mention 或 reply segment
+- **WHEN** Hermes 提供含有可确认转换的 at、reply 或仅用于 sticker 的 image CQ-compatible 控制码的文本
+- **THEN** 请求 body SHALL 包含对应的 Milky mention、reply 或 image segment
 - **AND** CQ-compatible 控制码本身 SHALL 不作为普通文本发送
+
+#### Scenario: CQ sticker 本地 URI
+
+- **WHEN** Hermes 提供仅用于 sticker 的 `[CQ:image,file=file:///...,type=sticker]` 控制码
+- **THEN** 系统 SHALL 在调用消息 Action 前将该本地常规文件只读取一次并转换为 `base64://`
+- **AND** 请求 SHALL 包含 `image` segment 及 `sub_type=sticker`，不得包含原始 `file://` URI
+- **AND** 本地文件不存在、不可读、为空或超过 8 MiB 时 SHALL 在网络访问前返回 `invalid_input`
+- **AND** SHALL 不发送原始 CQ 文本或其他用户可见 fallback
+
+#### Scenario: 普通图片使用 MEDIA 入口
+
+- **WHEN** Hermes 需要发送普通图片
+- **THEN** Agent SHALL 使用 `MEDIA:<local_path>` 入口
+- **AND** Agent SHALL NOT 使用 CQ image 语法代替普通图片发送
 
 #### Scenario: 全部文档 CQ 类型进入解析路径
 

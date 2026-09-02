@@ -10,8 +10,8 @@ description: >-
   friend/group 的 `message_receive`，完成规范化、去重、Gate、Will 和 Agent 交接；
   出站支持文本、CQ-compatible `at`/`reply`、原生媒体、独立文件上传以及
   系统/cron home channel。同时注册只读 `/milky` 命令和 17 个显式 QQ ToolSpec。
-  temp 会话及非消息事件不会进入普通 Agent 流程；媒体下载、缓存、SSRF 和
-  本地路径安全由 Hermes 负责。
+  temp 会话及非消息事件不会进入普通 Agent 流程；入站媒体下载、缓存和 SSRF
+  边界由 Hermes 负责，出站本地附件由插件执行受限 materialization。
 author: ByteColtX
 provides_tools:
   - send_profile_like

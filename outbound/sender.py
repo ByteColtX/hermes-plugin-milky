@@ -105,7 +105,8 @@ class MilkyOutboundSender:
         try:
             target = parse_outbound_target(chat_id)
             parts = self._message_parts(content, None)
-        except (OutboundFormatError, ValueError) as error:
+            parts = await self._materialize_message_parts(parts)
+        except (ActionError, OutboundFormatError, ValueError) as error:
             result = _failure(_error_classification(error), _safe_reason(error))
             log_event(
                 logger,
@@ -152,6 +153,33 @@ class MilkyOutboundSender:
         result = _success(sent_ids[-1], continuation_message_ids=tuple(sent_ids[:-1]))
         _log_outbound_result(target, result, chunk_count=len(parts))
         return result
+
+    async def _materialize_message_parts(
+        self, parts: tuple[list[dict[str, Any]], ...]
+    ) -> tuple[list[dict[str, Any]], ...]:
+        """在消息 Action 前物化 CQ 或结构化输入中的图片。"""
+
+        materialized_parts: list[list[dict[str, Any]]] = []
+        for segments in parts:
+            materialized_parts.append(
+                [await self._materialize_image_segment(segment) for segment in segments]
+            )
+        return tuple(materialized_parts)
+
+    async def _materialize_image_segment(self, segment: dict[str, Any]) -> dict[str, Any]:
+        """将 image segment 的本地 URI 转换为 Milky 可接受的 URI。"""
+
+        if segment.get("type") != "image":
+            return segment
+        data = segment["data"]
+        attachment = await prepare_materialization(
+            data["uri"],
+            expected_kind="image",
+            action="send_image",
+        )
+        materialized_data = dict(data)
+        materialized_data["uri"] = attachment.uri
+        return {"type": "image", "data": materialized_data}
 
     async def send_image(
         self,

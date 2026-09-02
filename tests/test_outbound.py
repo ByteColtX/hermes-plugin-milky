@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -353,6 +354,54 @@ def test_sender_integrates_structured_media_segments_without_implicit_reply() ->
         {"type": "text", "data": {"text": "图片说明"}},
         {"type": "image", "data": {"uri": "https://media.example/image"}},
     ]
+
+
+def test_sender_materializes_local_cq_image_before_message_action(tmp_path: Path) -> None:
+    """CQ 图片中的本地 file URI 必须在消息 Action 前转换为 Base64。"""
+
+    image_path = tmp_path / "fixture-image.jpg"
+    image_bytes = b"synthetic-image-bytes"
+    image_path.write_bytes(image_bytes)
+    client = FakeOutboundClient([1104])
+    sender = MilkyOutboundSender(client)
+
+    result = asyncio.run(
+        sender.send(
+            "group:700000001",
+            f"给你发，收好：[CQ:image,file={image_path.as_uri()},type=sticker]",
+        )
+    )
+
+    assert result.success is True
+    assert client.calls[0][1]["message"] == [
+        {"type": "text", "data": {"text": "给你发，收好："}},
+        {
+            "type": "image",
+            "data": {
+                "uri": "base64://" + base64.b64encode(image_bytes).decode("ascii"),
+                "sub_type": "sticker",
+            },
+        },
+    ]
+
+
+def test_sender_rejects_missing_local_cq_image_without_message_action(tmp_path: Path) -> None:
+    """CQ 图片本地路径不可读时应在网络前失败且不发送原始 CQ 文本。"""
+
+    missing_path = tmp_path / "missing-image.jpg"
+    client = FakeOutboundClient([1105])
+    sender = MilkyOutboundSender(client)
+
+    result = asyncio.run(
+        sender.send(
+            "dm:800000001",
+            f"[CQ:image,file={missing_path.as_uri()},type=sticker]",
+        )
+    )
+
+    assert result.success is False
+    assert result.error_kind == "invalid_input"
+    assert client.calls == []
 
 
 def test_sender_converts_explicit_cq_controls_for_group_and_dm() -> None:

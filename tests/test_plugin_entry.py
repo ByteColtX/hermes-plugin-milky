@@ -217,9 +217,9 @@ def test_qq_skills_are_split_and_do_not_add_tools() -> None:
 
     assert "[CQ:at,qq=<uid>]" in cq_skill
     assert "[CQ:reply,id=<msg_id>]" in cq_skill
+    assert "[CQ:image,file=file:///path/to/sticker.ext,type=sticker]" in cq_skill
     for removed_type in (
         "face",
-        "image",
         "record",
         "video",
         "rps",

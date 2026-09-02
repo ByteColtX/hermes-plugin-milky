@@ -248,6 +248,11 @@ Agent 在普通回复中发送本地图片、语音、视频或文档时，应�
 文档使用独立 file upload。`MEDIA:` 是通用发送入口，不属于下方 17 个显式 QQ ToolSpec；只有
 发送入口返回失败时才应报告发送失败。
 
+CQ image 仅用于本地 `file://` URI 的 sticker，例如
+`[CQ:image,file=file:///path/to/sticker.ext,type=sticker]`。普通图片请使用
+`MEDIA:<local_path>`，不要用 CQ image 代替；sticker 的本地文件会在发送消息 Action 前转换为
+`base64://`。
+
 注册后，`connect()` 先完成 `get_login_info`、`get_group_list` 和每个群的 bot 成员状态同步，
 再启动 SSE 并开放普通消息入口；`disconnect()` 会取消 event/pipeline/TTL 任务、解除
 sender/command 绑定并关闭 HTTP/SSE 资源。

@@ -82,7 +82,7 @@ def register(ctx: Any) -> None:
         cron_deliver_env_var="MILKY_HOME_CHANNEL",
         standalone_sender_fn=standalone_sender,
         max_message_length=4096,
-        emoji="🪶",
+        emoji="🐧",
         pii_safe=True,
         platform_hint=PLATFORM_HINT,
     )

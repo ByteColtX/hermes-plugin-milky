@@ -297,7 +297,13 @@ Agent 的本地附件通过 Hermes 的 `MEDIA:<local_path>` 指令进入上述�
 普通 Agent 文本可使用：
 
 - `[CQ:at,qq=<uid>]` -> native `mention`；
-- `[CQ:reply,id=<msg_id>]` -> native `reply`。
+- `[CQ:reply,id=<msg_id>]` -> native `reply`；
+- `[CQ:image,file=file:///path/to/sticker.ext,type=sticker]` -> native `image`（仅 sticker）。
+
+CQ 图片的 formatter 只负责解析，不做文件 I/O；sender 在消息 Action 前复用统一
+materialization。CQ sticker 的 `file://localhost`、`file:///...` 和本地路径只读取一次合规文件并
+转换为 `base64://`。普通图片不使用 CQ image，使用 `MEDIA:<local_path>` 入口。失败时在网络访问
+前返回分类错误，不发送原始 CQ 或纯文本 fallback。
 
 未确认映射、未知类型或参数错误按 text fallback 原样发送，但 fallback 不代表 native 语义
 执行。`uid` 和 `msg_id` 只能来自当前消息或 `channel_context` 的真实 header；不实现 CQ 入站、
