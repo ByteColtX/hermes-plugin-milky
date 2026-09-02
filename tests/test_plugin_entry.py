@@ -129,14 +129,16 @@ def test_root_registers_split_qq_skills_and_stable_platform_hint(monkeypatch) ->
         hint = context.platforms[0]["platform_hint"]
         assert "[CQ:at,qq=<uid>]" in hint
         assert "[CQ:reply,id=<msg_id>]" in hint
-        assert "For attachments, include `MEDIA:<local_path>` in the reply" in hint
-        assert "`send_message`'s `message` arg" in hint
-        assert "MEDIA:<local_path>" in hint
-        assert "native media/file upload by type" in hint
-        assert "Don't claim Milky can't send media/files unless the send fails" in hint
-        assert "use plain text when no attachment is needed" in hint
-        assert "Use `at` to notify a user" in hint
-        assert "`reply` to reply to a specific message" in hint
+        assert (
+            "You can send files natively: write MEDIA:/absolute/path/to/file in your response."
+            in hint
+        )
+        assert "For Hermes `send_message`, put the same directive in its `message` argument" in hint
+        assert "MEDIA: is separate from the fixed QQ ToolSpec list" in hint
+        assert "images, audio, video, and documents use Milky's native media/file upload" in hint
+        assert "Never send a raw local path as chat text" in hint
+        assert "before the send entry point fails" in hint
+        assert "use only real IDs from the current message or channel context" in hint
         assert "otherwise, send plain text only" not in hint
         assert "hermes-plugin-milky:qq-reference" in hint
         assert "hermes-plugin-milky:qq-tools" in hint

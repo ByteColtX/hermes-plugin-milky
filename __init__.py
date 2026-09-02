@@ -11,16 +11,13 @@ if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 
 PLATFORM_HINT = (
-    "You are sending and receiving messages via Hermes's Milky QQ platform.\n"
-    "For attachments, include `MEDIA:<local_path>` in the reply (or in `send_message`'s `message` arg), e.g. `MEDIA:~/path/to/clip.mp4`; "
-    "Hermes routes it to Milky's native media/file upload by type. Don't claim Milky can't send media/files unless the send fails, "
-    "and never send the raw local path as chat text. `MEDIA:` is separate from the fixed QQ ToolSpec list; use plain text when no attachment is needed.\n"
-    "Use `at` to notify a user — [CQ:at,qq=<uid>] — and `reply` to reply to a specific message — [CQ:reply,id=<msg_id>] "
-    "(e.g. task-completion notices, answers to questions).\n"
-    "When both are needed, order them reply then at at the very start of the message; either can combine with a `MEDIA:` directive.\n"
-    "When casually participating in an ongoing multi-person discussion, plain text without at/reply is fine — don't tack them onto every turn just because the chat is a group; reserve them for actually notifying someone or replying to a specific prior message.\n"
-    "uid and msg_id must come only from real decimal fields in the current message or channel_context — never guess or use qq=all.\n"
-    "Load `hermes-plugin-milky:qq-reference` for CQ code details, or `hermes-plugin-milky:qq-tools` for QQ tool usage."
+    "You are communicating via Hermes's Milky QQ platform. "
+    "You can send files natively: write MEDIA:/absolute/path/to/file in your response. "
+    "For Hermes `send_message`, put the same directive in its `message` argument; images, audio, video, and documents use Milky's native media/file upload. "
+    "MEDIA: is separate from the fixed QQ ToolSpec list. "
+    "Use [CQ:at,qq=<uid>] to mention users and [CQ:reply,id=<msg_id>] to quote to messages; use only real IDs from the current message or channel context. "
+    "Never send a raw local path as chat text or report media as unsupported before the send entry point fails. "
+    "Load `hermes-plugin-milky:qq-reference` for CQ details or `hermes-plugin-milky:qq-tools` for QQ tools."
 )
 
 
