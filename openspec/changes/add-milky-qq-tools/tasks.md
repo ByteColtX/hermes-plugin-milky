@@ -17,7 +17,7 @@
 - [x] 3.1 在现有显式工具注册边界增加 8 个 schema 和异步 handler，确保工具名、描述、toolset 和 Milky operationId 一一对应；通过注册 context 测试验证新增 8 项与既有工具同时存在且无重复注册
 - [x] 3.2 实现查询 handler 的参数映射和完整 raw envelope 返回，验证 forward 结果不进入普通 Hermes turn、私聊文件 Action 不下载/缓存/解码、好友请求结果不改变本地状态；通过 fake sender 和 handler 集成测试验证无隐式副作用
 - [x] 3.3 实现群/好友管理 handler 的显式调用边界，验证事件、正文、关键词和 Will 不会触发 Action，且未连接/已关闭 client 在网络前返回 `unsupported`；通过 fake pipeline、生命周期和未绑定 sender 测试验证
-- [x] 3.4 更新 `plugin.yaml`、根入口工具发现和 `skills/qq-tools/SKILL.md` 的工具清单与参数说明；通过根注册测试和静态清单断言验证只声明 17 个固定 ToolSpec，不出现任意 Action catalog
+- [x] 3.4 更新 `plugin.yaml`、根入口工具发现和 `skills/qq-tools/SKILL.md` 的工具清单与参数说明；通过根注册测试和静态清单断言验证只声明 23 个固定 ToolSpec，不出现任意 Action catalog
 
 ## 4. 安全日志与宿主集成回归
 
@@ -28,7 +28,7 @@
 
 ## 5. 文档、质量门禁与证据台账
 
-- [x] 5.1 更新 `ARCHITECTURE.md`、`README.md` 和 change evidence ledger，说明 17 个固定 ToolSpec、显式状态变更边界、raw envelope 结果和日志脱敏边界；通过文档扫描验证不把未实现能力或真实环境结果写成已交付
+- [x] 5.1 更新 `ARCHITECTURE.md`、`README.md` 和 change evidence ledger，说明 23 个固定 ToolSpec、显式状态变更边界、raw envelope 结果和日志脱敏边界；通过文档扫描验证不把未实现能力或真实环境结果写成已交付
 - [x] 5.2 运行工具、client、sender、协议 fixture、注册和安全测试，并执行 `uv run pytest`、`uv run ruff check .`、`uv run ruff format --check .`、`uv build` 和 `git diff --check`；在 tasks 台账中记录完整命令结果及协议、权限、Hermes host 或测试基础设施分类
 - [x] 5.3 执行 `npx --yes @fission-ai/openspec@1.11.0 validate --changes --strict`，验证 proposal、两个 delta spec、design 和 tasks 一致；未获明确授权时不执行会改变好友/群状态或访问真实文件链接的 Milky smoke
 
@@ -37,6 +37,6 @@
 - 2026-09-01：任务 1.1–1.4 通过 `uv run pytest tests/test_qq_tools.py -q`（40 passed）；fixture 为合成数据，不含凭证、认证 header、可访问 URL、本地路径或 live 响应。
 - 2026-09-01：任务 2.1–2.4、3.1–3.4、4.1、4.3–4.4 通过 `uv run pytest tests/test_qq_tools.py tests/test_milky_client.py tests/test_resources.py tests/test_outbound.py tests/test_config.py -q`（134 passed, 3 skipped）；fake transport 证明 8 个 path/body、前置拒绝、raw envelope、错误分类和管理 Action 单次调用。
 - 2026-09-01：任务 4.2 的实际 Hermes host 回归由 `tests/test_adapter_lifecycle.py::test_actual_hermes_delivery_hook_returns_unknown_result_once` 探测；当前 uv 环境无 `gateway.platforms.base`，测试明确 skip（`Hermes host is unavailable`），因此未将 fake context 结果当作真实 host 集成通过。
-- 2026-09-01：任务 5.1 通过文档与清单扫描；`ARCHITECTURE.md`、`README.md`、`plugin.yaml`、`tools.py` 和 `skills/qq-tools/SKILL.md` 均声明 17 个固定 ToolSpec、raw envelope 和日志脱敏边界，未声明任意 Action catalog。
+- 2026-09-01：任务 5.1 通过文档与清单扫描；`ARCHITECTURE.md`、`README.md`、`plugin.yaml`、`outbound/tools.py` 和 `skills/qq-tools/SKILL.md` 均声明 23 个固定 ToolSpec、raw envelope 和日志脱敏边界，未声明任意 Action catalog。
 - 2026-09-01：任务 5.2 通过：`uv run pytest -q -rs` 为 563 passed、22 skipped；`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check` 均 exit 0。skip 分类为 Hermes host、HTTPX/本地集成测试基础设施缺失，不代表协议或真实环境通过。
 - 2026-09-01：任务 5.3 通过 `npx --yes @fission-ai/openspec@1.11.0 validate --changes --strict`（3 passed, 0 failed）；未执行未授权的状态变更或真实文件链接 smoke。

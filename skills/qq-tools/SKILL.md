@@ -19,7 +19,8 @@ metadata:
 - `message_seq`、`notification_seq`、`invitation_seq`、`count`、`duration`、`limit` 是整数，
   范围 `0..9007199254740991`，也不接受 `bool`。
 - `forward_id`、`file_id`、`file_hash`、`initiator_uid` 必须是非空字符串。
-- `reason`、`parent_folder_id` 可以是非空字符串或 `null`；`is_filtered`、`is_self`、
+- `parent_folder_id` 和群请求拒绝工具的 `reason` 可以是非空字符串或 `null`；好友请求
+  拒绝工具的 `reason` 按 schema 可以是字符串或 `null`。`is_filtered`、`is_self`、
   `no_cache`、`reject_add_request` 按 schema 传布尔值或 `null`。
 - `?` 表示可以省略。省略和传 `null` 不一样，插件不会替你填默认值。
 - ID 要来自当前消息、上下文或用户的明确输入。不要从昵称、正文或显示文本猜 ID。

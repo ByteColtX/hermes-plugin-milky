@@ -64,7 +64,7 @@ Base64、结果 ID、失败分类及敏感信息不泄露。
 Hermes 会解析普通 Agent 最终回复中的 `MEDIA:<local_path>`，也会解析显式
 `send_message` 调用的 `message` 参数，再按扩展名调用 adapter 的 `send_image_file`、
 `send_voice`、`send_video` 或 `send_document`。因此 plugin 的 `platform_hint` 必须直接说明
-这两种入口，并明确它们独立于 17 个固定 QQ ToolSpec。QQ tools skill 也重复这条边界，避免
+这两种入口，并明确它们独立于 23 个固定 QQ ToolSpec。QQ tools skill 也重复这条边界，避免
 Agent 把“没有名为 `send_video` 的 ToolSpec”误判为“不能发视频”。只有发送入口返回失败时，
 Agent 才能向用户报告能力或发送失败。
 

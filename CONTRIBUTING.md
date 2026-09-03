@@ -3,11 +3,12 @@
 
 感谢你为 hermes-plugin-milky 贡献时间！❤️
 
-本仓库是 Hermes 的 Milky QQ 平台适配器，目前仍处于新建骨架阶段。开始贡献前，
-请先阅读 [ARCHITECTURE.md](ARCHITECTURE.md)；它是协议、模块边界和行为的唯一事实来源。
-当前 OpenSpec change 位于
-[`openspec/changes/specify-milky-adapter-contracts/`](openspec/changes/specify-milky-adapter-contracts/)，
-其中的 `tasks.md` 是实现进度和任务状态的唯一来源。
+本仓库是 Hermes 的 Milky QQ 平台适配器，当前代码已覆盖仓库声明的协议解析、事件流、入站
+pipeline、出站消息/媒体和固定 ToolSpec 边界。开始贡献前，请先阅读
+[ARCHITECTURE.md](ARCHITECTURE.md)；它是协议、模块边界和行为的项目基线。当前 OpenSpec
+change 位于 [`openspec/changes/`](openspec/changes/)，每个 change 的 `tasks.md` 是该
+change 的实现进度和任务状态来源；不要把 fake host 或 fixture 结果当作真实 Hermes/Milky
+集成能力证明。
 
 我们欢迎 bug 报告、协议 fixture、测试、代码和文档改进。请根据目录阅读相关章节，
 这样可以减少来回确认，也能让贡献更容易被复现和审查。🎉
@@ -135,7 +136,7 @@ uv sync
 #### 开发流程
 
 1. 阅读 `ARCHITECTURE.md` 和当前 OpenSpec change 的全部 artifacts，尤其是 `tasks.md`。
-2. 选择下一个未完成的 T01–T20 任务；先补充契约或脱敏 fixture，再实现最小行为。
+2. 选择目标 change 的下一个未完成任务；先补充契约或脱敏 fixture，再实现最小行为。
 3. 为新增行为补充单元、集成或协议 fixture 测试，并在 `tasks.md` 中记录可复现证据。
 4. 运行质量检查后再提交 PR：
 
@@ -147,8 +148,9 @@ uv build
 git diff --check
 ```
 
-当前适配器尚未完整实现；不要把 `ARCHITECTURE.md` 或 OpenSpec 中的目标行为描述成已经交付的
-功能。必要的本地 Milky smoke test 只能从运行时环境读取凭证，不能把凭证或真实敏感数据写入仓库。
+当前实现仍需持续和真实 Hermes 宿主、Milky 服务及协议版本对齐；不要把 fake host、fixture
+或 OpenSpec 目标行为单独描述成真实环境已经验证。必要的本地 Milky smoke test 只能从运行时
+环境读取凭证，不能把凭证或真实敏感数据写入仓库。
 
 代码应遵循 Google Python Style Guide，保持类型明确、模块职责单一，并遵守 `milky/`、`inbound/`、
 `gates/`、`will/`、`session/`、`state/` 和 `outbound/` 的依赖边界。协议和生命周期改动应同时

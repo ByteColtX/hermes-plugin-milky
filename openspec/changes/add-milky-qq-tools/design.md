@@ -1,9 +1,9 @@
 ## Context
 
-详见 `proposal.md` 的 Why。当前插件已有 9 个显式 Milky ToolSpec，工具通过生命周期绑定的
-出站 sender 调用 Milky client；client 已具备通用 POST、Bearer、path prefix、envelope 和
-传输错误边界。当前 client 已有转发查询和私聊文件下载链接的 Action 方法，但它们尚未被
-工具白名单和 ToolSpec 暴露；群成员踢出、退群以及好友关系操作尚未完成工具边界。
+详见 `proposal.md` 的 Why。本 change 设计时，插件已有 9 个显式 Milky ToolSpec，工具通过
+生命周期绑定的出站 sender 调用 Milky client；client 已具备通用 POST、Bearer、path prefix、
+envelope 和传输错误边界。本 change 规划将已有 client 中的转发查询、私聊文件下载链接以及
+群成员、退群和好友关系操作纳入工具边界；后续群文件与群请求 change 又将固定清单扩展到 23 项。
 
 本 change 必须保持 `ARCHITECTURE.md` 的三层边界：工具是显式能力，不是任意 Action catalog；
 普通入站事件不授予工具权限；Hermes 仍拥有 Agent turn 和入站媒体资源处理。Milky v1.3.0
