@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "name": "available_hash",
+      "segment": {
+        "file_id": "fixture-file-id",
+        "file_name": "fixture.txt",
+        "file_hash": "fixture-file-hash"
+      },
+      "expected": "[file:file_id=fixture-file-id,file_name=fixture.txt,file_hash=fixture-file-hash]"
+    },
+    {
+      "name": "null_hash",
+      "segment": {
+        "file_id": "fixture-file-id",
+        "file_name": "fixture.txt",
+        "file_hash": null
+      },
+      "expected": "[file:file_id=fixture-file-id,file_name=fixture.txt,file_hash=NOT SUPPORTED]"
+    },
+    {
+      "name": "missing_hash",
+      "segment": {"file_id": "fixture-file-id", "file_name": "fixture.txt"},
+      "expected": "[file:file_id=fixture-file-id,file_name=fixture.txt,file_hash=NOT SUPPORTED]"
+    },
+    {
+      "name": "empty_hash",
+      "segment": {"file_id": "fixture-file-id", "file_name": "fixture.txt", "file_hash": ""},
+      "expected": "[file:file_id=fixture-file-id,file_name=fixture.txt,file_hash=NOT SUPPORTED]"
+    }
+  ]
+}

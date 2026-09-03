@@ -1,0 +1,46 @@
+{
+  "requests": [
+    {
+      "action": "get_group_file_download_url",
+      "body": {"group_id": 700000001, "file_id": "fixture-group-file"}
+    },
+    {
+      "action": "accept_group_request",
+      "body": {
+        "notification_seq": 0,
+        "notification_type": "join_request",
+        "group_id": 700000001
+      }
+    },
+    {
+      "action": "reject_group_request",
+      "body": {
+        "notification_seq": 9007199254740991,
+        "notification_type": "invited_join_request",
+        "group_id": 700000001,
+        "is_filtered": null,
+        "reason": "synthetic-reason"
+      }
+    },
+    {
+      "action": "accept_group_invitation",
+      "body": {"group_id": 700000001, "invitation_seq": 123}
+    },
+    {
+      "action": "reject_group_invitation",
+      "body": {"group_id": 700000001, "invitation_seq": 9007199254740991}
+    },
+    {
+      "action": "get_group_files",
+      "body": {"group_id": 700000001}
+    },
+    {
+      "action": "get_group_files",
+      "body": {"group_id": 700000001, "parent_folder_id": null}
+    },
+    {
+      "action": "get_group_files",
+      "body": {"group_id": 700000001, "parent_folder_id": "fixture-folder"}
+    }
+  ]
+}

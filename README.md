@@ -235,8 +235,8 @@ cron 为每次投递创建并关闭临时 Milky client，目前只支持无附�
 
 | 入口或对象 | 作用 |
 | --- | --- |
-| `__init__.py::register(ctx)` | 解析启动配置，注册 platform、`/milky`、17 个 ToolSpec 和 standalone 文本 sender；注册阶段不联网、不启动 SSE |
-| `tools.py::register_tools(ctx)` | 将显式 ToolSpec 发现转发到 `outbound.tools`；不创建 client 或发起网络请求 |
+| `__init__.py::register(ctx)` | 唯一公开入口：解析启动配置，注册 platform、`/milky`、23 个 ToolSpec 和 standalone 文本 sender；注册阶段不联网、不启动 SSE |
+| `__init__.py::register_tools(ctx)` | 根入口内部的显式 ToolSpec 发现委托；转发到 `outbound.tools`，不创建 client 或发起网络请求 |
 | `MilkyAdapter` | 实现 Hermes `BasePlatformAdapter` 的连接、停止、入站交接和出站委托 |
 | `MilkyOutboundSender` | 校验 `group:/dm:` 目标，格式化文本和 native segment，并调用 Milky Action/upload |
 | `SlashCommandService` | 管理 adapter 生命周期内的唯一活动 client，处理无参数 `/milky` |
@@ -245,7 +245,7 @@ Agent 在普通回复中发送本地图片、语音、视频或文档时，应�
 `MEDIA:<local_path>`，例如 `MEDIA:~/path/to/clip.mp4`；显式调用 Hermes 内置的 `send_message`
 时，则在其 `message` 中包含同一指令。Hermes 会按文件类型调用本插件的 `send_image_file`、
 `send_voice`、`send_video` 或 `send_document`；其中图片、语音和视频使用 Milky native segment，
-文档使用独立 file upload。`MEDIA:` 是通用发送入口，不属于下方 17 个显式 QQ ToolSpec；只有
+文档使用独立 file upload。`MEDIA:` 是通用发送入口，不属于下方 23 个显式 QQ ToolSpec；只有
 发送入口返回失败时才应报告发送失败。
 
 CQ image 仅用于本地 `file://` URI 的 sticker，例如
@@ -259,6 +259,21 @@ sender/command 绑定并关闭 HTTP/SSE 资源。
 
 出站发送成功时使用远端 `data.message_seq` 的稳定字符串作为 `message_id`；协议拒绝、传输
 未知、malformed 和 unsupported 会保持明确失败分类。
+
+固定 QQ ToolSpec 共 23 个，除消息、群成员和好友工具外，还包括以下 6 个 Milky v1.3.0
+operationId：
+
+- `get_group_file_download_url(group_id, file_id)`：只返回含 `data.download_url` 的完整 envelope，不下载或缓存。
+- `get_group_files(group_id, parent_folder_id?)`：只返回含对象数组 `data.files` 和 `data.folders` 的完整 envelope。
+- `accept_group_request(notification_seq, notification_type, group_id, is_filtered?)`：只接受 `join_request` 或 `invited_join_request`。
+- `reject_group_request(notification_seq, notification_type, group_id, is_filtered?, reason?)`：`reason` 只作为显式 Action 参数传递。
+- `accept_group_invitation(group_id, invitation_seq)` 与 `reject_group_invitation(group_id, invitation_seq)`：使用独立邀请序号。
+
+群请求和群邀请的接受/拒绝不会由通知事件、普通正文、关键词或 Will 自动触发；四个 Action
+只在 Agent 显式提供完整参数时提交一次。未知执行结果返回 `transport_unknown`，不自动重试或
+更新本地状态。入站文件正文使用
+`[file:file_id=<file_id>,file_name=<file_name>,file_hash=<file_hash>]`，缺失、`null` 或空 hash
+显示为 `NOT SUPPORTED`；该引用不会被当成本地路径或出站文件。
 
 ## 维护者
 

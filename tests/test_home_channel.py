@@ -224,6 +224,12 @@ def test_register_exposes_fixed_home_metadata_and_cron_hooks_without_network(mon
             "get_friend_requests",
             "accept_friend_request",
             "reject_friend_request",
+            "get_group_file_download_url",
+            "accept_group_request",
+            "reject_group_request",
+            "accept_group_invitation",
+            "reject_group_invitation",
+            "get_group_files",
         ]
         enablement = registration["env_enablement_fn"]
         assert enablement() == {

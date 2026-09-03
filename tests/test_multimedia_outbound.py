@@ -477,7 +477,6 @@ def test_actual_hermes_multiple_image_dispatch_uses_inherited_entries(tmp_path: 
         pytest.skip("Hermes host unavailable in the current test environment")
 
     original_path = list(sys.path)
-    original_tools = sys.modules.get("tools")
     original_gateway_modules = {
         name: module
         for name, module in sys.modules.items()
@@ -490,12 +489,6 @@ def test_actual_hermes_multiple_image_dispatch_uses_inherited_entries(tmp_path: 
             *(entry for entry in original_path if Path(entry or ".").resolve() != host_root),
             str(Path(__file__).resolve().parents[1]),
         ]
-        loaded_tools = sys.modules.get("tools")
-        tools_path = getattr(loaded_tools, "__file__", None)
-        if isinstance(tools_path, str) and Path(tools_path).resolve() == (
-            Path(__file__).resolve().parents[1] / "tools.py"
-        ):
-            sys.modules.pop("tools", None)
         for name in tuple(sys.modules):
             if name == "gateway" or name.startswith("gateway."):
                 sys.modules.pop(name, None)
@@ -563,10 +556,6 @@ def test_actual_hermes_multiple_image_dispatch_uses_inherited_entries(tmp_path: 
         assert module.MilkyAdapter.send_document is not host_base.BasePlatformAdapter.send_document
     finally:
         sys.modules.pop(module_name, None)
-        if original_tools is not None:
-            sys.modules["tools"] = original_tools
-        else:
-            sys.modules.pop("tools", None)
         for name in tuple(sys.modules):
             if name == "gateway" or name.startswith("gateway."):
                 sys.modules.pop(name, None)

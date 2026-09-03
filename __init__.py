@@ -34,6 +34,17 @@ def _register_bundled_skill(ctx: Any) -> None:
             register_skill(skill_name, skill_path)
 
 
+def register_tools(ctx: Any) -> None:
+    """注册明确的 Milky ToolSpec，不在注册阶段创建网络连接。"""
+
+    try:
+        from outbound.tools import register_tools as register_outbound_tools
+    except ImportError:
+        from .outbound.tools import register_tools as register_outbound_tools
+
+    register_outbound_tools(ctx)
+
+
 def register(ctx: Any) -> None:
     """向 Hermes 注册 Milky platform。
 
@@ -45,7 +56,6 @@ def register(ctx: Any) -> None:
 
     from .config import load_config
     from .slash_commands import SlashCommandService
-    from .tools import register_tools
 
     milky_config = load_config()
     command_service = SlashCommandService()

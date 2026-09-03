@@ -24,7 +24,6 @@ hermes-plugin-milky/
 ├── plugin.yaml                 # Hermes manifest；声明插件、依赖、skill 和 ToolSpec
 ├── __init__.py                 # 唯一公开入口：register(ctx)
 ├── adapter.py                  # BasePlatformAdapter 生命周期和边界委托
-├── tools.py                    # 显式 ToolSpec 发现入口
 ├── slash_commands.py           # /milky 命令
 ├── config/                     # 启动配置、URL、Will policy
 ├── milky/                      # DTO、解析、HTTP Action、SSE、资源和日志
@@ -189,7 +188,7 @@ normalizer 不做网络 I/O。支持并保留 `text`、`mention`、`mention_all`
 | `mention_all` | `@全体成员` |
 | `image` | 临时 `[img:file_name=<summary/resource_id>]`；成功 materialize 后替换为 helper basename |
 | `record` / `video` | `[record:NOT SUPPORTED]` / `[video:NOT SUPPORTED]` |
-| `file` | `[file:file_id=<file_id>,file_name=<file_name>]` |
+| `file` | `[file:file_id=<file_id>,file_name=<file_name>,file_hash=<file_hash>]` |
 | `forward` | `[forward:forward_id=<forward_id>]`；普通 trigger 不自动展开 |
 | `market_face` | `[market_face:summary=<summary>]` |
 | `light_app` | `[light_app:{"meta":...}]` 的完整递归 `meta` 根对象 |
@@ -285,7 +284,7 @@ SSE receive loop 必须处理 `event:`、多行 `data:`、空行边界、断线�
 Agent 的本地附件通过 Hermes 的 `MEDIA:<local_path>` 指令进入上述入口：普通回复把指令放在
 最终回复中，显式调用通用 `send_message` 时把指令放在 `message` 参数中。Hermes 按扩展名调用
 `send_image_file`、`send_voice`、`send_video` 或 `send_document`。该指令是平台发送约定，不是
-17 个显式 QQ ToolSpec；Agent 不应因为 ToolSpec 列表没有 `send_video` 而判断 Milky 没有媒体发送能力。
+23 个显式 QQ ToolSpec；Agent 不应因为 ToolSpec 列表没有 `send_video` 而判断 Milky 没有媒体发送能力。
 
 出站收到本地路径、`Path` 或 `file://localhost` 时，只读取一次常规、非空且不超过 8 MiB 的文件并
 生成 `base64://`；合法 `http(s)://` 和显式 `base64://` 原样保留，不下载或解码。文件上传携带
@@ -315,19 +314,28 @@ OneBot Action、OneBot echo 或 WebSocket RPC。
 范围、额外字段和目标；入站正文、mention、allowlist 或 Will 分数不能授予工具权限。状态
 变更只能由显式调用触发，不能由 friend request、群通知、关键词或普通消息自动触发。
 
-当前 manifest 公开 17 个固定 ToolSpec：
+当前 manifest 公开 23 个固定 ToolSpec：
 
 ```text
 send_profile_like, send_friend_nudge, send_group_nudge, recall_group_message,
 get_group_info, get_group_member_list, get_group_member_info, set_group_member_mute,
 set_group_whole_mute, get_forwarded_messages, get_private_file_download_url,
 kick_group_member, quit_group, delete_friend, get_friend_requests,
-accept_friend_request, reject_friend_request
+accept_friend_request, reject_friend_request,
+get_group_file_download_url, accept_group_request, reject_group_request,
+accept_group_invitation, reject_group_invitation, get_group_files
 ```
 
-名称与 Milky operationId 一一对应；参数、最小响应结构和错误分类由 `outbound/tools.py`、
+名称与 Milky operationId 一一对应；参数、最小响应结构和错误分类由 `__init__.py`、`outbound/tools.py`、
 `milky/client.py` 和相关 OpenSpec 约束。成功可返回协议要求的 raw envelope，但日志只用安全投影；
 结果未知返回 `transport_unknown`，不自动重试。新增工具必须先有独立 OpenSpec、参数边界和安全回归。
+
+群文件工具使用 `get_group_file_download_url(group_id, file_id)` 查询下载链接，或使用
+`get_group_files(group_id, parent_folder_id?)` 查询文件和文件夹数组；查询结果保留完整 envelope，
+不下载、不缓存、不解码。群请求工具使用 `notification_seq`、`notification_type` 和 `group_id`，
+群邀请工具使用独立的 `invitation_seq`；接受/拒绝 Action 只由完整的显式 Tool 调用触发，事件、
+正文、关键词和 Will 不会自动提交。四个群管理 Action 的未知结果为 `transport_unknown`，不重试、
+不换目标、不更新本地状态。
 
 ## 11. 所有权、安全与配置
 
@@ -395,8 +403,9 @@ ToolSpec schema/显式调用/最小响应校验及日志脱敏。
 ### 当前状态与未决边界
 
 active OpenSpec 主要覆盖入站 context/图片合并、出站附件/native media/文件上传、固定 QQ
-ToolSpec 和安全日志边界；完成项以各 change 的 `tasks.md` 和 evidence ledger 为准。
-Hermes 扩展点、Milky Action 支持/错误 envelope，以及 17 个 ToolSpec 的 operationId、参数和
+ToolSpec 和安全日志边界；当前工具清单扩展为 23 项，完成项以各 change 的 `tasks.md` 和 evidence
+ledger 为准。
+Hermes 扩展点、Milky Action 支持/错误 envelope，以及 23 个 ToolSpec 的 operationId、参数和
 最小 response 结构，仍需与真实宿主、manifest、OpenSpec 和 Milky OpenAPI 持续对齐。
 
 v0.1 不做：OneBot v11 入站协议/Action/echo/CQ 入站兼容、WebHook、WebSocket fallback、自动

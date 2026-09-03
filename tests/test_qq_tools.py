@@ -10,13 +10,13 @@ from typing import Any
 
 import pytest
 
+from __init__ import register_tools
 from config import load_config
 from milky.client import ActionError, MilkyClient, TransportResponse
 from milky.models import MilkyEnvelope
 from milky.parser import parse_event
 from outbound.sender import MilkyOutboundSender
 from outbound.tools import TOOL_SPECS, bind_sender, unbind_sender
-from tools import register_tools
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "qq_tools"
 NEW_TOOL_NAMES = (
@@ -28,6 +28,14 @@ NEW_TOOL_NAMES = (
     "get_friend_requests",
     "accept_friend_request",
     "reject_friend_request",
+)
+GROUP_TOOL_NAMES = (
+    "get_group_file_download_url",
+    "accept_group_request",
+    "reject_group_request",
+    "accept_group_invitation",
+    "reject_group_invitation",
+    "get_group_files",
 )
 DEFAULT_ENV = {
     "MILKY_BASE_URL": "https://localhost:5500/milky/",
@@ -117,6 +125,14 @@ class FakeToolClient:
             raise self.error
         if action == "get_forwarded_messages":
             data = {"messages": [{"message_seq": 1004}], "future_data": "fixture"}
+        elif action == "get_group_file_download_url":
+            data = {"download_url": "fixture-group-download-url", "future_data": "fixture"}
+        elif action == "get_group_files":
+            data = {
+                "files": [{"file_id": "fixture-group-file", "future": True}],
+                "folders": [{"folder_id": "fixture-folder", "future": True}],
+                "future_data": "fixture",
+            }
         elif action == "get_private_file_download_url":
             data = {"download_url": "fixture-download-url", "future_data": True}
         elif action == "get_friend_requests":
@@ -133,15 +149,16 @@ class FakeToolClient:
 
 
 def test_schema_fixture_matches_all_new_tool_specs_and_is_synthetic() -> None:
-    """schema fixture 应覆盖 8 个工具并排除凭证、路径和可访问 URL。"""
+    """schema fixture 应覆盖 14 个新增工具并排除凭证、路径和可访问 URL。"""
 
     fixture = load_fixture("schemas.json")
     actual = {spec["name"]: spec["parameters"] for spec in TOOL_SPECS}
     expected = {entry["operation_id"]: entry for entry in fixture["tools"]}
 
-    assert set(expected) == set(NEW_TOOL_NAMES)
-    assert set(actual) >= set(NEW_TOOL_NAMES)
-    for name in NEW_TOOL_NAMES:
+    all_new_names = NEW_TOOL_NAMES + GROUP_TOOL_NAMES
+    assert set(expected) == set(all_new_names)
+    assert set(actual) >= set(all_new_names)
+    for name in all_new_names:
         entry = expected[name]
         schema = actual[name]
         assert schema["required"] == entry["required"]
@@ -150,6 +167,12 @@ def test_schema_fixture_matches_all_new_tool_specs_and_is_synthetic() -> None:
         for field, expected_shape in entry["properties"].items():
             for key, value in expected_shape.items():
                 assert schema["properties"][field][key] == value
+
+    assert actual["accept_group_request"]["properties"]["notification_type"]["enum"] == [
+        "join_request",
+        "invited_join_request",
+    ]
+    assert actual["reject_group_request"]["properties"]["reason"]["nullable"] is True
 
     contents = json.dumps(fixture, ensure_ascii=False)
     for forbidden in (
@@ -216,6 +239,80 @@ def test_request_fixture_covers_omitted_nullable_and_sensitive_input_projection(
         assert forbidden not in contents
 
 
+def test_group_request_fixture_covers_omitted_nullable_and_boundaries() -> None:
+    """群工具请求 fixture 应锁定序号、枚举、nullable 和父目录字段。"""
+
+    fixture = load_fixture("requests/group_bodies.json")
+    requests = fixture["requests"]
+    assert requests[0]["body"] == {
+        "group_id": 700000001,
+        "file_id": "fixture-group-file",
+    }
+    assert requests[1]["body"]["notification_seq"] == 0
+    assert requests[1]["body"]["notification_type"] == "join_request"
+    assert requests[2]["body"]["notification_seq"] == 9007199254740991
+    assert requests[2]["body"]["is_filtered"] is None
+    assert requests[3]["body"]["invitation_seq"] == 123
+    assert requests[5]["body"] == {"group_id": 700000001}
+    assert requests[6]["body"]["parent_folder_id"] is None
+    assert requests[7]["body"]["parent_folder_id"] == "fixture-folder"
+    contents = json.dumps(fixture, ensure_ascii=False)
+    for forbidden in ("MILKY_ACCESS_TOKEN", "Authorization", "Bearer ", "https://", "http://"):
+        assert forbidden not in contents
+
+
+def test_group_response_fixtures_keep_minimum_fields_and_unknown_values() -> None:
+    """群文件查询 fixture 应保留最小字段和未知扩展。"""
+
+    query = load_fixture("responses/group_query_ok.json")
+    assert query["get_group_file_download_url"]["data"]["download_url"] == (
+        "fixture-group-download-url"
+    )
+    assert query["get_group_file_download_url"]["data"]["future_data"] == {"kind": "fixture"}
+    assert isinstance(query["get_group_files"]["data"]["files"], list)
+    assert isinstance(query["get_group_files"]["data"]["folders"], list)
+    assert query["get_group_files"]["data"]["future_data"] == "fixture-files-extension"
+
+
+def test_group_management_response_fixture_covers_all_actions_and_errors() -> None:
+    """群管理 fixture 应覆盖四个 Action 和所有安全错误形状。"""
+
+    fixture = load_fixture("responses/group_management_outcomes.json")
+    assert tuple(fixture["actions"]) == (
+        "accept_group_request",
+        "reject_group_request",
+        "accept_group_invitation",
+        "reject_group_invitation",
+    )
+    assert fixture["success"]["data"] == {}
+    assert fixture["rejected"]["status"] == "failed"
+    assert fixture["malformed_data"]["data"] != {}
+    assert fixture["malformed_envelope"]["data"] == []
+    assert fixture["http_error"]["status_code"] == 403
+    assert fixture["non_json"]["status_code"] == 200
+    assert fixture["transport_unknown"]["classification"] == "transport_unknown"
+
+
+def test_file_placeholder_fixture_covers_hash_presence_and_missing_values() -> None:
+    """文件 placeholder fixture 应区分有效、null、缺失和空 hash。"""
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures/inbound_context/file_placeholders.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert [case["name"] for case in fixture["cases"]] == [
+        "available_hash",
+        "null_hash",
+        "missing_hash",
+        "empty_hash",
+    ]
+    assert fixture["cases"][0]["expected"].endswith("file_hash=fixture-file-hash]")
+    assert all(
+        case["expected"].endswith("file_hash=NOT SUPPORTED]") for case in fixture["cases"][1:]
+    )
+
+
 def test_client_calls_each_new_action_once_with_prefixed_post_and_exact_body() -> None:
     """8 个 operationId 应各自只访问对应 path，并保持请求字段。"""
 
@@ -273,6 +370,168 @@ def test_client_calls_each_new_action_once_with_prefixed_post_and_exact_body() -
     assert transport.requests[0]["headers"]["Authorization"] == "Bearer runtime-token"
 
 
+def test_client_calls_each_group_action_once_with_prefixed_post_and_exact_body() -> None:
+    """6 个群工具应各自只访问对应 path，并保留可选字段。"""
+
+    query = load_fixture("responses/group_query_ok.json")
+    success = load_fixture("responses/group_management_outcomes.json")["success"]
+    payloads = [
+        query["get_group_file_download_url"],
+        success,
+        success,
+        success,
+        success,
+        query["get_group_files"],
+        query["get_group_files"],
+    ]
+    transport = FakeTransport([http_response(payload) for payload in payloads])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    async def call_all() -> None:
+        """按协议顺序执行 6 个群工具 Action。"""
+
+        await client.call_tool(
+            "get_group_file_download_url",
+            {"group_id": 700000001, "file_id": "fixture-group-file"},
+        )
+        await client.call_tool(
+            "accept_group_request",
+            {
+                "notification_seq": 0,
+                "notification_type": "join_request",
+                "group_id": 700000001,
+            },
+        )
+        await client.call_tool(
+            "reject_group_request",
+            {
+                "notification_seq": 1,
+                "notification_type": "invited_join_request",
+                "group_id": 700000001,
+                "is_filtered": None,
+                "reason": "synthetic-reason",
+            },
+        )
+        await client.call_tool(
+            "accept_group_invitation",
+            {"group_id": 700000001, "invitation_seq": 2},
+        )
+        await client.call_tool(
+            "reject_group_invitation",
+            {"group_id": 700000001, "invitation_seq": 3},
+        )
+        await client.call_tool("get_group_files", {"group_id": 700000001})
+        await client.call_tool(
+            "get_group_files",
+            {"group_id": 700000001, "parent_folder_id": None},
+        )
+
+    asyncio.run(call_all())
+    assert [request["url"].rsplit("/", 1)[-1] for request in transport.requests] == [
+        "get_group_file_download_url",
+        "accept_group_request",
+        "reject_group_request",
+        "accept_group_invitation",
+        "reject_group_invitation",
+        "get_group_files",
+        "get_group_files",
+    ]
+    assert transport.requests[1]["body"]["notification_seq"] == 0
+    assert transport.requests[2]["body"]["reason"] == "synthetic-reason"
+    assert transport.requests[5]["body"] == {"group_id": 700000001}
+    assert transport.requests[6]["body"]["parent_folder_id"] is None
+
+
+def test_sender_delegates_group_tools_without_changing_action_or_body() -> None:
+    """sender 应把 6 个群工具委托给对应 client Action。"""
+
+    query = load_fixture("responses/group_query_ok.json")
+    success = load_fixture("responses/group_management_outcomes.json")["success"]
+    transport = FakeTransport(
+        [
+            http_response(query["get_group_file_download_url"]),
+            http_response(success),
+            http_response(success),
+            http_response(success),
+            http_response(success),
+            http_response(query["get_group_files"]),
+        ]
+    )
+    sender = MilkyOutboundSender(MilkyClient(load_config(DEFAULT_ENV), transport=transport))
+
+    async def call_all() -> None:
+        """按顺序调用 sender 的群工具方法。"""
+
+        await sender.get_group_file_download_url(700000001, "fixture-group-file")
+        await sender.accept_group_request(1, "join_request", 700000001)
+        await sender.reject_group_request(
+            2,
+            "invited_join_request",
+            700000001,
+            is_filtered=None,
+            reason="synthetic-reason",
+        )
+        await sender.accept_group_invitation(700000001, 3)
+        await sender.reject_group_invitation(700000001, 4)
+        await sender.get_group_files(700000001, parent_folder_id=None)
+
+    asyncio.run(call_all())
+    assert [request["url"].rsplit("/", 1)[-1] for request in transport.requests] == list(
+        GROUP_TOOL_NAMES
+    )
+    assert transport.requests[1]["body"] == {
+        "notification_seq": 1,
+        "notification_type": "join_request",
+        "group_id": 700000001,
+    }
+    assert transport.requests[2]["body"]["reason"] == "synthetic-reason"
+    assert transport.requests[-1]["body"]["parent_folder_id"] is None
+
+
+@pytest.mark.parametrize(
+    ("action", "params"),
+    [
+        ("get_group_file_download_url", {"group_id": 700000001, "file_id": ""}),
+        (
+            "accept_group_request",
+            {
+                "notification_seq": 0,
+                "notification_type": "unknown",
+                "group_id": 700000001,
+            },
+        ),
+        (
+            "reject_group_request",
+            {
+                "notification_seq": True,
+                "notification_type": "join_request",
+                "group_id": 700000001,
+            },
+        ),
+        (
+            "accept_group_invitation",
+            {"group_id": 700000001, "invitation_seq": 9007199254740992},
+        ),
+        ("reject_group_invitation", {"group_id": "700000001", "invitation_seq": 1}),
+        ("get_group_files", {"group_id": 700000001, "parent_folder_id": ""}),
+        ("get_group_files", {"group_id": 700000001, "extra": True}),
+    ],
+)
+def test_client_rejects_invalid_group_tool_params_before_network(
+    action: str, params: dict[str, object]
+) -> None:
+    """群工具的非法类型、范围、枚举和额外字段不得触网。"""
+
+    transport = FakeTransport([])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(client.call_tool(action, params))
+
+    assert error_info.value.classification == "invalid_input"
+    assert transport.requests == []
+
+
 @pytest.mark.parametrize(
     ("action", "params"),
     [
@@ -308,8 +567,11 @@ def test_client_rejects_invalid_new_tool_params_before_network(
         ("get_forwarded_messages", "messages", {}),
         ("get_forwarded_messages", "messages", ["not-an-object"]),
         ("get_private_file_download_url", "download_url", 1),
+        ("get_group_file_download_url", "download_url", 1),
         ("get_friend_requests", "requests", {}),
         ("get_friend_requests", "requests", ["not-an-object"]),
+        ("get_group_files", "files", {}),
+        ("get_group_files", "folders", ["not-an-object"]),
     ],
 )
 def test_client_rejects_query_minimum_data_type_errors(
@@ -325,6 +587,11 @@ def test_client_rejects_query_minimum_data_type_errors(
             "file_hash": "fixture-hash",
         },
         "get_friend_requests": {},
+        "get_group_file_download_url": {
+            "group_id": 700000001,
+            "file_id": "fixture-group-file",
+        },
+        "get_group_files": {"group_id": 700000001},
     }[action]
     data = {data_field: bad_value}
     client = MilkyClient(
@@ -363,6 +630,37 @@ def test_client_preserves_query_raw_envelope_and_rejects_nonempty_management_dat
     assert error_info.value.classification == "malformed"
 
 
+def test_client_preserves_group_query_raw_envelopes_and_unknown_fields() -> None:
+    """群文件查询成功时保留 envelope、文件数组和未知字段。"""
+
+    query = load_fixture("responses/group_query_ok.json")
+    transport = FakeTransport(
+        [
+            http_response(query["get_group_file_download_url"]),
+            http_response(query["get_group_files"]),
+        ]
+    )
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    async def call_all() -> tuple[MilkyEnvelope, MilkyEnvelope]:
+        """调用两个群文件查询 Action。"""
+
+        download = await client.call_tool(
+            "get_group_file_download_url",
+            {"group_id": 700000001, "file_id": "fixture-group-file"},
+        )
+        files = await client.call_tool("get_group_files", {"group_id": 700000001})
+        return download, files
+
+    download, files = asyncio.run(call_all())
+    assert download.data["download_url"] == "fixture-group-download-url"
+    assert download.data["future_data"] == {"kind": "fixture"}
+    assert download.extras["future_envelope"] == "fixture-group-envelope"
+    assert files.data["files"][0]["future"] is True
+    assert files.data["folders"][0]["future"] == "value"
+    assert files.data["future_data"] == "fixture-files-extension"
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -385,6 +683,51 @@ def test_client_classifies_protocol_rejection_and_malformed_management_payload(
     assert error_info.value.classification == (
         "rejected" if payload["status"] == "failed" else "malformed"
     )
+
+
+@pytest.mark.parametrize(
+    ("action", "params"),
+    [
+        (
+            "accept_group_request",
+            {
+                "notification_seq": 1,
+                "notification_type": "join_request",
+                "group_id": 700000001,
+            },
+        ),
+        (
+            "reject_group_request",
+            {
+                "notification_seq": 1,
+                "notification_type": "join_request",
+                "group_id": 700000001,
+            },
+        ),
+        ("accept_group_invitation", {"group_id": 700000001, "invitation_seq": 1}),
+        ("reject_group_invitation", {"group_id": 700000001, "invitation_seq": 1}),
+    ],
+)
+def test_group_management_results_keep_rejection_and_malformed_boundaries(
+    action: str, params: dict[str, object]
+) -> None:
+    """四个群管理 Action 应区分协议拒绝和非空 data。"""
+
+    outcomes = load_fixture("responses/group_management_outcomes.json")
+    rejected_client = MilkyClient(
+        load_config(DEFAULT_ENV), transport=FakeTransport([http_response(outcomes["rejected"])])
+    )
+    with pytest.raises(ActionError) as rejected_error:
+        asyncio.run(rejected_client.call_tool(action, params))
+    assert rejected_error.value.classification == "rejected"
+
+    malformed_client = MilkyClient(
+        load_config(DEFAULT_ENV),
+        transport=FakeTransport([http_response(outcomes["malformed_data"])]),
+    )
+    with pytest.raises(ActionError) as malformed_error:
+        asyncio.run(malformed_client.call_tool(action, params))
+    assert malformed_error.value.classification == "malformed"
 
 
 @pytest.mark.parametrize(
@@ -412,15 +755,16 @@ def test_client_classifies_http_non_json_and_unknown_transport_without_retry(
     assert "transport detail" not in str(error_info.value)
 
 
-def test_registered_handlers_cover_17_fixed_specs_and_dispatch_only_explicitly() -> None:
-    """注册应包含既有 9 项和新增 8 项，且每个 handler 只调用对应 Action。"""
+def test_registered_handlers_cover_23_fixed_specs_and_dispatch_only_explicitly() -> None:
+    """注册应包含既有 9 项和新增 14 项，且每个 handler 只调用对应 Action。"""
 
     context = ToolContext()
     register_tools(context)
     names = [item["name"] for item in context.registered]
-    assert len(names) == 17
-    assert len(set(names)) == 17
-    assert names[-8:] == list(NEW_TOOL_NAMES)
+    assert len(names) == 23
+    assert len(set(names)) == 23
+    assert names[9:17] == list(NEW_TOOL_NAMES)
+    assert names[17:] == list(GROUP_TOOL_NAMES)
     assert all(item["toolset"] == "milky" for item in context.registered)
     assert all(item["is_async"] is True for item in context.registered)
 
@@ -470,6 +814,55 @@ def test_registered_handlers_cover_17_fixed_specs_and_dispatch_only_explicitly()
                     )
                 )
             ),
+            json.loads(
+                asyncio.run(
+                    handlers["get_group_file_download_url"](
+                        {"group_id": 700000001, "file_id": "fixture-group-file"}
+                    )
+                )
+            ),
+            json.loads(
+                asyncio.run(
+                    handlers["accept_group_request"](
+                        {
+                            "notification_seq": 1,
+                            "notification_type": "join_request",
+                            "group_id": 700000001,
+                        }
+                    )
+                )
+            ),
+            json.loads(
+                asyncio.run(
+                    handlers["reject_group_request"](
+                        {
+                            "notification_seq": 2,
+                            "notification_type": "invited_join_request",
+                            "group_id": 700000001,
+                            "reason": "synthetic-reason",
+                        }
+                    )
+                )
+            ),
+            json.loads(
+                asyncio.run(
+                    handlers["accept_group_invitation"](
+                        {"group_id": 700000001, "invitation_seq": 3}
+                    )
+                )
+            ),
+            json.loads(
+                asyncio.run(
+                    handlers["reject_group_invitation"](
+                        {"group_id": 700000001, "invitation_seq": 4}
+                    )
+                )
+            ),
+            json.loads(
+                asyncio.run(
+                    handlers["get_group_files"]({"group_id": 700000001, "parent_folder_id": None})
+                )
+            ),
         ]
     finally:
         unbind_sender()
@@ -479,9 +872,10 @@ def test_registered_handlers_cover_17_fixed_specs_and_dispatch_only_explicitly()
     assert all(result["data"] == {} for result in results[2:5])
     assert results[5]["data"]["requests"]
     assert all(result["status"] == "ok" for result in results)
-    assert [call[0] for call in client.calls] == list(NEW_TOOL_NAMES)
+    assert [call[0] for call in client.calls] == list(NEW_TOOL_NAMES + GROUP_TOOL_NAMES)
     assert client.calls[1][1]["is_self_send"] is None
     assert client.calls[5][1] == {}
+    assert client.calls[-1][1]["parent_folder_id"] is None
 
 
 @pytest.mark.parametrize(
@@ -498,6 +892,29 @@ def test_registered_handlers_cover_17_fixed_specs_and_dispatch_only_explicitly()
         ("get_friend_requests", {"is_filtered": "false"}),
         ("accept_friend_request", {"initiator_uid": 800000001}),
         ("reject_friend_request", {"initiator_uid": "fixture-uid", "reason": 1}),
+        (
+            "accept_group_request",
+            {
+                "notification_seq": 1,
+                "notification_type": "invalid",
+                "group_id": 700000001,
+            },
+        ),
+        (
+            "reject_group_request",
+            {
+                "notification_seq": 1,
+                "notification_type": "join_request",
+                "group_id": 700000001,
+                "reason": "",
+            },
+        ),
+        (
+            "accept_group_invitation",
+            {"group_id": 700000001, "invitation_seq": True},
+        ),
+        ("reject_group_invitation", {"group_id": 10000, "invitation_seq": 1}),
+        ("get_group_files", {"group_id": 700000001, "parent_folder_id": 1}),
     ],
 )
 def test_new_tool_invalid_arguments_do_not_call_milky(
@@ -549,6 +966,49 @@ def test_management_unknown_result_is_not_retried_or_mapped_to_local_state() -> 
     assert len(client.calls) == 1
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "args"),
+    [
+        (
+            "accept_group_request",
+            {
+                "notification_seq": 1,
+                "notification_type": "join_request",
+                "group_id": 700000001,
+            },
+        ),
+        (
+            "reject_group_request",
+            {
+                "notification_seq": 1,
+                "notification_type": "join_request",
+                "group_id": 700000001,
+            },
+        ),
+        ("accept_group_invitation", {"group_id": 700000001, "invitation_seq": 1}),
+        ("reject_group_invitation", {"group_id": 700000001, "invitation_seq": 1}),
+    ],
+)
+def test_group_management_unknown_result_is_not_retried(
+    tool_name: str, args: dict[str, object]
+) -> None:
+    """四个群管理 Action 未知时只提交一次且不伪造成功。"""
+
+    context = ToolContext()
+    register_tools(context)
+    handler = next(item["handler"] for item in context.registered if item["name"] == tool_name)
+    client = FakeToolClient()
+    client.error = ActionError("transport_unknown", tool_name, "opaque transport detail")
+    bind_sender(MilkyOutboundSender(client))
+    try:
+        result = json.loads(asyncio.run(handler(args)))
+    finally:
+        unbind_sender()
+
+    assert result["classification"] == "transport_unknown"
+    assert client.calls == [(tool_name, args)]
+
+
 def test_tool_audit_log_projects_sensitive_result_but_returns_raw_envelope(caplog) -> None:
     """Tool 调用方拿到 raw envelope，审计日志只保留安全结构投影。"""
 
@@ -588,6 +1048,46 @@ def test_tool_audit_log_projects_sensitive_result_but_returns_raw_envelope(caplo
     }
     assert records[0].tool_result["has_download_url"] is True
     assert "fixture-download-url" not in repr(records[0].tool_result)
+
+
+def test_group_tool_audit_log_keeps_safe_ids_but_excludes_url_and_reason(caplog) -> None:
+    """群工具日志保留安全关联字段，不记录 URL 或完整拒绝理由。"""
+
+    context = ToolContext()
+    register_tools(context)
+    handler = next(
+        item["handler"] for item in context.registered if item["name"] == "reject_group_request"
+    )
+    client = FakeToolClient()
+    bind_sender(MilkyOutboundSender(client))
+    try:
+        with caplog.at_level("INFO", logger="outbound.tools"):
+            result = json.loads(
+                asyncio.run(
+                    handler(
+                        {
+                            "notification_seq": 7,
+                            "notification_type": "join_request",
+                            "group_id": 700000001,
+                            "is_filtered": False,
+                            "reason": "synthetic-sensitive-reason",
+                        }
+                    )
+                )
+            )
+    finally:
+        unbind_sender()
+
+    record = next(record for record in caplog.records if record.event_name == "milky_tool_call")
+    assert result["status"] == "ok"
+    assert record.tool_args == {
+        "notification_seq": 7,
+        "notification_type": "join_request",
+        "group_id": 700000001,
+        "is_filtered": False,
+    }
+    assert "reason" not in record.tool_args
+    assert "synthetic-sensitive-reason" not in repr(record)
 
 
 def test_reject_reason_is_not_logged_and_full_reason_is_not_required_for_result(caplog) -> None:
@@ -638,6 +1138,40 @@ def test_unbound_sender_returns_unsupported_without_network() -> None:
     result = json.loads(asyncio.run(handler({"group_id": 700000001})))
 
     assert result["classification"] == "unsupported"
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    ["system.group_join_request.json", "system.group_invitation.json"],
+)
+def test_group_request_and_invitation_events_are_observe_only(fixture_name: str) -> None:
+    """群请求和群邀请事件不得自动提交接受/拒绝 Action。"""
+
+    payload = load_fixture(f"../protocol/events/{fixture_name}")
+    event = parse_event(payload)
+    assert event.classification == "observe_only"
+    client = FakeToolClient()
+    assert client.calls == []
+
+
+def test_group_request_and_invitation_pipeline_events_have_no_implicit_action() -> None:
+    """fake pipeline 收到群请求/邀请时只观察，不调用任何管理 Action。"""
+
+    from tests.test_hermes_pipeline import FakeHermes, FakeResolver, make_pipeline
+
+    async def scenario() -> tuple[list[object], list[tuple[str, dict[str, object]]]]:
+        hermes = FakeHermes()
+        pipeline = make_pipeline(hermes, FakeResolver())
+        client = FakeToolClient()
+        for fixture_name in ("system.group_join_request.json", "system.group_invitation.json"):
+            result = await pipeline.handle_event(load_fixture(f"../protocol/events/{fixture_name}"))
+            assert result.classification == "observe_only"
+        await pipeline.wait_idle()
+        return hermes.events, client.calls
+
+    events, calls = asyncio.run(scenario())
+    assert events == []
+    assert calls == []
 
 
 def test_friend_request_event_is_observe_only_and_never_calls_management_action() -> None:

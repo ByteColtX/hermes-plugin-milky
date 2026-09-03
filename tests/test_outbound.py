@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from __init__ import register_tools
 from milky.client import ActionError
 from milky.client import SendResult as MilkySendResult
 from milky.models import (
@@ -37,7 +38,6 @@ from outbound.formatter import (
 )
 from outbound.sender import MilkyOutboundSender
 from outbound.tools import bind_sender, unbind_sender
-from tools import register_tools
 
 
 @dataclass
@@ -667,6 +667,12 @@ def test_tools_register_explicit_api_specs_and_validate_arguments() -> None:
         "get_friend_requests",
         "accept_friend_request",
         "reject_friend_request",
+        "get_group_file_download_url",
+        "accept_group_request",
+        "reject_group_request",
+        "accept_group_invitation",
+        "reject_group_invitation",
+        "get_group_files",
     ]
     assert all(item["is_async"] is True for item in context.registered)
     assert {item["schema"]["name"] for item in context.registered} == set(names)

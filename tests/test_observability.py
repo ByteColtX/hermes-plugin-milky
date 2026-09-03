@@ -39,7 +39,6 @@ _PROJECT_ROOT = Path(__file__).parents[1]
 _RUNTIME_SOURCE_FILES = (
     "__init__.py",
     "adapter.py",
-    "tools.py",
     "config/__init__.py",
     "milky/client.py",
     "milky/event_stream.py",

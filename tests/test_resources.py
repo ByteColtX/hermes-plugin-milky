@@ -152,7 +152,10 @@ def test_trigger_resolves_media_file_and_forward_with_separate_actions() -> None
     resolved = asyncio.run(ResourceResolver(client, hermes).resolve(result.value))
 
     assert "[video:NOT SUPPORTED]" in resolved.body
-    assert "[file:file_id=fixture-file-id,file_name=fixture.txt]" in resolved.body
+    assert (
+        "[file:file_id=fixture-file-id,file_name=fixture.txt,file_hash=NOT SUPPORTED]"
+        in resolved.body
+    )
     assert len(resolved.hermes_attachment_materializations) == 2
     assert [item.kind for item in resolved.hermes_attachment_materializations] == [
         "image",
@@ -221,7 +224,9 @@ def test_missing_private_file_hash_is_unsupported_before_action() -> None:
 
     resolved = asyncio.run(ResourceResolver(client, FakeHermesMedia()).resolve(result.value))
 
-    assert resolved.body == "[file:file_id=fixture-private-file,file_name=a.zip]"
+    assert resolved.body == (
+        "[file:file_id=fixture-private-file,file_name=a.zip,file_hash=NOT SUPPORTED]"
+    )
     assert resolved.diagnostics[0].classification == "unsupported"
     assert not any(name == "get_private_file_download_url" for name, _ in client.calls)
 
@@ -239,7 +244,10 @@ def test_file_without_hermes_resource_entry_never_downloads_or_exposes_url() -> 
 
     file_diagnostics = [item for item in resolved.diagnostics if item.reference_kind == "file"]
     assert file_diagnostics[0].classification == "unsupported"
-    assert "[file:file_id=fixture-file-id,file_name=fixture.txt]" in resolved.body
+    assert (
+        "[file:file_id=fixture-file-id,file_name=fixture.txt,file_hash=NOT SUPPORTED]"
+        in resolved.body
+    )
     assert not any("cdn.example.invalid" in str(item) for item in resolved.diagnostics)
     assert not any(
         "/synthetic" in item.path for item in resolved.hermes_attachment_materializations

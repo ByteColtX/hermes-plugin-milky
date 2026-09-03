@@ -437,6 +437,175 @@ REJECT_FRIEND_REQUEST_SCHEMA = {
     },
 }
 
+GET_GROUP_FILE_DOWNLOAD_URL_SCHEMA = {
+    "name": "get_group_file_download_url",
+    "description": "查询群文件的下载链接；工具不会下载或缓存文件。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "group_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "群号",
+            },
+            "file_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "群文件 ID",
+            },
+        },
+        "required": ["group_id", "file_id"],
+        "additionalProperties": False,
+    },
+}
+
+ACCEPT_GROUP_REQUEST_SCHEMA = {
+    "name": "accept_group_request",
+    "description": "接受指定入群请求；仅在显式调用时执行。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "notification_seq": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "description": "入群请求通知序号",
+            },
+            "notification_type": {
+                "type": "string",
+                "enum": ["join_request", "invited_join_request"],
+                "description": "入群请求类型",
+            },
+            "group_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "群号",
+            },
+            "is_filtered": {
+                "type": "boolean",
+                "nullable": True,
+                "description": "是否按过滤后的通知处理",
+            },
+        },
+        "required": ["notification_seq", "notification_type", "group_id"],
+        "additionalProperties": False,
+    },
+}
+
+REJECT_GROUP_REQUEST_SCHEMA = {
+    "name": "reject_group_request",
+    "description": "拒绝指定入群请求；仅在显式调用时执行。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "notification_seq": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "description": "入群请求通知序号",
+            },
+            "notification_type": {
+                "type": "string",
+                "enum": ["join_request", "invited_join_request"],
+                "description": "入群请求类型",
+            },
+            "group_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "群号",
+            },
+            "is_filtered": {
+                "type": "boolean",
+                "nullable": True,
+                "description": "是否按过滤后的通知处理",
+            },
+            "reason": {
+                "type": "string",
+                "nullable": True,
+                "minLength": 1,
+                "description": "拒绝理由",
+            },
+        },
+        "required": ["notification_seq", "notification_type", "group_id"],
+        "additionalProperties": False,
+    },
+}
+
+ACCEPT_GROUP_INVITATION_SCHEMA = {
+    "name": "accept_group_invitation",
+    "description": "接受邀请 Bot 入群的通知；仅在显式调用时执行。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "group_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "群号",
+            },
+            "invitation_seq": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "description": "群邀请序号",
+            },
+        },
+        "required": ["group_id", "invitation_seq"],
+        "additionalProperties": False,
+    },
+}
+
+REJECT_GROUP_INVITATION_SCHEMA = {
+    "name": "reject_group_invitation",
+    "description": "拒绝邀请 Bot 入群的通知；仅在显式调用时执行。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "group_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "群号",
+            },
+            "invitation_seq": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "description": "群邀请序号",
+            },
+        },
+        "required": ["group_id", "invitation_seq"],
+        "additionalProperties": False,
+    },
+}
+
+GET_GROUP_FILES_SCHEMA = {
+    "name": "get_group_files",
+    "description": "查询群文件和文件夹列表；工具不会下载或缓存文件。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "group_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "群号",
+            },
+            "parent_folder_id": {
+                "type": "string",
+                "nullable": True,
+                "minLength": 1,
+                "description": "可选父文件夹 ID",
+            },
+        },
+        "required": ["group_id"],
+        "additionalProperties": False,
+    },
+}
+
 TOOL_SPECS = (
     SEND_PROFILE_LIKE_SCHEMA,
     SEND_FRIEND_NUDGE_SCHEMA,
@@ -455,6 +624,12 @@ TOOL_SPECS = (
     GET_FRIEND_REQUESTS_SCHEMA,
     ACCEPT_FRIEND_REQUEST_SCHEMA,
     REJECT_FRIEND_REQUEST_SCHEMA,
+    GET_GROUP_FILE_DOWNLOAD_URL_SCHEMA,
+    ACCEPT_GROUP_REQUEST_SCHEMA,
+    REJECT_GROUP_REQUEST_SCHEMA,
+    ACCEPT_GROUP_INVITATION_SCHEMA,
+    REJECT_GROUP_INVITATION_SCHEMA,
+    GET_GROUP_FILES_SCHEMA,
 )
 
 
@@ -475,7 +650,7 @@ def unbind_sender() -> None:
 
 
 def register_tools(ctx: Any) -> None:
-    """向 Hermes 注册与 Milky operationId 对齐的十七个异步 ToolSpec。"""
+    """向 Hermes 注册与 Milky operationId 对齐的二十三个异步 ToolSpec。"""
 
     register_tool = getattr(ctx, "register_tool", None)
     if not callable(register_tool):
@@ -498,6 +673,12 @@ def register_tools(ctx: Any) -> None:
         _handle_get_friend_requests,
         _handle_accept_friend_request,
         _handle_reject_friend_request,
+        _handle_get_group_file_download_url,
+        _handle_accept_group_request,
+        _handle_reject_group_request,
+        _handle_accept_group_invitation,
+        _handle_reject_group_invitation,
+        _handle_get_group_files,
     )
     for spec, handler in zip(TOOL_SPECS, handlers, strict=True):
         register_tool(
@@ -937,6 +1118,171 @@ async def _handle_reject_friend_request(args: object, **kwargs: Any) -> str:
     )
 
 
+async def _handle_get_group_file_download_url(args: object, **kwargs: Any) -> str:
+    """校验并执行群文件下载链接查询工具。"""
+
+    del kwargs
+    required = {"group_id", "file_id"}
+    if not _valid_keys(args, required) or not required.issubset(args):
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_integer(values["group_id"], minimum=10001, maximum=4294967295):
+        return _tool_error("invalid_input")
+    if not _tool_string(values["file_id"]):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "get_group_file_download_url",
+        values,
+        lambda: sender.get_group_file_download_url(values["group_id"], values["file_id"]),
+    )
+
+
+async def _handle_accept_group_request(args: object, **kwargs: Any) -> str:
+    """校验并执行接受入群请求工具。"""
+
+    del kwargs
+    allowed = {"notification_seq", "notification_type", "group_id", "is_filtered"}
+    required = {"notification_seq", "notification_type", "group_id"}
+    if not _valid_keys(args, allowed) or not required.issubset(args):
+        return _tool_error("invalid_input")
+    values = args
+    if not _valid_group_request_values(values, allow_reason=False):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "accept_group_request",
+        values,
+        lambda: sender.accept_group_request(
+            values["notification_seq"],
+            values["notification_type"],
+            values["group_id"],
+            **({"is_filtered": values["is_filtered"]} if "is_filtered" in values else {}),
+        ),
+    )
+
+
+async def _handle_reject_group_request(args: object, **kwargs: Any) -> str:
+    """校验并执行拒绝入群请求工具。"""
+
+    del kwargs
+    allowed = {"notification_seq", "notification_type", "group_id", "is_filtered", "reason"}
+    required = {"notification_seq", "notification_type", "group_id"}
+    if not _valid_keys(args, allowed) or not required.issubset(args):
+        return _tool_error("invalid_input")
+    values = args
+    if not _valid_group_request_values(values, allow_reason=True):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "reject_group_request",
+        values,
+        lambda: sender.reject_group_request(
+            values["notification_seq"],
+            values["notification_type"],
+            values["group_id"],
+            **{key: values[key] for key in ("is_filtered", "reason") if key in values},
+        ),
+    )
+
+
+async def _handle_accept_group_invitation(args: object, **kwargs: Any) -> str:
+    """校验并执行接受群邀请工具。"""
+
+    del kwargs
+    required = {"group_id", "invitation_seq"}
+    if not _valid_keys(args, required) or not required.issubset(args):
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_integer(values["group_id"], minimum=10001, maximum=4294967295):
+        return _tool_error("invalid_input")
+    if not _tool_integer(values["invitation_seq"], minimum=0, maximum=9007199254740991):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "accept_group_invitation",
+        values,
+        lambda: sender.accept_group_invitation(values["group_id"], values["invitation_seq"]),
+    )
+
+
+async def _handle_reject_group_invitation(args: object, **kwargs: Any) -> str:
+    """校验并执行拒绝群邀请工具。"""
+
+    del kwargs
+    required = {"group_id", "invitation_seq"}
+    if not _valid_keys(args, required) or not required.issubset(args):
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_integer(values["group_id"], minimum=10001, maximum=4294967295):
+        return _tool_error("invalid_input")
+    if not _tool_integer(values["invitation_seq"], minimum=0, maximum=9007199254740991):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "reject_group_invitation",
+        values,
+        lambda: sender.reject_group_invitation(values["group_id"], values["invitation_seq"]),
+    )
+
+
+async def _handle_get_group_files(args: object, **kwargs: Any) -> str:
+    """校验并执行群文件列表查询工具。"""
+
+    del kwargs
+    allowed = {"group_id", "parent_folder_id"}
+    if not _valid_keys(args, allowed) or "group_id" not in args:
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_integer(values["group_id"], minimum=10001, maximum=4294967295):
+        return _tool_error("invalid_input")
+    if "parent_folder_id" in values and not _tool_optional_nonempty_string(
+        values["parent_folder_id"]
+    ):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "get_group_files",
+        values,
+        lambda: sender.get_group_files(
+            values["group_id"],
+            **(
+                {"parent_folder_id": values["parent_folder_id"]}
+                if "parent_folder_id" in values
+                else {}
+            ),
+        ),
+    )
+
+
+def _valid_group_request_values(values: Mapping[str, object], *, allow_reason: bool) -> bool:
+    """校验群请求工具的公共字段。"""
+
+    if not _tool_integer(values.get("notification_seq"), minimum=0, maximum=9007199254740991):
+        return False
+    if values.get("notification_type") not in ("join_request", "invited_join_request"):
+        return False
+    if not _tool_integer(values.get("group_id"), minimum=10001, maximum=4294967295):
+        return False
+    if "is_filtered" in values and not _tool_optional_bool(values["is_filtered"]):
+        return False
+    return not (
+        allow_reason and "reason" in values and not _tool_optional_nonempty_string(values["reason"])
+    )
+
+
 def _tools_available() -> bool:
     """工具 schema 始终可发现，未绑定 sender 时由 handler 安全降级。"""
 
@@ -971,6 +1317,12 @@ def _tool_optional_string(value: object) -> bool:
     """校验 Tool 的可空字符串参数。"""
 
     return value is None or isinstance(value, str)
+
+
+def _tool_optional_nonempty_string(value: object) -> bool:
+    """校验允许显式 null 的非空字符串参数。"""
+
+    return value is None or _tool_string(value)
 
 
 def _tool_optional_bool(value: object) -> bool:
@@ -1053,9 +1405,18 @@ def _safe_tool_arguments(arguments: Mapping[str, object]) -> dict[str, object]:
         "file_id",
         "file_hash",
         "initiator_uid",
+        "parent_folder_id",
     }
     boolean_fields = {"is_self", "is_self_send", "reject_add_request", "is_filtered"}
-    quantity_fields = {"count", "limit", "duration", "message_seq"}
+    quantity_fields = {
+        "count",
+        "limit",
+        "duration",
+        "message_seq",
+        "notification_seq",
+        "invitation_seq",
+    }
+    enum_fields = {"notification_type"}
     for name, value in arguments.items():
         if (
             name in id_fields
@@ -1069,6 +1430,8 @@ def _safe_tool_arguments(arguments: Mapping[str, object]) -> dict[str, object]:
                 or name in quantity_fields
                 and isinstance(value, int)
                 and not isinstance(value, bool)
+                or name in enum_fields
+                and value in ("join_request", "invited_join_request")
             )
         ):
             safe[name] = value
@@ -1113,10 +1476,18 @@ def _safe_tool_result(result: object) -> dict[str, object]:
             return {"classification": "malformed"}
         if isinstance(value, Mapping):
             classification = value.get("classification")
+            allowed_classifications = {
+                "invalid_input",
+                "unsupported",
+                "rejected",
+                "http_error",
+                "malformed",
+                "transport_unknown",
+            }
             return {
                 "ok": value.get("ok") is True,
                 "classification": classification
-                if classification in {"invalid_input", "unsupported", "malformed"}
+                if classification in allowed_classifications
                 else "accepted",
             }
     return {"classification": "malformed"}
@@ -1161,9 +1532,13 @@ def _tool_error(classification: str) -> str:
 
 __all__ = [
     "ACCEPT_FRIEND_REQUEST_SCHEMA",
+    "ACCEPT_GROUP_INVITATION_SCHEMA",
+    "ACCEPT_GROUP_REQUEST_SCHEMA",
     "DELETE_FRIEND_SCHEMA",
     "GET_FORWARDED_MESSAGES_SCHEMA",
     "GET_FRIEND_REQUESTS_SCHEMA",
+    "GET_GROUP_FILES_SCHEMA",
+    "GET_GROUP_FILE_DOWNLOAD_URL_SCHEMA",
     "GET_GROUP_INFO_SCHEMA",
     "GET_GROUP_MEMBER_INFO_SCHEMA",
     "GET_GROUP_MEMBER_LIST_SCHEMA",
@@ -1172,6 +1547,8 @@ __all__ = [
     "QUIT_GROUP_SCHEMA",
     "RECALL_GROUP_MESSAGE_SCHEMA",
     "REJECT_FRIEND_REQUEST_SCHEMA",
+    "REJECT_GROUP_INVITATION_SCHEMA",
+    "REJECT_GROUP_REQUEST_SCHEMA",
     "SEND_FRIEND_NUDGE_SCHEMA",
     "SEND_PROFILE_LIKE_SCHEMA",
     "SET_GROUP_MEMBER_MUTE_SCHEMA",

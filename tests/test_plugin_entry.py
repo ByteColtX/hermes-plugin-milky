@@ -58,15 +58,15 @@ def test_root_entry_exposes_only_hermes_register(monkeypatch) -> None:
                 sys.modules.pop(name, None)
 
 
-def test_root_tools_entry_is_safe_to_discover(monkeypatch) -> None:
-    """根工具发现入口不应在注册阶段产生外部副作用。"""
+def test_root_entry_contains_tool_discovery_boundary(monkeypatch) -> None:
+    """根入口内建工具发现边界，且注册阶段不产生外部副作用。"""
 
     set_valid_environment(monkeypatch)
     entry, module_name = load_plugin_entry()
     try:
         entry.register(object())
-        tools = sys.modules[f"{module_name}.tools"]
-        assert tools.__all__ == ["register_tools"]
+        assert callable(entry.register_tools)
+        assert entry.__all__ == ["register"]
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
@@ -297,23 +297,22 @@ def test_qq_skills_are_split_and_do_not_add_tools() -> None:
 
 
 def test_register_forwards_context_to_tools_without_implicit_actions(monkeypatch) -> None:
-    """根入口应把同一个上下文交给显式工具发现边界。"""
+    """根入口应把同一个上下文交给内建的显式工具发现边界。"""
 
     set_valid_environment(monkeypatch)
     entry, module_name = load_plugin_entry()
     try:
         entry.register(object())
-        tools = sys.modules[f"{module_name}.tools"]
         context = object()
         received = []
 
         def capture_context(value) -> None:
             received.append(value)
 
-        monkeypatch.setattr(tools, "register_tools", capture_context)
+        monkeypatch.setattr(entry, "register_tools", capture_context)
         assert entry.register(context) is None
         assert received == [context]
-        assert tools.__all__ == ["register_tools"]
+        assert entry.__all__ == ["register"]
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
@@ -377,11 +376,11 @@ def test_target_source_package_layout_is_present() -> None:
 
 
 def test_directory_plugin_uses_root_entry_only() -> None:
-    """目录插件使用根入口，不保留可被误发现的旧子包入口。"""
+    """目录插件只使用根入口，不保留独立的工具发现模块。"""
 
     manifest = (PROJECT_ROOT / "plugin.yaml").read_text(encoding="utf-8")
     assert (PROJECT_ROOT / "__init__.py").is_file()
-    assert (PROJECT_ROOT / "tools.py").is_file()
+    assert not (PROJECT_ROOT / "tools.py").exists()
     assert "provides_tools:" in manifest
     assert not (PROJECT_ROOT / "hermes_plugin_milky" / "__init__.py").exists()
 

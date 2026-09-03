@@ -1,0 +1,25 @@
+{
+  "get_group_file_download_url": {
+    "status": "ok",
+    "retcode": 0,
+    "data": {
+      "download_url": "fixture-group-download-url",
+      "future_data": {"kind": "fixture"}
+    },
+    "future_envelope": "fixture-group-envelope"
+  },
+  "get_group_files": {
+    "status": "ok",
+    "retcode": 0,
+    "data": {
+      "files": [
+        {"file_id": "fixture-group-file", "file_name": "fixture.txt", "future": true}
+      ],
+      "folders": [
+        {"folder_id": "fixture-folder", "folder_name": "合成目录", "future": "value"}
+      ],
+      "future_data": "fixture-files-extension"
+    },
+    "future_envelope": true
+  }
+}

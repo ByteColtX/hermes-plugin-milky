@@ -422,7 +422,6 @@ def test_actual_hermes_delivery_hook_returns_unknown_result_once() -> None:
     if host_root is None:
         pytest.skip("Hermes host is unavailable")
     original_path = list(sys.path)
-    original_tools = sys.modules.get("tools")
     module_name = "_milky_adapter_actual_host_test"
     try:
         sys.path[:] = [
@@ -430,10 +429,6 @@ def test_actual_hermes_delivery_hook_returns_unknown_result_once() -> None:
             *(entry for entry in original_path if Path(entry or ".").resolve() != host_root),
             str(PROJECT_ROOT),
         ]
-        loaded_tools = sys.modules.get("tools")
-        tools_path = getattr(loaded_tools, "__file__", None)
-        if isinstance(tools_path, str) and Path(tools_path).resolve() == PROJECT_ROOT / "tools.py":
-            sys.modules.pop("tools", None)
         host_base = pytest.importorskip("gateway.platforms.base")
         spec = importlib.util.spec_from_file_location(module_name, PROJECT_ROOT / "adapter.py")
         assert spec is not None and spec.loader is not None
@@ -469,10 +464,6 @@ def test_actual_hermes_delivery_hook_returns_unknown_result_once() -> None:
         asyncio.run(scenario())
     finally:
         sys.modules.pop(module_name, None)
-        if original_tools is not None:
-            sys.modules["tools"] = original_tools
-        else:
-            sys.modules.pop("tools", None)
         sys.path[:] = original_path
 
 
@@ -555,6 +546,12 @@ def test_root_register_assembles_platform_without_network_or_background_task(
             "get_friend_requests",
             "accept_friend_request",
             "reject_friend_request",
+            "get_group_file_download_url",
+            "accept_group_request",
+            "reject_group_request",
+            "accept_group_invitation",
+            "reject_group_invitation",
+            "get_group_files",
         ]
         adapter = registration["adapter_factory"](SimpleNamespace())
         assert adapter.__class__.__name__ == "MilkyAdapter"

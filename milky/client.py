@@ -53,7 +53,13 @@ _TOOL_ACTIONS = frozenset(
         "set_group_member_mute",
         "set_group_whole_mute",
         "get_forwarded_messages",
+        "get_group_file_download_url",
+        "get_group_files",
         "get_private_file_download_url",
+        "accept_group_request",
+        "reject_group_request",
+        "accept_group_invitation",
+        "reject_group_invitation",
         "kick_group_member",
         "quit_group",
         "delete_friend",
@@ -770,7 +776,7 @@ class MilkyClient:
     async def get_group_file_download_url(self, group_id: object, file_id: object) -> MilkyEnvelope:
         """按群号和文件 ID 查询群文件下载地址。"""
 
-        return await self.call(
+        envelope = await self.call(
             "get_group_file_download_url",
             {
                 "group_id": _validate_id(
@@ -783,6 +789,126 @@ class MilkyClient:
                 "file_id": _validate_text(file_id, "file_id", "get_group_file_download_url"),
             },
         )
+        _validate_tool_response("get_group_file_download_url", envelope)
+        return envelope
+
+    async def get_group_files(
+        self,
+        group_id: object,
+        *,
+        parent_folder_id: object = _MISSING,
+    ) -> MilkyEnvelope:
+        """查询群文件和文件夹列表，并保留完整协议 envelope。"""
+
+        params: dict[str, Any] = {
+            "group_id": _validate_tool_integer(
+                group_id,
+                "group_id",
+                "get_group_files",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            )
+        }
+        if parent_folder_id is not _MISSING:
+            params["parent_folder_id"] = _validate_optional_nonempty_tool_text(
+                parent_folder_id, "parent_folder_id", "get_group_files"
+            )
+        envelope = await self.call("get_group_files", params)
+        _validate_tool_response("get_group_files", envelope)
+        return envelope
+
+    async def accept_group_request(
+        self,
+        notification_seq: object,
+        notification_type: object,
+        group_id: object,
+        *,
+        is_filtered: object = _MISSING,
+    ) -> MilkyEnvelope:
+        """接受入群请求；只在调用方明确提供完整参数时提交。"""
+
+        params = _group_request_params(
+            "accept_group_request",
+            notification_seq,
+            notification_type,
+            group_id,
+            is_filtered=is_filtered,
+        )
+        envelope = await self.call("accept_group_request", params)
+        _validate_tool_response("accept_group_request", envelope)
+        return envelope
+
+    async def reject_group_request(
+        self,
+        notification_seq: object,
+        notification_type: object,
+        group_id: object,
+        *,
+        is_filtered: object = _MISSING,
+        reason: object = _MISSING,
+    ) -> MilkyEnvelope:
+        """拒绝入群请求；reason 仅作为明确的协议参数传递。"""
+
+        params = _group_request_params(
+            "reject_group_request",
+            notification_seq,
+            notification_type,
+            group_id,
+            is_filtered=is_filtered,
+        )
+        if reason is not _MISSING:
+            params["reason"] = _validate_optional_nonempty_tool_text(
+                reason, "reason", "reject_group_request"
+            )
+        envelope = await self.call("reject_group_request", params)
+        _validate_tool_response("reject_group_request", envelope)
+        return envelope
+
+    async def accept_group_invitation(
+        self, group_id: object, invitation_seq: object
+    ) -> MilkyEnvelope:
+        """接受群邀请；只在显式调用时提交一次。"""
+
+        params = {
+            "group_id": _validate_tool_integer(
+                group_id,
+                "group_id",
+                "accept_group_invitation",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            ),
+            "invitation_seq": _validate_tool_integer(
+                invitation_seq,
+                "invitation_seq",
+                "accept_group_invitation",
+            ),
+        }
+        envelope = await self.call("accept_group_invitation", params)
+        _validate_tool_response("accept_group_invitation", envelope)
+        return envelope
+
+    async def reject_group_invitation(
+        self, group_id: object, invitation_seq: object
+    ) -> MilkyEnvelope:
+        """拒绝群邀请；只在显式调用时提交一次。"""
+
+        params = {
+            "group_id": _validate_tool_integer(
+                group_id,
+                "group_id",
+                "reject_group_invitation",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            ),
+            "invitation_seq": _validate_tool_integer(
+                invitation_seq,
+                "invitation_seq",
+                "reject_group_invitation",
+            ),
+        }
+        envelope = await self.call("reject_group_invitation", params)
+        _validate_tool_response("reject_group_invitation", envelope)
+        return envelope
 
     async def get_private_file_download_url(
         self,
@@ -1226,6 +1352,30 @@ def _validate_tool_params(action: str, params: Mapping[str, Any] | None) -> None
             {"user_id", "file_id", "file_hash", "is_self_send"},
             {"user_id", "file_id", "file_hash"},
         ),
+        "get_group_file_download_url": (
+            {"group_id", "file_id"},
+            {"group_id", "file_id"},
+        ),
+        "accept_group_request": (
+            {"notification_seq", "notification_type", "group_id", "is_filtered"},
+            {"notification_seq", "notification_type", "group_id"},
+        ),
+        "reject_group_request": (
+            {"notification_seq", "notification_type", "group_id", "is_filtered", "reason"},
+            {"notification_seq", "notification_type", "group_id"},
+        ),
+        "accept_group_invitation": (
+            {"group_id", "invitation_seq"},
+            {"group_id", "invitation_seq"},
+        ),
+        "reject_group_invitation": (
+            {"group_id", "invitation_seq"},
+            {"group_id", "invitation_seq"},
+        ),
+        "get_group_files": (
+            {"group_id", "parent_folder_id"},
+            {"group_id"},
+        ),
         "kick_group_member": (
             {"group_id", "user_id", "reject_add_request"},
             {"group_id", "user_id"},
@@ -1257,6 +1407,9 @@ def _validate_tool_params(action: str, params: Mapping[str, Any] | None) -> None
         _validate_tool_integer(values["duration"], "duration", action)
     if "limit" in values and values["limit"] is not None:
         _validate_tool_integer(values["limit"], "limit", action)
+    for field in ("notification_seq", "invitation_seq"):
+        if field in values:
+            _validate_tool_integer(values[field], field, action)
 
     for field in (
         "is_self",
@@ -1271,12 +1424,20 @@ def _validate_tool_params(action: str, params: Mapping[str, Any] | None) -> None
     for field in ("forward_id", "file_id", "file_hash", "initiator_uid"):
         if field in values:
             _validate_nonempty_tool_text(values[field], field, action)
-    if (
-        "reason" in values
-        and values["reason"] is not None
-        and not isinstance(values["reason"], str)
+    if "notification_type" in values and (
+        not isinstance(values["notification_type"], str)
+        or values["notification_type"] not in {"join_request", "invited_join_request"}
     ):
-        raise ActionError("invalid_input", action, "reason is invalid")
+        raise ActionError("invalid_input", action, "notification_type is invalid")
+    if "parent_folder_id" in values:
+        _validate_optional_nonempty_tool_text(
+            values["parent_folder_id"], "parent_folder_id", action
+        )
+    if "reason" in values and values["reason"] is not None:
+        if action == "reject_group_request":
+            _validate_nonempty_tool_text(values["reason"], "reason", action)
+        elif not isinstance(values["reason"], str):
+            raise ActionError("invalid_input", action, "reason is invalid")
 
 
 def _validate_tool_response(action: str, envelope: MilkyEnvelope) -> None:
@@ -1289,9 +1450,12 @@ def _validate_tool_response(action: str, envelope: MilkyEnvelope) -> None:
         messages = data.get("messages")
         if not _is_object_array(messages):
             raise ActionError("malformed", action, "response messages are malformed")
-    elif action == "get_private_file_download_url":
+    elif action in {"get_private_file_download_url", "get_group_file_download_url"}:
         if not isinstance(data.get("download_url"), str):
             raise ActionError("malformed", action, "response download_url is malformed")
+    elif action == "get_group_files":
+        if not _is_object_array(data.get("files")) or not _is_object_array(data.get("folders")):
+            raise ActionError("malformed", action, "response files or folders are malformed")
     elif action == "get_friend_requests":
         if not _is_object_array(data.get("requests")):
             raise ActionError("malformed", action, "response requests are malformed")
@@ -1303,6 +1467,10 @@ def _validate_tool_response(action: str, envelope: MilkyEnvelope) -> None:
             "delete_friend",
             "accept_friend_request",
             "reject_friend_request",
+            "accept_group_request",
+            "reject_group_request",
+            "accept_group_invitation",
+            "reject_group_invitation",
         }
         and data
     ):
@@ -1342,6 +1510,47 @@ def _validate_nonempty_tool_text(value: object, field: str, action: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ActionError("invalid_input", action, f"{field} is invalid")
     return value
+
+
+def _validate_optional_nonempty_tool_text(value: object, field: str, action: str) -> str | None:
+    """校验允许显式 null 的非空字符串参数。"""
+
+    if value is None:
+        return None
+    return _validate_nonempty_tool_text(value, field, action)
+
+
+def _group_request_params(
+    action: str,
+    notification_seq: object,
+    notification_type: object,
+    group_id: object,
+    *,
+    is_filtered: object,
+) -> dict[str, Any]:
+    """校验群请求参数并保留可选字段的省略/null 区别。"""
+
+    if not isinstance(notification_type, str) or notification_type not in {
+        "join_request",
+        "invited_join_request",
+    }:
+        raise ActionError("invalid_input", action, "notification_type is invalid")
+    params: dict[str, Any] = {
+        "notification_seq": _validate_tool_integer(notification_seq, "notification_seq", action),
+        "notification_type": notification_type,
+        "group_id": _validate_tool_integer(
+            group_id,
+            "group_id",
+            action,
+            minimum=_MIN_QQ_ID,
+            maximum=_MAX_QQ_ID,
+        ),
+    }
+    if is_filtered is not _MISSING:
+        if is_filtered is not None and not isinstance(is_filtered, bool):
+            raise ActionError("invalid_input", action, "is_filtered is invalid")
+        params["is_filtered"] = is_filtered
+    return params
 
 
 def _is_object_array(value: object) -> bool:

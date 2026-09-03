@@ -57,7 +57,7 @@ def test_normalizer_preserves_all_known_segments_and_strategy_features() -> None
     assert normalized.body == (
         "中性文本@合成机器人@全体成员[face:fixture-face]"
         "[img:file_name=[合成图片]][record:NOT SUPPORTED][video:NOT SUPPORTED]"
-        "[file:file_id=fixture-file-id,file_name=fixture.txt]"
+        "[file:file_id=fixture-file-id,file_name=fixture.txt,file_hash=NOT SUPPORTED]"
         "[forward:forward_id=fixture-forward-id][market_face:summary=[合成市场表情]]"
         '[light_app:{"meta":{"contact":{"type":"qq","id":800000004,'
         '"labels":["测试",null]},"nested":{"enabled":true}}}]'
@@ -241,6 +241,28 @@ def test_media_and_forward_only_store_references() -> None:
     assert result.value.forward_references[0].forward_id == "fixture-forward-id"
 
 
+@pytest.mark.parametrize("case_index", range(4))
+def test_file_placeholder_and_reference_share_normalized_hash(case_index: int) -> None:
+    """文件正文和独立引用应共同使用 typed file_hash，不反解析正文。"""
+
+    placeholder_fixture = json.loads(
+        (Path(__file__).parent / "fixtures/inbound_context/file_placeholders.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    case = placeholder_fixture["cases"][case_index]
+    payload = load_fixture("events/message_receive.friend.json")
+    payload["data"]["segments"] = [{"type": "file", "data": case["segment"]}]
+
+    result = normalize_event(payload)
+
+    assert result.value is not None
+    assert result.value.body == case["expected"]
+    reference = result.value.file_attachment_references[0]
+    assert reference.file_hash == case["segment"].get("file_hash")
+    assert reference.file_name == case["segment"]["file_name"]
+
+
 def test_incomplete_media_gets_explanatory_placeholder() -> None:
     """缺少可用引用的媒体不能伪装成普通文本。"""
 
@@ -256,7 +278,7 @@ def test_incomplete_media_gets_explanatory_placeholder() -> None:
     assert result.value is not None
     assert result.value.body == (
         "[img:file_name=NOT SUPPORTED]"
-        "[file:file_id=NOT SUPPORTED,file_name=NOT SUPPORTED]"
+        "[file:file_id=NOT SUPPORTED,file_name=NOT SUPPORTED,file_hash=NOT SUPPORTED]"
         "[forward:forward_id=NOT SUPPORTED]"
     )
     assert "incomplete_media_reference" in result.value.diagnostics

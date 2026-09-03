@@ -433,6 +433,155 @@ class MilkyOutboundSender:
             lambda: self._client.set_group_whole_mute(group_value, is_mute),
         )
 
+    async def get_group_file_download_url(self, group_id: object, file_id: object) -> object:
+        """查询群文件下载链接并保留完整成功 envelope。"""
+
+        try:
+            group_value = _strict_qq_id(group_id, "group_id")
+            file_value = _strict_text(file_id, "file_id")
+            return await self._execute_tool_action(
+                "get_group_file_download_url",
+                {"group_id": group_value, "file_id": file_value},
+                lambda: self._client.get_group_file_download_url(group_value, file_value),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
+    async def get_group_files(
+        self,
+        group_id: object,
+        *,
+        parent_folder_id: object = _MISSING,
+    ) -> object:
+        """查询群文件和文件夹列表，并保留完整成功 envelope。"""
+
+        try:
+            group_value = _strict_qq_id(group_id, "group_id")
+            params: dict[str, object] = {"group_id": group_value}
+            if parent_folder_id is not _MISSING:
+                params["parent_folder_id"] = _optional_strict_text(
+                    parent_folder_id, "parent_folder_id"
+                )
+            return await self._execute_tool_action(
+                "get_group_files",
+                params,
+                lambda: _invoke_without_missing(
+                    self._client.get_group_files,
+                    group_value,
+                    parent_folder_id=parent_folder_id,
+                ),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
+    async def accept_group_request(
+        self,
+        notification_seq: object,
+        notification_type: object,
+        group_id: object,
+        *,
+        is_filtered: object = _MISSING,
+    ) -> object:
+        """显式接受入群请求，最多提交一次远端 Action。"""
+
+        try:
+            params = _group_request_params(
+                "accept_group_request",
+                notification_seq,
+                notification_type,
+                group_id,
+                is_filtered=is_filtered,
+            )
+            return await self._execute_tool_action(
+                "accept_group_request",
+                params,
+                lambda: _invoke_without_missing(
+                    self._client.accept_group_request,
+                    params["notification_seq"],
+                    params["notification_type"],
+                    params["group_id"],
+                    is_filtered=is_filtered,
+                ),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
+    async def reject_group_request(
+        self,
+        notification_seq: object,
+        notification_type: object,
+        group_id: object,
+        *,
+        is_filtered: object = _MISSING,
+        reason: object = _MISSING,
+    ) -> object:
+        """显式拒绝入群请求，reason 只作为协议参数传递。"""
+
+        try:
+            params = _group_request_params(
+                "reject_group_request",
+                notification_seq,
+                notification_type,
+                group_id,
+                is_filtered=is_filtered,
+            )
+            if reason is not _MISSING:
+                params["reason"] = _optional_strict_text(reason, "reason")
+            return await self._execute_tool_action(
+                "reject_group_request",
+                params,
+                lambda: _invoke_without_missing(
+                    self._client.reject_group_request,
+                    params["notification_seq"],
+                    params["notification_type"],
+                    params["group_id"],
+                    is_filtered=is_filtered,
+                    reason=reason,
+                ),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
+    async def accept_group_invitation(self, group_id: object, invitation_seq: object) -> object:
+        """显式接受群邀请，最多提交一次远端 Action。"""
+
+        try:
+            group_value = _strict_qq_id(group_id, "group_id")
+            sequence = _strict_integer(invitation_seq, "invitation_seq")
+            return await self._execute_tool_action(
+                "accept_group_invitation",
+                {"group_id": group_value, "invitation_seq": sequence},
+                lambda: self._client.accept_group_invitation(group_value, sequence),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
+    async def reject_group_invitation(self, group_id: object, invitation_seq: object) -> object:
+        """显式拒绝群邀请，最多提交一次远端 Action。"""
+
+        try:
+            group_value = _strict_qq_id(group_id, "group_id")
+            sequence = _strict_integer(invitation_seq, "invitation_seq")
+            return await self._execute_tool_action(
+                "reject_group_invitation",
+                {"group_id": group_value, "invitation_seq": sequence},
+                lambda: self._client.reject_group_invitation(group_value, sequence),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
     async def profile_like(self, user_id: object, count: object = _MISSING) -> object:
         """执行已确认的名片点赞 Action。"""
 
@@ -947,6 +1096,14 @@ def _strict_text(value: object, field: str) -> str:
     return value
 
 
+def _optional_strict_text(value: object, field: str) -> str | None:
+    """校验允许显式 null 的非空字符串。"""
+
+    if value is None:
+        return None
+    return _strict_text(value, field)
+
+
 def _strict_integer(
     value: object,
     field: str,
@@ -959,6 +1116,33 @@ def _strict_integer(
     if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
         raise ActionError("invalid_input", "tool", f"{field} is invalid")
     return value
+
+
+def _group_request_params(
+    action: str,
+    notification_seq: object,
+    notification_type: object,
+    group_id: object,
+    *,
+    is_filtered: object,
+) -> dict[str, object]:
+    """校验群请求参数并保留可选字段的省略/null 区别。"""
+
+    if not isinstance(notification_type, str) or notification_type not in {
+        "join_request",
+        "invited_join_request",
+    }:
+        raise ActionError("invalid_input", action, "notification_type is invalid")
+    params: dict[str, object] = {
+        "notification_seq": _strict_integer(notification_seq, "notification_seq"),
+        "notification_type": notification_type,
+        "group_id": _strict_qq_id(group_id, "group_id"),
+    }
+    if is_filtered is not _MISSING:
+        if is_filtered is not None and not isinstance(is_filtered, bool):
+            raise ActionError("invalid_input", action, "is_filtered is invalid")
+        params["is_filtered"] = is_filtered
+    return params
 
 
 def _integer(
@@ -998,9 +1182,14 @@ def _validate_tool_response(action: str, envelope: MilkyEnvelope) -> None:
         messages = envelope.data.get("messages")
         if not _is_object_sequence(messages):
             raise ActionError("malformed", action, "response messages are malformed")
-    elif action == "get_private_file_download_url":
+    elif action in {"get_private_file_download_url", "get_group_file_download_url"}:
         if not isinstance(envelope.data.get("download_url"), str):
             raise ActionError("malformed", action, "response download_url is malformed")
+    elif action == "get_group_files":
+        if not _is_object_sequence(envelope.data.get("files")) or not _is_object_sequence(
+            envelope.data.get("folders")
+        ):
+            raise ActionError("malformed", action, "response files or folders are malformed")
     elif action == "get_friend_requests":
         requests = envelope.data.get("requests")
         if not _is_object_sequence(requests):
@@ -1013,6 +1202,10 @@ def _validate_tool_response(action: str, envelope: MilkyEnvelope) -> None:
             "delete_friend",
             "accept_friend_request",
             "reject_friend_request",
+            "accept_group_request",
+            "reject_group_request",
+            "accept_group_invitation",
+            "reject_group_invitation",
         }
         and envelope.data
     ):

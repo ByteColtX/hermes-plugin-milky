@@ -236,7 +236,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
 
         if isinstance(segment, FileSegment):
             has_supported_content = True
-            marker = _file_marker(segment.file_id, segment.file_name)
+            marker = _file_marker(segment.file_id, segment.file_name, segment.file_hash)
             body_parts.append(marker)
             if segment.file_id is None or segment.file_name is None:
                 _append_once(diagnostics, "incomplete_media_reference")
@@ -367,10 +367,14 @@ def _image_marker(segment: ImageSegment) -> str:
     return f"[img:file_name={summary or _placeholder_value(segment.resource_id)}]"
 
 
-def _file_marker(file_id: object, file_name: object) -> str:
-    """生成包含 file ID 和文件名的入站 placeholder。"""
+def _file_marker(file_id: object, file_name: object, file_hash: object) -> str:
+    """按协议字段顺序生成入站文件 placeholder。"""
 
-    return f"[file:file_id={_placeholder_value(file_id)},file_name={_placeholder_value(file_name)}]"
+    return (
+        f"[file:file_id={_placeholder_value(file_id)},"
+        f"file_name={_placeholder_value(file_name)},"
+        f"file_hash={_placeholder_value(file_hash)}]"
+    )
 
 
 def _forward_marker(forward_id: object) -> str:

@@ -87,7 +87,7 @@ def test_segment_placeholders_keep_order_and_variable_light_app_meta() -> None:
     assert result.value.body == (
         "中性文本@合成机器人@全体成员[face:fixture-face]"
         "[img:file_name=[合成图片]][record:NOT SUPPORTED][video:NOT SUPPORTED]"
-        "[file:file_id=fixture-file-id,file_name=fixture.txt]"
+        "[file:file_id=fixture-file-id,file_name=fixture.txt,file_hash=NOT SUPPORTED]"
         "[forward:forward_id=fixture-forward-id][market_face:summary=[合成市场表情]]"
         '[light_app:{"meta":{"contact":{"type":"qq","id":800000004,'
         '"labels":["测试",null]},"nested":{"enabled":true}}}]'
@@ -126,7 +126,9 @@ def test_file_placeholder_preserves_id_and_name_from_segment_data() -> None:
     result = normalize_event(payload)
 
     assert result.value is not None
-    assert result.value.body == "[file:file_id=/fixture-file-id,file_name=logs.txt]"
+    assert result.value.body == (
+        "[file:file_id=/fixture-file-id,file_name=logs.txt,file_hash=NOT SUPPORTED]"
+    )
 
 
 def test_system_events_render_only_confirmed_fields() -> None:
