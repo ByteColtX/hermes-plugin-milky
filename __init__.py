@@ -15,6 +15,7 @@ from session.identity import BotIdentitySnapshot
 PLATFORM_HINT = "You are communicating via Hermes's Milky QQ platform."
 PLATFORM_GUIDANCE = (
     "You can send files natively: write MEDIA:/absolute/path/to/file in your response. "
+    "If no reply is needed, return only NO_REPLY with no extra content. NO_REPLY means no output; the system will suppress message delivery. "
     "For Hermes `send_message`, put the same directive in its `message` argument; images, audio, video, and documents use Milky's native media/file upload. "
     "MEDIA: is separate from the fixed QQ ToolSpec list. "
     "Use [CQ:at,qq=<uid>] to mention users and [CQ:reply,id=<msg_id>] to quote to messages; use only real IDs from the current message or channel context. "
