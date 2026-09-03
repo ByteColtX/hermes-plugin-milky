@@ -10,8 +10,10 @@ _PLUGIN_ROOT = str(Path(__file__).resolve().parent)
 if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 
-PLATFORM_HINT = (
-    "You are communicating via Hermes's Milky QQ platform. "
+from session.identity import BotIdentitySnapshot
+
+PLATFORM_HINT = "You are communicating via Hermes's Milky QQ platform."
+PLATFORM_GUIDANCE = (
     "You can send files natively: write MEDIA:/absolute/path/to/file in your response. "
     "For Hermes `send_message`, put the same directive in its `message` argument; images, audio, video, and documents use Milky's native media/file upload. "
     "MEDIA: is separate from the fixed QQ ToolSpec list. "
@@ -19,6 +21,32 @@ PLATFORM_HINT = (
     "Never send a raw local path as chat text or report media as unsupported before the send entry point fails. "
     "Load `hermes-plugin-milky:qq-reference` for CQ details or `hermes-plugin-milky:qq-tools` for QQ tools."
 )
+MILKY_PROMPT_SECTION_ID = "hermes-plugin-milky.qq-platform-guidance"
+
+
+def _render_platform_guidance(identity_snapshot: BotIdentitySnapshot, _session_info: object) -> str:
+    """只从注册级身份快照渲染 Milky system prompt section。"""
+
+    identity = identity_snapshot.read()
+    if identity is None:
+        return ""
+    return (
+        f"Your QQ uid is {identity.self_id}, and your nickname is {identity.nickname}.\n"
+        f"{PLATFORM_GUIDANCE}"
+    )
+
+
+def _register_platform_guidance(ctx: Any, identity_snapshot: BotIdentitySnapshot) -> None:
+    """在宿主支持时登记连接后渲染的 Milky system prompt section。"""
+
+    register_section = getattr(ctx, "register_system_prompt_section", None)
+    if not callable(register_section):
+        return
+    register_section(
+        id=MILKY_PROMPT_SECTION_ID,
+        content=lambda session_info: _render_platform_guidance(identity_snapshot, session_info),
+        position="after_memory",
+    )
 
 
 def _register_bundled_skill(ctx: Any) -> None:
@@ -77,6 +105,9 @@ def register(ctx: Any) -> None:
 
     from .adapter import MilkyAdapter
 
+    identity_snapshot = BotIdentitySnapshot()
+    _register_platform_guidance(ctx, identity_snapshot)
+
     register_platform(
         name="milky",
         label="Milky",
@@ -84,6 +115,7 @@ def register(ctx: Any) -> None:
             platform_config,
             milky_config=milky_config,
             slash_command_service=command_service,
+            identity_snapshot=identity_snapshot,
         ),
         check_fn=lambda: True,
         validate_config=lambda _platform_config: True,

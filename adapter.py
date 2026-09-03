@@ -21,7 +21,7 @@ from outbound.materialization import (
     prepare_materialization,
 )
 from outbound.sender import MilkyOutboundSender, OutboundSendResult, parse_outbound_target
-from session import ChatAdmissionCoordinator, TtlDeduplicator, WaitBuffer
+from session import BotIdentitySnapshot, ChatAdmissionCoordinator, TtlDeduplicator, WaitBuffer
 from state import MuteTracker
 from will import build_engine
 
@@ -100,6 +100,7 @@ class MilkyAdapter(BasePlatformAdapter):
         outbound_sender: object | None = None,
         hermes_media_helpers: HermesMediaHelpers | None = None,
         slash_command_service: object | None = None,
+        identity_snapshot: BotIdentitySnapshot | None = None,
     ) -> None:
         """组装进程内依赖；构造阶段不建立网络连接或后台任务。"""
 
@@ -139,6 +140,9 @@ class MilkyAdapter(BasePlatformAdapter):
 
             slash_command_service = SlashCommandService()
         self._slash_command_service = slash_command_service
+        self._identity_snapshot = (
+            identity_snapshot if identity_snapshot is not None else BotIdentitySnapshot()
+        )
         self._pipeline = pipeline
         self._self_id: int | None = None
         self._event_task: asyncio.Task[None] | None = None
@@ -149,6 +153,7 @@ class MilkyAdapter(BasePlatformAdapter):
         self._closed = False
         self._sender_bound = False
         self._nickname: str | None = None
+        self._identity_published = False
         self._diagnostics: deque[str] = deque(maxlen=_MAX_DIAGNOSTICS)
 
     @property
@@ -180,6 +185,12 @@ class MilkyAdapter(BasePlatformAdapter):
         """返回初始同步确认的 Bot 昵称。"""
 
         return self._nickname
+
+    @property
+    def identity_snapshot(self) -> BotIdentitySnapshot:
+        """返回与根入口 system prompt section 共享的身份快照。"""
+
+        return self._identity_snapshot
 
     @property
     def diagnostics(self) -> tuple[str, ...]:
@@ -254,6 +265,10 @@ class MilkyAdapter(BasePlatformAdapter):
                     self._run_event_stream(),
                     name="milky-event-stream",
                 )
+                if not self._identity_published:
+                    self._identity_published = self._identity_snapshot.publish(
+                        self._self_id, self._nickname
+                    )
                 log_event(
                     logger,
                     "milky_adapter_ready",

@@ -13,6 +13,7 @@ import pytest
 
 from adapter import MilkyAdapter
 from config import load_config
+from session.identity import BotIdentity, BotIdentitySnapshot
 from slash_commands import SlashCommandService
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +38,7 @@ class FakeMuteTracker:
         self.fail = fail
         self.initialized = False
         self.self_id: int | None = None
+        self.nickname: str | None = None
         self.initialize_calls = 0
         self.start_calls = 0
         self.close_calls = 0
@@ -49,6 +51,7 @@ class FakeMuteTracker:
             raise RuntimeError("fake state sync failed")
         self.initialized = True
         self.self_id = 900000001
+        self.nickname = "合成机器人"
         return True
 
     def start(self) -> None:
@@ -153,6 +156,7 @@ def make_adapter(
     sender: FakeSender | None = None,
     client: FakeClient | None = None,
     slash_command_service: SlashCommandService | None = None,
+    identity_snapshot: BotIdentitySnapshot | None = None,
 ) -> tuple[MilkyAdapter, FakeMuteTracker, FakeEventStream, FakePipeline, FakeSender, FakeClient]:
     """创建只使用 fake 依赖的 adapter。"""
 
@@ -170,6 +174,7 @@ def make_adapter(
         pipeline=resolved_pipeline,
         outbound_sender=resolved_sender,
         slash_command_service=slash_command_service,
+        identity_snapshot=identity_snapshot,
     )
     return (
         adapter,
@@ -199,6 +204,26 @@ def test_connect_syncs_state_before_starting_event_stream() -> None:
 
         await adapter.disconnect()
         assert tracker.close_calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_connect_publishes_confirmed_identity_once_after_ready() -> None:
+    """连接完成普通消息就绪后才发布账号身份，并在重连时复用快照。"""
+
+    async def scenario() -> None:
+        snapshot = BotIdentitySnapshot()
+        adapter, tracker, stream, _, _, _ = make_adapter(identity_snapshot=snapshot)
+
+        assert snapshot.read() is None
+        assert await adapter.connect() is True
+        await stream.started.wait()
+        assert snapshot.read() == BotIdentity(900000001, "合成机器人")
+
+        await adapter.connect(is_reconnect=True)
+        assert tracker.initialize_calls == 1
+        assert snapshot.read() == BotIdentity(900000001, "合成机器人")
+        await adapter.disconnect()
 
     asyncio.run(scenario())
 
@@ -251,10 +276,19 @@ def test_initial_sync_failure_keeps_message_entry_not_ready() -> None:
         assert adapter.ready is False
         assert stream.run_calls == 0
         assert pipeline.start_calls == 0
+        assert adapter.identity_snapshot.read() is None
 
         await adapter.disconnect()
 
     asyncio.run(scenario())
+
+
+def test_section_renderer_keeps_identity_single_line_without_network() -> None:
+    """异常昵称不能破坏身份首行，也不应通过快照触发网络。"""
+
+    snapshot = BotIdentitySnapshot()
+    assert snapshot.publish(900000001, "  合成\n机器人\t  ") is True
+    assert snapshot.read() == BotIdentity(900000001, "合成 机器人")
 
 
 def test_failed_connect_never_leaves_a_command_client_binding() -> None:
@@ -489,6 +523,7 @@ class FakePluginContext:
     def __init__(self) -> None:
         self.platforms: list[dict[str, object]] = []
         self.tools: list[dict[str, object]] = []
+        self.system_prompt_sections: list[dict[str, object]] = []
 
     def register_platform(self, **kwargs: object) -> None:
         """保存平台注册参数。"""
@@ -499,6 +534,11 @@ class FakePluginContext:
         """保存显式工具注册参数。"""
 
         self.tools.append(kwargs)
+
+    def register_system_prompt_section(self, **kwargs: object) -> None:
+        """保存 system prompt section 注册参数。"""
+
+        self.system_prompt_sections.append(kwargs)
 
 
 def test_root_register_assembles_platform_without_network_or_background_task(
@@ -555,6 +595,40 @@ def test_root_register_assembles_platform_without_network_or_background_task(
         ]
         adapter = registration["adapter_factory"](SimpleNamespace())
         assert adapter.__class__.__name__ == "MilkyAdapter"
+    finally:
+        for name in list(sys.modules):
+            if name == entry.__name__ or name.startswith(f"{entry.__name__}."):
+                sys.modules.pop(name, None)
+
+
+def test_root_section_renders_identity_published_by_ready_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """根入口 section 应读取同一注册实例 adapter 连接后发布的身份。"""
+
+    monkeypatch.setenv("MILKY_BASE_URL", "https://localhost:5500/milky")
+    monkeypatch.setenv("MILKY_ACCESS_TOKEN", "test-token")
+    entry = _load_root_entry()
+    context = FakePluginContext()
+    try:
+        entry.register(context)  # type: ignore[attr-defined]
+        registration = context.platforms[0]
+        registered_adapter = registration["adapter_factory"](SimpleNamespace())
+        snapshot = registered_adapter.identity_snapshot
+        callback = context.system_prompt_sections[0]["content"]
+
+        adapter, _, stream, _, _, _ = make_adapter(identity_snapshot=snapshot)
+
+        async def scenario() -> None:
+            assert await adapter.connect() is True
+            await stream.started.wait()
+            rendered = callback({"self_id": 101, "nickname": "untrusted"})
+            assert rendered.startswith(
+                "Your QQ uid is 900000001, and your nickname is 合成机器人.\n"
+            )
+            await adapter.disconnect()
+
+        asyncio.run(scenario())
     finally:
         for name in list(sys.modules):
             if name == entry.__name__ or name.startswith(f"{entry.__name__}."):

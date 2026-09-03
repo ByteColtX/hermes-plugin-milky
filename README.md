@@ -247,7 +247,7 @@ cron 为每次投递创建并关闭临时 Milky client，目前只支持无附�
 
 | 入口或对象 | 作用 |
 | --- | --- |
-| `__init__.py::register(ctx)` | 唯一公开入口：解析启动配置，注册 platform、`/milky`、23 个 ToolSpec 和 standalone 文本 sender；注册阶段不联网、不启动 SSE |
+| `__init__.py::register(ctx)` | 唯一公开入口：解析启动配置，注册 platform、`/milky`、23 个 ToolSpec、standalone 文本 sender 和支持宿主上的 `after_memory` QQ 指引 section；注册阶段不联网、不启动 SSE |
 | `__init__.py::register_tools(ctx)` | 根入口内部的显式 ToolSpec 发现委托；转发到 `outbound.tools`，不创建 client 或发起网络请求 |
 | `MilkyAdapter` | 实现 Hermes `BasePlatformAdapter` 的连接、停止、入站交接和出站委托 |
 | `MilkyOutboundSender` | 校验 `group:/dm:` 目标，格式化文本和 native segment，并调用 Milky Action/upload |
@@ -268,6 +268,12 @@ CQ image 仅用于本地 `file://` URI 的 sticker，例如
 注册后，`connect()` 先完成 `get_login_info`、`get_group_list` 和每个群的 bot 成员状态同步，
 再启动 SSE 并开放普通消息入口；`disconnect()` 会取消 event/pipeline/TTL 任务、解除
 sender/command 绑定并关闭 HTTP/SSE 资源。
+
+平台提示只保留 `You are communicating via Hermes's Milky QQ platform.`。支持
+`register_system_prompt_section` 的 Hermes 宿主会在 `after_memory` 登记
+`hermes-plugin-milky.qq-platform-guidance`，并在连接完成后使用已确认的 QQ UID 和昵称渲染
+完整的媒体、CQ-compatible 和 bundled skill 指引；连接前或初始同步失败时不注入猜测身份。
+不支持该扩展 API 的旧宿主仍完成平台注册，但只获得首句提示。
 
 出站发送成功时使用远端 `data.message_seq` 的稳定字符串作为 `message_id`；协议拒绝、传输
 未知、malformed 和 unsupported 会保持明确失败分类。

@@ -120,7 +120,9 @@ Gate 不做网络 I/O，Will 不做授权，session 不复制 Hermes 队列；�
 
 ### 注册与连接
 
-`register(ctx)` 是唯一公开入口：读取 context、一次性解析配置，注册 `qq-reference`、`qq-tools`、`/milky` 和显式 ToolSpec，登记 `MILKY_HOME_CHANNEL`，组装 client/SSE/MuteTracker/Will/session/pipeline/sender，并调用 Hermes 平台注册接口。
+`register(ctx)` 是唯一公开入口：读取 context、一次性解析配置，注册 `qq-reference`、`qq-tools`、`/milky` 和显式 ToolSpec，登记 `MILKY_HOME_CHANNEL`，组装 client/SSE/MuteTracker/Will/session/pipeline/sender，并调用 Hermes 平台注册接口。`platform_hint` 只包含 `You are communicating via Hermes's Milky QQ platform.`；宿主提供 `register_system_prompt_section` 时，入口另外登记 `hermes-plugin-milky.qq-platform-guidance` 的 `after_memory` section。
+
+该 section 使用注册实例共享的进程内身份快照。adapter 在登录、群列表和每个群的 Bot 成员状态同步成功、普通消息入口完成组装后发布已确认的 `self_id` 和 `nickname`；section renderer 只读快照，不访问 Milky client，不读取 session metadata，也不从消息或配置推断身份。未连接、同步失败或 nickname 无法安全规范化时，section 返回空内容，由 Hermes 跳过该 section；缺少宿主 section API 时仍完成只含首句的平台注册。
 
 导入和注册阶段不得联网、建立 SSE、创建长期任务或写入用户全局 skills 目录。配置错误必须在启动时安全失败，不能回显凭证。
 

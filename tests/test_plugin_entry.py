@@ -103,6 +103,7 @@ class SkillAndPlatformContext:
     def __init__(self) -> None:
         self.skills: list[tuple[str, Path]] = []
         self.platforms: list[dict[str, Any]] = []
+        self.system_prompt_sections: list[dict[str, Any]] = []
 
     def register_skill(self, name: str, path: Path) -> None:
         self.skills.append((name, path))
@@ -110,9 +111,14 @@ class SkillAndPlatformContext:
     def register_platform(self, **kwargs: Any) -> None:
         self.platforms.append(kwargs)
 
+    def register_system_prompt_section(self, **kwargs: Any) -> None:
+        """记录 system prompt section 注册，不执行 renderer。"""
 
-def test_root_registers_split_qq_skills_and_stable_platform_hint(monkeypatch) -> None:
-    """根入口应登记插件 skill，并提供明确的文本、控制码和媒体入口提示。"""
+        self.system_prompt_sections.append(kwargs)
+
+
+def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) -> None:
+    """根入口应拆分静态首句和连接后渲染的 Milky 指引。"""
 
     set_valid_environment(monkeypatch)
     entry, module_name = load_plugin_entry()
@@ -127,25 +133,131 @@ def test_root_registers_split_qq_skills_and_stable_platform_hint(monkeypatch) ->
         assert all(skill_path.is_file() for _, skill_path in context.skills)
 
         hint = context.platforms[0]["platform_hint"]
-        assert "[CQ:at,qq=<uid>]" in hint
-        assert "[CQ:reply,id=<msg_id>]" in hint
-        assert (
-            "You can send files natively: write MEDIA:/absolute/path/to/file in your response."
-            in hint
-        )
-        assert "For Hermes `send_message`, put the same directive in its `message` argument" in hint
-        assert "MEDIA: is separate from the fixed QQ ToolSpec list" in hint
-        assert "images, audio, video, and documents use Milky's native media/file upload" in hint
-        assert "Never send a raw local path as chat text" in hint
-        assert "before the send entry point fails" in hint
-        assert "use only real IDs from the current message or channel context" in hint
-        assert "otherwise, send plain text only" not in hint
-        assert "hermes-plugin-milky:qq-reference" in hint
-        assert "hermes-plugin-milky:qq-tools" in hint
+        assert hint == "You are communicating via Hermes's Milky QQ platform."
+        assert hint == entry.PLATFORM_HINT
+        assert len(context.system_prompt_sections) == 1
+        section = context.system_prompt_sections[0]
+        assert section["id"] == "hermes-plugin-milky.qq-platform-guidance"
+        assert section["position"] == "after_memory"
+        assert callable(section["content"])
+        assert section["content"]({}) == ""
+        assert entry.PLATFORM_GUIDANCE not in hint
         assert "101" not in hint
         assert "9001" not in hint
         assert "MILKY_ACCESS_TOKEN" not in hint
         assert "https://" not in hint
+    finally:
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(f"{module_name}."):
+                sys.modules.pop(name, None)
+
+
+def test_milky_prompt_section_shares_registration_identity_snapshot(monkeypatch) -> None:
+    """section renderer 只读同一注册实例的身份快照，忽略 session metadata。"""
+
+    set_valid_environment(monkeypatch)
+    entry, module_name = load_plugin_entry()
+    try:
+        context = SkillAndPlatformContext()
+        entry.register(context)
+        registration = context.platforms[0]
+        adapter = registration["adapter_factory"](object())
+        snapshot = adapter.identity_snapshot
+
+        assert snapshot.read() is None
+        callback = context.system_prompt_sections[0]["content"]
+        assert callback({"self_id": 101, "nickname": "session metadata"}) == ""
+
+        assert snapshot.publish(900000001, "合成机器人") is True
+        rendered = callback({"self_id": 101, "nickname": "session metadata"})
+        assert rendered.startswith("Your QQ uid is 900000001, and your nickname is 合成机器人.\n")
+        assert rendered.split("\n", 1)[1] == entry.PLATFORM_GUIDANCE
+        assert rendered.count(entry.PLATFORM_GUIDANCE) == 1
+        assert callback({"self_id": 999, "nickname": "changed metadata"}) == rendered
+    finally:
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(f"{module_name}."):
+                sys.modules.pop(name, None)
+
+
+def test_milky_prompt_renderer_sanitizes_abnormal_nickname(monkeypatch) -> None:
+    """section 身份首行保持单行且不接受空昵称或控制字符。"""
+
+    set_valid_environment(monkeypatch)
+    entry, module_name = load_plugin_entry()
+    try:
+        snapshot = entry.BotIdentitySnapshot()
+        assert snapshot.publish(900000001, "  合成\n机器人\t  ") is True
+        rendered = entry._render_platform_guidance(snapshot, {"nickname": "untrusted"})
+        assert (
+            rendered.splitlines()[0]
+            == "Your QQ uid is 900000001, and your nickname is 合成 机器人."
+        )
+        assert "\n" not in rendered.splitlines()[0]
+
+        assert snapshot.publish(900000001, "\x00") is False
+        assert snapshot.publish(900000001, "   ") is False
+        assert snapshot.read().nickname == "合成 机器人"
+    finally:
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(f"{module_name}."):
+                sys.modules.pop(name, None)
+
+
+def test_legacy_host_keeps_only_static_platform_hint(monkeypatch) -> None:
+    """旧宿主缺少 section API 时仍完成只含首句的平台注册。"""
+
+    set_valid_environment(monkeypatch)
+    entry, module_name = load_plugin_entry()
+    try:
+
+        class LegacyContext:
+            """只提供旧宿主平台注册接口。"""
+
+            def __init__(self) -> None:
+                self.platforms: list[dict[str, Any]] = []
+
+            def register_platform(self, **kwargs: Any) -> None:
+                self.platforms.append(kwargs)
+
+        context = LegacyContext()
+        entry.register(context)
+        assert len(context.platforms) == 1
+        assert context.platforms[0]["platform_hint"] == entry.PLATFORM_HINT
+        assert entry.PLATFORM_GUIDANCE not in context.platforms[0]["platform_hint"]
+    finally:
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(f"{module_name}."):
+                sys.modules.pop(name, None)
+
+
+def test_milky_prompt_registration_isolated_from_other_platform_entries(monkeypatch) -> None:
+    """Milky section 只影响自身注册项，不改动其他平台的提示和 section。"""
+
+    set_valid_environment(monkeypatch)
+    entry, module_name = load_plugin_entry()
+    try:
+        context = SkillAndPlatformContext()
+        other_section = {"id": "other-platform.guidance", "content": "Other guidance"}
+        context.platforms.append(
+            {
+                "name": "other",
+                "platform_hint": "Other platform hint",
+            }
+        )
+        context.system_prompt_sections.append(other_section)
+
+        entry.register(context)
+
+        assert context.platforms[0] == {
+            "name": "other",
+            "platform_hint": "Other platform hint",
+        }
+        assert context.system_prompt_sections[0] is other_section
+        assert len(context.system_prompt_sections) == 2
+        milky_section = context.system_prompt_sections[1]
+        assert milky_section["id"] == "hermes-plugin-milky.qq-platform-guidance"
+        assert entry.PLATFORM_GUIDANCE not in other_section["content"]
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):

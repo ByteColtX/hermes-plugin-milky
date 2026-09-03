@@ -25,6 +25,8 @@ from .context import (
 )
 from .dedup import TtlDeduplicator
 from .identity import (
+    BotIdentity,
+    BotIdentitySnapshot,
     CanonicalError,
     ChatKeyError,
     TempChatError,
@@ -35,6 +37,8 @@ from .identity import (
 
 __all__ = [
     "AdmissionTicket",
+    "BotIdentity",
+    "BotIdentitySnapshot",
     "BufferAppendResult",
     "BufferDiagnostic",
     "CanonicalError",

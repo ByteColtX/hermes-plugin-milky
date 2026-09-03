@@ -3,12 +3,49 @@
 from __future__ import annotations
 
 import re
+import threading
+import unicodedata
+from dataclasses import dataclass
 from typing import Final
 
 _MISSING: Final = object()
 _DECIMAL_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
 _CHAT_KEY_PATTERN = re.compile(r"^(group|dm):(0|[1-9][0-9]*)$")
 _SCENE_PREFIXES = {"friend": "dm", "group": "group"}
+
+
+@dataclass(frozen=True, slots=True)
+class BotIdentity:
+    """保存已确认的 Milky Bot 身份。"""
+
+    self_id: int
+    nickname: str
+
+
+class BotIdentitySnapshot:
+    """在线程之间安全共享最近一次确认的 Bot 身份。"""
+
+    def __init__(self) -> None:
+        """创建空快照；空快照不会渲染任何身份占位符。"""
+
+        self._lock = threading.Lock()
+        self._identity: BotIdentity | None = None
+
+    def publish(self, self_id: object, nickname: object) -> bool:
+        """发布已校验的身份，异常值保持现有快照不变。"""
+
+        identity = _make_bot_identity(self_id, nickname)
+        if identity is None:
+            return False
+        with self._lock:
+            self._identity = identity
+        return True
+
+    def read(self) -> BotIdentity | None:
+        """读取不可变身份快照，不访问网络或其他运行时状态。"""
+
+        with self._lock:
+            return self._identity
 
 
 class CanonicalError(ValueError):
@@ -67,6 +104,19 @@ def make_dedup_key(self_id: object, chat_key: object, message_id: object) -> str
     return f"milky:{normalized_self_id}:{normalized_chat_key}:{normalized_message_id}"
 
 
+def _make_bot_identity(self_id: object, nickname: object) -> BotIdentity | None:
+    if isinstance(self_id, bool) or not isinstance(self_id, int) or self_id < 0:
+        return None
+    if not isinstance(nickname, str):
+        return None
+    normalized_nickname = " ".join(nickname.split())
+    if not normalized_nickname:
+        return None
+    if any(unicodedata.category(character).startswith("C") for character in normalized_nickname):
+        return None
+    return BotIdentity(self_id=self_id, nickname=normalized_nickname)
+
+
 def _normalize_decimal(value: object, field_name: str) -> str:
     if isinstance(value, bool):
         raise ChatKeyError(f"{field_name} must be a non-negative decimal integer")
@@ -80,6 +130,8 @@ def _normalize_decimal(value: object, field_name: str) -> str:
 
 
 __all__ = [
+    "BotIdentity",
+    "BotIdentitySnapshot",
     "CanonicalError",
     "ChatKeyError",
     "TempChatError",
