@@ -72,3 +72,57 @@ basename 一致。helper 不可用、下载失败或返回无效本地路径时�
 - **THEN** 结果 SHALL 将这些字段保留为独立文件引用
 - **AND** file placeholder SHALL 展示可用的 `file_hash` 或 `file_hash=NOT SUPPORTED`
 - **AND** SHALL NOT 要求 file segment 提供 temp_url 或把 file_name 解释成本地路径
+
+#### Scenario: light_app 保留完整 meta 根对象
+
+- **WHEN** `light_app.json_payload` 是包含任意嵌套 `meta` object 的合法 JSON
+- **THEN** 正文 SHALL 以 `[light_app:{"meta":` 开始
+- **AND** SHALL 保留 `meta` 下所有递归字段和值
+- **AND** SHALL 忽略 payload 顶层的 `app`、`prompt`、`config`、`view` 和 `ver` 等字段
+
+#### Scenario: contact card 仍使用 light_app
+
+- **WHEN** `light_app` payload 表示 contact card
+- **THEN** 正文 SHALL 使用 `[light_app:{"meta":...}]` 形式
+- **AND** SHALL NOT 生成 `[contact:...]` 或新的 contact segment
+
+#### Scenario: light_app payload 缺少 meta
+
+- **WHEN** `json_payload` 不是合法 JSON object 或不包含 `meta`
+- **THEN** 正文 SHALL 使用 `[light_app:NOT SUPPORTED]`
+- **AND** SHALL 不把未知顶层字段猜测为正文
+
+#### Scenario: image placeholder follows Hermes basename
+
+- **WHEN** trigger 阶段 image helper 成功返回本地落盘路径
+- **THEN** 最终正文 SHALL 使用 `[img:file_name=<returned basename>]`
+- **AND** `<returned basename>` SHALL 与 Hermes `media_urls` 中对应路径的 basename 相同
+- **AND** SHALL 不使用 image `summary` 作为最终成功占位文件名
+
+#### Scenario: multiple image placeholders keep helper basename order
+
+- **WHEN** 一条消息按顺序包含多个 image segment 且 helper 依次返回多个本地路径
+- **THEN** 每个 image placeholder SHALL 替换为对应 helper 返回路径的 basename
+- **AND** 替换结果 SHALL 保持 image segment 与 `media_urls` 的顺序
+
+#### Scenario: image helper failure keeps typed fallback
+
+- **WHEN** image helper 不可用、下载失败或返回无效路径
+- **THEN** 对应正文 SHALL 使用 `[img:file_name=NOT SUPPORTED]`
+- **AND** SHALL 不泄露远端 URL 或本地完整路径
+
+#### Scenario: file placeholder preserves protocol fields
+
+- **WHEN** file segment 提供 `file_id` 和 `file_name`，且资源 Action 不可用或失败
+- **THEN** 正文 SHALL 使用 `[file:file_id=<file_id>,file_name=<file_name>]`
+- **AND** SHALL 不用笼统的 `[file:NOT SUPPORTED]` 覆盖已有字段
+
+#### Scenario: forward placeholder labels its identifier
+
+- **WHEN** 消息包含 forward segment
+- **THEN** 正文 SHALL 使用 `[forward:forward_id=<forward_id>]`
+
+#### Scenario: market face placeholder keeps summary
+
+- **WHEN** market_face segment 提供 summary
+- **THEN** 正文 SHALL 使用 `[market_face:summary=<summary>]`

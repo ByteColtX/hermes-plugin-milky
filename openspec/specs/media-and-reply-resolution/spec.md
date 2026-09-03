@@ -28,8 +28,10 @@ Will wait 阶段 MUST 只保存分类后的 Milky 引用：`media_resource_refer
 
 ### Requirement: trigger 阶段才允许查询分类引用
 
-trigger 阶段 MAY 查询 `media_resource_references` 的临时 URL、forward 完整内容和缺失的
-reply 原消息；已有完整 reply segments 时不得无条件重复查询。`file_attachment_references`
+trigger 阶段 MAY 查询 `media_resource_references` 的临时 URL 和缺失的 reply 原消息；已有
+完整 reply segments 时不得无条件重复查询。`forward` 的 `forward_id` MUST 只作为规范化引用
+和正文 placeholder 保留，资源 resolver MUST NOT 自动调用 `get_forwarded_messages`；未来的
+显式 QQ Tool 可以在独立授权和参数校验后按 Agent 选择查询。`file_attachment_references`
 不得使用 `get_resource_temp_url`：group file SHALL 使用
 `get_group_file_download_url(group_id, file_id)`，private file SHALL 使用
 `get_private_file_download_url(user_id, file_id, file_hash, ...)`，其中私聊缺少必需
@@ -40,39 +42,65 @@ NOT 自行拼接 Hermes 本地路径或接管缓存和 SSRF 规则。
 #### Scenario: trigger 补全回复
 
 - **WHEN** detached batch 或当前消息包含 reply segment 且 trigger 已发生
-- **THEN** 系统 SHALL 尽力查询原消息的正文、作者和分类后的附件引用
-- **AND** 远端引用 SHALL 进入 Hermes 公共附件 materialization 边界
+- **THEN** 系统 SHALL 尽力查询缺失的原消息正文、作者和分类后的附件引用
+- **AND** 完整 inline reply SHALL 不触发重复的 `get_message`
 
 #### Scenario: 资源查询失败
 
-- **WHEN** Milky 资源或 reply 查询失败
-- **THEN** 正文 SHALL 保留
-- **AND** 结果 SHALL 保留引用 ID 或生成 `[图片不可用]`、`[文件不可用]`、`[语音转写失败]` 等可解释占位
-- **AND** metadata SHALL 记录不含凭证的错误类别
+- **WHEN** Milky 媒体或 reply 查询失败
+- **THEN** 正文 SHALL 保留已有文本和稳定 placeholder
+- **AND** 结果 SHALL 保留安全错误分类
+- **AND** SHALL 不把原始 URL、异常文本或完整响应写入 MessageEvent
+
+#### Scenario: forward 只保留引用 ID
+
+- **WHEN** detached batch 或当前消息包含 `forward` segment
+- **THEN** 正文 SHALL 保留 `[forward:forward_id=<forward_id>]`
+- **AND** 资源 resolver SHALL NOT 自动调用 `get_forwarded_messages`
+- **AND** forward SHALL 不因 trigger 自动展开为嵌套正文
 
 #### Scenario: trigger 补全 forward
 
 - **WHEN** detached batch 或当前消息包含 forward segment 且 trigger 已发生
-- **THEN** 系统 MAY 使用 `forward_id` 调用 `get_forwarded_messages`
-- **AND** 解析失败 SHALL 保留 forward ID 和可解释占位，不得把预览文本冒充完整转发内容
+- **THEN** 系统 SHALL 保留 forward_id 和 `[forward:forward_id=<forward_id>]` placeholder
+- **AND** 资源 resolver SHALL NOT 自动调用 `get_forwarded_messages`
+- **AND** 后续详情查询 SHALL 留给独立 QQ Tool
+
+#### Scenario: 文件下载链接仍使用场景专用 Action
+
+- **WHEN** trigger 处理带有 `file_id` 的 group 或 friend 文件引用
+- **THEN** group SHALL 调用 `get_group_file_download_url`，friend 在 hash 可用时 SHALL 调用
+  `get_private_file_download_url`
+- **AND** 没有已确认的 Hermes 文件入口时 SHALL 保留 `[file:file_id=<file_id>,file_name=<file_name>]`
 
 #### Scenario: trigger 获取群文件下载链接
 
-- **WHEN** trigger 处理带有 `file_id` 的 group `file_attachment_references`
-- **THEN** 系统 SHALL 调用 `get_group_file_download_url` 并传入当前 `group_id` 与 `file_id`
-- **AND** SHALL 将成功返回的 `download_url` 交给经过确认的 Hermes 文件入口；没有该入口时保留占位，不得把 URL 直接写入 MessageEvent.media_urls
+- **WHEN** trigger 处理带有 file_id 的 group 文件引用
+- **THEN** 系统 SHALL 调用 `get_group_file_download_url` 并传入当前 group_id 与 file_id
+- **AND** SHALL 只在存在已确认 Hermes 文件入口时继续处理 download_url
+- **AND** 不存在该入口时 SHALL 保留文件 placeholder，不得把 URL 写入 MessageEvent.media_urls
 
 #### Scenario: private file 缺少哈希
 
-- **WHEN** trigger 处理 private `file_attachment_references` 且缺少 `file_hash`
+- **WHEN** trigger 处理 private 文件引用且缺少 `file_hash`
 - **THEN** 系统 SHALL 不调用 `get_private_file_download_url`
-- **AND** SHALL 记录 `unsupported` 或 `malformed` 的安全诊断并生成 `[文件不可用]` 占位
+- **AND** SHALL 记录 `unsupported` 或 `malformed` 诊断并保留
+  `[file:file_id=<file_id>,file_name=<file_name>]`
 
 #### Scenario: file 没有确认的 Hermes 入口
 
-- **WHEN** trigger 已通过对应 Milky file Action 获得 `download_url`，但当前 Hermes 组合没有确认的文件入口
-- **THEN** 系统 SHALL 保留 `file_id`、文件名和 `[文件不可用]` 占位，并记录 `unsupported`
-- **AND** SHALL 不调用 `get_resource_temp_url`、不把 URL 当成本地路径、不执行未受控的插件侧直接下载
+- **WHEN** Milky file Action 返回 download_url 但当前 Hermes 没有确认文件入口
+- **THEN** 系统 SHALL 保留 file_id、文件名和
+  `[file:file_id=<file_id>,file_name=<file_name>]`
+- **AND** SHALL 记录 `unsupported`
+- **AND** SHALL NOT 把 URL 当成本地路径或执行插件侧下载
+
+#### Scenario: 引用查询失败
+
+- **WHEN** 媒体或 reply 查询失败
+- **THEN** 正文 SHALL 保留已生成的稳定 placeholder 和可用文本
+- **AND** 诊断 SHALL 保留安全错误分类
+- **AND** SHALL 不把原始 URL、异常文本或完整响应写入 MessageEvent
 
 ### Requirement: 资源安全限制由 Hermes 所有
 
@@ -98,17 +126,26 @@ NOT 自行拼接 Hermes 本地路径或接管缓存和 SSRF 规则。
 
 ### Requirement: Hermes materialization 必须在 MessageEvent 映射前完成
 
-resolver MUST 在 mapper 和 `handle_message()` 之前等待所有实际使用的异步 Hermes URL
-helper/materializer 完成。成功结果 SHALL 形成 `hermes_attachment_materializations`，
-包含 Hermes 可访问的本地路径、MIME 和 kind；只有这些本地路径才可写入
-`MessageEvent.media_urls`/`media_types`。未 materialize 的 Milky URL、`file_id` 或
-远端引用不得直接写入 `media_urls`。
+resolver MUST 在 mapper 和 `handle_message()` 之前等待 detached batch 中历史消息与当前消息实际使用的异步 Hermes URL helper/materializer 完成。成功结果 SHALL 形成 `hermes_attachment_materializations`，包含 Hermes 可访问的本地路径、MIME 和 kind；历史上下文中实际展示的图片和当前 trigger 消息的图片均属于本次 Hermes 媒体输入候选。只有这些本地路径才可写入 `MessageEvent.media_urls`/`media_types`；未 materialize 的 Milky URL、`file_id` 或远端引用不得直接写入 `media_urls`。
 
 #### Scenario: async URL helper
 
 - **WHEN** image 或 record 的临时 URL 交给 Hermes async URL helper
 - **THEN** resolver SHALL await helper 返回的本地路径后再构造 MessageEvent
 - **AND** MessageEvent SHALL 只包含该本地路径及对应 MIME，不得包含未解析 URL
+
+#### Scenario: 历史上下文图片与当前图片均完成 materialization
+
+- **WHEN** detached batch 的历史消息和当前 trigger 消息都包含图片，且 Hermes helper 为这些图片返回有效本地路径
+- **THEN** resolver SHALL 为历史消息和当前消息分别保留成功的图片 materialization
+- **AND** 这些图片 SHALL 都可供同一次 MessageEvent 的 `media_urls` 使用
+- **AND** 历史图片 SHALL 按其在 `channel_context` 中的顺序先于当前 trigger 图片
+
+#### Scenario: 重复图片路径只保留一次
+
+- **WHEN** 历史上下文图片和当前 trigger 图片的成功 materialization 使用相同本地路径
+- **THEN** 同一次 MessageEvent 的媒体输入 SHALL 只保留该本地路径一次
+- **AND** SHALL 保留该路径首次出现时的顺序和对应 MIME
 
 #### Scenario: 文件没有确认的 materialization 入口
 
@@ -121,6 +158,12 @@ helper/materializer 完成。成功结果 SHALL 形成 `hermes_attachment_materi
 - **WHEN** 引用存在但当前 Hermes helper 不支持该 kind 或安全校验失败
 - **THEN** mapper SHALL 保留结构化引用诊断并生成可解释占位
 - **AND** SHALL 不把远端 URL、file ID 或猜测的本地路径写入 MessageEvent.media_urls
+
+#### Scenario: 历史图片 materialization 失败
+
+- **WHEN** 历史消息中的图片 helper 不可用、下载失败或返回无效本地路径
+- **THEN** 该图片 SHALL 不进入 MessageEvent.media_urls
+- **AND** 对应历史 `channel_context` SHALL 保留既有图片失败占位和安全诊断
 
 ### Requirement: Hermes helper 的职责和能力边界必须显式
 

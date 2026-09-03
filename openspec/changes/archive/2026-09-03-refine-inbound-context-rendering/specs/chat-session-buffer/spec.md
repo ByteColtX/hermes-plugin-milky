@@ -62,6 +62,8 @@ body 中的回车和换行也 MUST 编码为字面量 `\\n`。上下文 MUST NOT
 - **AND** 非可信字符 SHALL 按规定编码而不改变记录边界
 - **AND** 原始 payload、认证信息和插件本地媒体路径 SHALL NOT 被直接拼接
 
+## ADDED Requirements
+
 ### Requirement: context-only 系统事件使用独立有界缓冲
 
 系统 MUST 为每个可识别 chat 维护独立、有界、可丢失的 context-only 事件缓冲。该缓冲与

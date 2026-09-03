@@ -14,6 +14,13 @@ routing MUST 对 direct、mention、mentionAll、quote、poke 和 allMessage 分
 `mentionHere`。对每条普通 `message_receive`，系统 SHALL 同时评估所有适用规则，不得按
 优先级短路；只要任一命中规则的动作是 `trigger`，Will SHALL 返回 `trigger`，否则 SHALL
 返回 `wait`。`allMessage` SHALL 匹配每条普通 `message_receive`，不再表示仅普通群消息。
+其中，`mention` 只有在消息明确提及当前 Bot 时才命中，`quote` 只有在遍历
+`message.segments` 的 `reply` segment 时确认 `reply.data.sender_id == self_id` 才命中；
+当前消息的 `message.sender_id` 只表示引用者，不参与判断。普通引用、他人提及和无法确认
+`reply.data.sender_id` 的信号 SHALL 不命中这两个规则；`reply.data.segments` 中的 mention
+不参与 quote 判断。
+对于明确提供给 Will 的 poke/nudge 观察，`poke` 只有在协议确认 Bot 是接收者时才命中；
+该观察仍受系统事件的 observe-only 边界约束。
 
 #### Scenario: 私聊优先于其他信号
 
@@ -23,9 +30,21 @@ routing MUST 对 direct、mention、mentionAll、quote、poke 和 allMessage 分
 
 #### Scenario: 群消息多信号并存
 
-- **WHEN** 群消息同时直接提及 Bot 并引用消息，且 mention 为 `wait`、quote 为 `trigger`
+- **WHEN** 群消息同时直接提及 Bot，并且某个 reply segment 的 `reply.data.sender_id == self_id`，且 mention 为 `wait`、quote 为 `trigger`
 - **THEN** Will SHALL 返回 `trigger`
 - **AND** SHALL 继续合并所有已命中的规则，不使用固定优先级覆盖 quote
+
+#### Scenario: 引用他人消息不命中 quote
+
+- **WHEN** 群消息的 reply segment 的 `reply.data.sender_id != self_id`，quote 为 `trigger`，且没有其他配置为 `trigger` 的命中规则
+- **THEN** Will SHALL 不把该引用视为 quote 命中
+- **AND** SHALL 按其余适用规则返回 `wait` 或 `trigger`
+
+#### Scenario: reply.data.sender_id 缺失时不猜测目标
+
+- **WHEN** 消息包含 reply segment，但 `reply.data.sender_id` 缺失、非法或无法确认
+- **THEN** Will SHALL 不命中 quote
+- **AND** SHALL 不从引用正文、显示名称或普通文本推断 Bot 目标
 
 #### Scenario: 普通群消息
 
@@ -55,9 +74,10 @@ routing MUST 对 direct、mention、mentionAll、quote、poke 和 allMessage 分
 
 ### Requirement: mention 类型映射保持独立
 
-群消息的 self 和 all mention MUST 分别使用 `mention` 和 `mentionAll` 配置；routing
-MUST NOT 再提供 `mentionHere` 配置，也不得通过正文、名称或普通 mention segment 推断
-here mention。
+群消息的 self 和 all mention MUST 分别使用 `mention` 和 `mentionAll` 配置；`mention` MUST
+只匹配 `mention.user_id` 等于当前 Bot `self_id` 的直接提及，MUST NOT 将他人提及、
+`mention_all` 或未知 mention 当作 self mention。routing MUST NOT 再提供 `mentionHere` 配置，
+也不得通过正文、名称或普通 mention segment 推断 here mention。
 
 #### Scenario: self mention 与全体提及使用独立动作
 
@@ -65,6 +85,12 @@ here mention。
   `trigger`、mentionAll 为 `wait`
 - **THEN** 第一条消息 SHALL 命中 mention 并参与 routing 合并
 - **AND** 第二条消息 SHALL 命中 mentionAll 并参与 routing 合并
+
+#### Scenario: 提及其他用户不命中 mention
+
+- **WHEN** 消息只提及其他用户，mention 为 `trigger`，且没有其他配置为 `trigger` 的命中规则
+- **THEN** Will SHALL 不命中 mention
+- **AND** SHALL 按 allMessage 和其他实际命中的规则返回结果
 
 #### Scenario: 全体提及
 
@@ -121,7 +147,31 @@ force 配置。关键词匹配 SHALL 使用规范化正文的直接子串匹配�
 
 ### Requirement: nudge 不绕过系统事件边界
 
-nudge/poke 的 routing 配置 MAY 提供 poke 决策，但 v0.1 的 friend_nudge 和 group_nudge MUST 默认 observe-only，且 SHALL NOT 直接创建普通 Hermes MessageEvent 或 Agent turn。
+nudge/poke 的 routing 配置 MAY 提供 poke 决策，但 `poke` SHALL 只接受协议明确确认 Bot 为
+接收者的 self-poke 信号。group nudge MUST 使用接收者与当前 Bot `self_id` 的一致性判断；
+friend nudge MUST 使用协议的自身接收方向字段判断，并排除 Bot 自身发送的 nudge。接收者字段
+缺失、非法或方向未知时 SHALL 不命中 poke。v0.1 的 friend_nudge 和 group_nudge MUST 继续
+observe-only，且 SHALL NOT 直接创建普通 Hermes MessageEvent 或 Agent turn。
+
+#### Scenario: self-poke 命中 poke routing
+
+- **WHEN** Will 收到一个协议确认 Bot 为接收者的 group 或 friend poke 观察，且 poke 配置为
+  `trigger`
+- **THEN** 该观察 SHALL 命中 poke routing
+- **AND** Will SHALL 返回 `trigger`
+- **AND** 系统 SHALL 仍不因该事件创建普通 Hermes MessageEvent 或独立 Agent turn
+
+#### Scenario: poke 他人不命中 poke routing
+
+- **WHEN** Bot 戳了其他用户，或其他用户在群中戳了非 Bot 接收者，且 poke 配置为 `trigger`
+- **THEN** 该观察 SHALL 不命中 poke routing
+- **AND** 系统 SHALL 保持 observe-only
+
+#### Scenario: poke 目标未知时安全等待
+
+- **WHEN** poke/nudge 缺少接收者、方向字段非法或无法确认 Bot 是否为接收者
+- **THEN** 该观察 SHALL 不命中 poke
+- **AND** SHALL 不从 display 文本、动作图片 URL 或其他未知字段推断目标
 
 #### Scenario: 观察 nudge
 

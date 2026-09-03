@@ -77,6 +77,26 @@ segment，没有独立的 `mention_here` segment；对普通 v1.3 输入，norma
 占位；unknown segment SHALL 不进入正文或关键词内容。reply/forward 的嵌套内容 SHALL 保留为
 引用数据，不得隐式并入当前消息正文。
 
+#### Scenario: 结构化 segment 生成稳定正文
+
+- **WHEN** friend 或 group 消息按顺序包含 text、mention、reply、image、file、forward、light_app
+  和 xml
+- **THEN** 规范化正文 SHALL 保持受支持内容的顺序和对应 placeholder
+- **AND** 策略特征 SHALL 独立报告 mention、reply 和 image
+- **AND** light_app SHALL 只展示完整 `meta` 根对象
+
+#### Scenario: 未知 segment 不进入正文
+
+- **WHEN** 消息包含未知 segment 以及合法文本
+- **THEN** 文本和已支持 placeholder SHALL 保持可处理
+- **AND** 未知 segment SHALL 只进入安全诊断和 raw
+
+#### Scenario: 只有未知内容
+
+- **WHEN** 消息只包含未知 segment 或空 segments
+- **THEN** 规范化 SHALL 记录明确丢弃原因
+- **AND** SHALL NOT 创建空的 Hermes MessageEvent
+
 #### Scenario: 复合 segment 生成策略特征
 
 - **WHEN** friend 或 group 消息按顺序包含 text、mention、mention_all、reply、image 和 unknown
