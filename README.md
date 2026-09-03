@@ -126,6 +126,18 @@ OpenAI-compatible `image_url` 输入的主模型上。前者选择原生图片�
 `Image routing: native`，且不再出现 `Analyzing image`、`Processing image with vision model`
 或 `Image analysis completed`。如果接口不支持原生图片输入，请移除这两项并使用文本视觉路径。
 
+### 记忆后端推荐
+
+建议使用 Hermes 的 `holographic` 记忆后端：
+
+```bash
+hermes config set memory.provider holographic
+```
+
+它适合本地部署的 Milky 机器人：数据保存在本地，不依赖付费云服务，资源占用轻量。除了保留
+对话上下文，还能围绕特定实体进行回忆，例如聚合并召回关于某个人或某件物品的事实、偏好和
+关系，也能记住对话中形成的梗，让长期交流更连贯。修改后重启 Gateway 使配置生效。
+
 ### Milky 插件配置
 
 #### 环境变量
