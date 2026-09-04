@@ -8,7 +8,8 @@ skills-only 集成初始化到 `.agents/skills/openspec-*`，默认工作流为
 ## 当前状态
 
 运行时适配器已经实现；当前代码、测试和文档覆盖 Milky HTTP Action、SSE、入站
-pipeline、Will、资源边界、出站媒体/文件以及固定 QQ ToolSpec。主规范位于
+pipeline、Will、资源边界、出站媒体/文件、固定 QQ ToolSpec 以及可选的 Milky system prompt
+section。主规范位于
 `openspec/specs/`，未归档的增量 change 位于 `openspec/changes/`。
 
 当前未归档 change 的 proposal、design、delta spec 和 tasks 是各项变更的规划与

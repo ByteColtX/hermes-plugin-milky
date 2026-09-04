@@ -362,6 +362,10 @@ MEDIA:<local_path>
 例如 `MEDIA:~/path/to/clip.mp4`。显式调用 Hermes `send_message` 时，把同一指令放在
 `message` 参数中。图片、语音和视频使用 Milky native segment，文档使用独立 file upload。
 
+如果无需回复，当前平台指引要求只返回 `NO_REPLY`，不附加其他内容；该约定由系统抑制消息投递，
+Milky plugin 不单独解析它。`[SPLIT]` 和 `[SILENT]` 仍属于未完成的
+`add-split-outbound-delivery` change，不是当前已交付的发送能力。
+
 > [!CAUTION]
 > `MEDIA:` 会读取本地文件并上传；当前只限制常规、非空且不超过 8 MiB 的文件，没有固定的
 > 安全目录隔离。请只在受控会话中启用相关能力。
@@ -419,7 +423,7 @@ malformed 和 unsupported 会保持明确失败分类。缺少消息序号时不
 
 支持 `register_system_prompt_section` 的 Hermes 宿主会在 `after_memory` 登记
 `hermes-plugin-milky.qq-platform-guidance`，并在连接完成后使用已确认的 QQ UID 和昵称渲染
-媒体、CQ-compatible 和 bundled skill 指引。旧宿主仍可完成平台注册，但只获得首句提示。
+媒体、CQ-compatible、无回复和 bundled skill 指引。旧宿主仍可完成平台注册，但只获得首句提示。
 
 详细的稳定模块边界见 [ARCHITECTURE.md](ARCHITECTURE.md)；可观察行为、测试要求和进行中的
 规范见 [openspec/changes/](openspec/changes/)。
