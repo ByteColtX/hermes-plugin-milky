@@ -1,0 +1,12 @@
+{
+  "event_type": "message_recall",
+  "time": 1700000064,
+  "self_id": 900000001,
+  "data": {
+    "message_scene": "friend",
+    "peer_id": 800000001,
+    "message_seq": 2002,
+    "sender_id": 800000001,
+    "operator_id": 900000001
+  }
+}

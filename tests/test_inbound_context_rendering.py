@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from inbound.system_events import parse_context_event
+from inbound.system_events import is_context_event, parse_context_event
 from milky.parser import parse_event
 from milky.resources import ResourceResolver
 from session import SystemContextBuffer, render_message_record
@@ -223,6 +223,66 @@ def test_system_events_render_only_confirmed_fields() -> None:
     assert malformed.value is None
 
 
+def test_message_recall_maps_scene_operator_and_filters_extensions() -> None:
+    """撤回事件只使用已确认字段，并按场景生成隔离 chat key。"""
+
+    cases = (
+        (
+            "events/system.message_recall.group.self.json",
+            "group:700000001",
+            "uid 800000002 撤回了消息 msg_seq 1001",
+        ),
+        (
+            "events/system.message_recall.json",
+            "group:700000001",
+            "管理员 uid 900000001 撤回了 uid 800000002 的消息 msg_seq 1000",
+        ),
+        (
+            "events/system.message_recall.friend.json",
+            "dm:800000001",
+            "uid 800000001 撤回了消息 msg_seq 2001",
+        ),
+        (
+            "events/system.message_recall.friend.operator.json",
+            "dm:800000001",
+            "uid 900000001 撤回了 uid 800000001 的消息 msg_seq 2002",
+        ),
+    )
+
+    assert is_context_event("message_recall") is True
+    for path, expected_chat_key, expected_body in cases:
+        event = load_fixture(path)
+        result = parse_context_event(parse_event(event))
+
+        assert result.classification == "accepted"
+        assert result.value is not None
+        assert result.value.chat_key == expected_chat_key
+        assert result.value.body == expected_body
+        assert "display_suffix" not in result.value.body
+        assert "display_action" not in result.value.body
+
+
+def test_message_recall_invalid_scene_and_ids_fail_closed() -> None:
+    """撤回事件的非法场景和 ID 不得创建上下文记录。"""
+
+    malformed_paths = (
+        "events/system.message_recall.malformed.missing_sender.json",
+        "events/system.message_recall.invalid_id.json",
+    )
+    for path in malformed_paths:
+        result = parse_context_event(parse_event(load_fixture(path)))
+        assert result.classification == "malformed"
+        assert result.value is None
+
+    for path in (
+        "events/system.message_recall.temp.json",
+        "events/system.message_recall.unknown_scene.json",
+    ):
+        result = parse_context_event(parse_event(load_fixture(path)))
+        assert result.classification == "unsupported"
+        assert result.value is None
+
+
 def test_nudge_target_fixture_only_marks_protocol_confirmed_self_pokes() -> None:
     """group 用 receiver_id，friend 用明确方向字段，未知方向安全降级。"""
 
@@ -351,6 +411,119 @@ def test_pipeline_merges_context_events_by_ingress_and_does_not_create_turn() ->
     assert "触发消息" in event.text
     assert "触发消息" not in event.channel_context
     assert pipeline.reply_costs == 1
+
+
+def test_pipeline_merges_recall_context_once_and_keeps_scene_namespaces_isolated() -> None:
+    """撤回事件应和普通历史按 ingress 合并，并只注入对应 chat 一次。"""
+
+    from tests.test_hermes_pipeline import FakeHermes, FakeResolver, make_pipeline
+    from will import RoutingConfig
+
+    async def scenario():
+        hermes = FakeHermes()
+        pipeline = make_pipeline(
+            hermes,
+            FakeResolver(),
+            routing=RoutingConfig(direct="trigger", mention="trigger", all_message="wait"),
+        )
+        history = load_fixture("events/message_receive.group.all_segments.json")
+        history["data"]["message_seq"] = 5101
+        history["data"]["segments"] = [{"type": "text", "data": {"text": "历史消息"}}]
+        group_trigger = load_fixture("events/message_receive.group.all_segments.json")
+        group_trigger["data"]["message_seq"] = 5102
+        group_trigger["data"]["segments"] = [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "text", "data": {"text": "群聊触发"}},
+        ]
+        group_second_trigger = load_fixture("events/message_receive.group.all_segments.json")
+        group_second_trigger["data"]["message_seq"] = 5103
+        group_second_trigger["data"]["segments"] = [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "text", "data": {"text": "群聊第二次触发"}},
+        ]
+        friend_trigger = load_fixture("events/message_receive.friend.json")
+        friend_trigger["data"]["message_seq"] = 5104
+        friend_trigger["data"]["segments"] = [{"type": "text", "data": {"text": "好友触发"}}]
+
+        assert (await pipeline.handle_event(history)).classification == "wait"
+        assert (
+            await pipeline.handle_event(
+                load_fixture("events/system.message_recall.group.self.json")
+            )
+        ).classification == "observe_only"
+        assert (
+            await pipeline.handle_event(load_fixture("events/system.group_nudge.json"))
+        ).classification == "observe_only"
+        assert (
+            await pipeline.handle_event(load_fixture("events/system.message_recall.friend.json"))
+        ).classification == "observe_only"
+        assert (await pipeline.handle_event(group_trigger)).classification == "trigger"
+        assert (await pipeline.handle_event(group_second_trigger)).classification == "trigger"
+        assert (await pipeline.handle_event(friend_trigger)).classification == "trigger"
+        await pipeline.wait_idle()
+        return hermes
+
+    hermes = asyncio.run(scenario())
+
+    group_events = [event for event in hermes.events if event.source.chat_id == "group:700000001"]
+    friend_events = [event for event in hermes.events if event.source.chat_id == "dm:800000001"]
+    assert len(group_events) == 2
+    assert len(friend_events) == 1
+    assert group_events[0].channel_context == (
+        "<合成名片 uid 800000002 msg_id 5101> 历史消息\n"
+        "<event message_recall> uid 800000002 撤回了消息 msg_seq 1001\n"
+        "<event group_nudge> uid 800000002 戳了 uid 900000001"
+    )
+    assert group_events[1].channel_context is None
+    assert friend_events[0].channel_context == (
+        "<event message_recall> uid 800000001 撤回了消息 msg_seq 2001"
+    )
+
+
+def test_pipeline_recall_context_obeys_bounded_fifo_and_drains_once() -> None:
+    """撤回事件复用独立有界 FIFO，溢出保留最新记录且不重复注入。"""
+
+    from tests.test_hermes_pipeline import FakeHermes, FakeResolver, make_pipeline
+    from will import RoutingConfig
+
+    async def scenario():
+        hermes = FakeHermes()
+        pipeline = make_pipeline(
+            hermes,
+            FakeResolver(),
+            routing=RoutingConfig(direct="trigger", mention="trigger", all_message="wait"),
+            buffer_size=2,
+        )
+        for message_seq in (3001, 3002, 3003):
+            recall = load_fixture("events/system.message_recall.group.self.json")
+            recall["data"]["message_seq"] = message_seq
+            assert (await pipeline.handle_event(recall)).classification == "observe_only"
+        trigger = load_fixture("events/message_receive.group.all_segments.json")
+        trigger["data"]["message_seq"] = 5201
+        trigger["data"]["segments"] = [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "text", "data": {"text": "触发"}},
+        ]
+        assert (await pipeline.handle_event(trigger)).classification == "trigger"
+        second = load_fixture("events/message_receive.group.all_segments.json")
+        second["data"]["message_seq"] = 5202
+        second["data"]["segments"] = [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "text", "data": {"text": "再次触发"}},
+        ]
+        assert (await pipeline.handle_event(second)).classification == "trigger"
+        await pipeline.wait_idle()
+        return pipeline, hermes
+
+    pipeline, hermes = asyncio.run(scenario())
+
+    assert len(hermes.events) == 2
+    assert hermes.events[0].channel_context == (
+        "<event message_recall> uid 800000002 撤回了消息 msg_seq 3002\n"
+        "<event message_recall> uid 800000002 撤回了消息 msg_seq 3003"
+    )
+    assert hermes.events[1].channel_context is None
+    assert pipeline._system_context.diagnostics[-1].reason == "system_context_overflow"
 
 
 def test_complete_reply_uses_reply_header_without_success_placeholder() -> None:

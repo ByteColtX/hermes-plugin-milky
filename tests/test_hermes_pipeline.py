@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gates import GateRegistry
-from inbound.pipeline import InboundPipeline
+from inbound.pipeline import InboundPipeline, PipelineResult
 from milky.resources import (
     HermesAttachmentMaterialization,
     ResolvedMessage,
@@ -479,6 +479,58 @@ def test_duplicate_gate_deny_temp_and_system_event_stop_before_resolver_or_herme
     assert calls == ["1001"]
     assert [event.message_id for event in events] == ["1001"]
     assert observed == ["message_recall"]
+
+
+def test_message_recall_stays_observe_only_without_normal_pipeline_side_effects() -> None:
+    """撤回事件只登记上下文，不触发 canonical、Will、资源或 Hermes turn。"""
+
+    async def scenario() -> tuple[
+        PipelineResult, FakeResolver, FakeHermes, RecordingWill, InboundPipeline
+    ]:
+        hermes = FakeHermes()
+        resolver = FakeResolver()
+        will = RecordingWill()
+        pipeline = make_pipeline(hermes, resolver).with_will_engine(will)
+        result = await pipeline.handle_event(load_fixture("events/system.message_recall.json"))
+        await pipeline.wait_idle()
+        return result, resolver, hermes, will, pipeline
+
+    result, resolver, hermes, will, pipeline = asyncio.run(scenario())
+
+    assert result.classification == "observe_only"
+    assert resolver.calls == []
+    assert hermes.events == []
+    assert will.inputs == []
+    assert pipeline.reply_costs == 0
+    assert pipeline._system_context.size("group:700000001") == 1
+
+
+def test_recall_context_failure_is_recorded_without_readding_or_creating_turn() -> None:
+    """撤回上下文交接失败时只记录安全失败，不能回填批次或重复执行。"""
+
+    async def scenario() -> tuple[InboundPipeline, FakeHermes]:
+        hermes = FakeHermes()
+        hermes.handle_message = _raise_submission  # type: ignore[method-assign]
+        pipeline = make_pipeline(hermes, FakeResolver())
+        assert (
+            await pipeline.handle_event(load_fixture("events/system.message_recall.json"))
+        ).classification == "observe_only"
+        trigger = load_fixture("events/message_receive.group.all_segments.json")
+        trigger["data"]["message_seq"] = 1010
+        trigger["data"]["segments"] = [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "text", "data": {"text": "交接触发"}},
+        ]
+        assert (await pipeline.handle_event(trigger)).classification == "trigger"
+        await pipeline.wait_idle()
+        return pipeline, hermes
+
+    pipeline, hermes = asyncio.run(scenario())
+
+    assert hermes.events == []
+    assert pipeline._system_context.snapshot("group:700000001") == ()
+    assert pipeline._buffer.snapshot("group:700000001") == ()
+    assert pipeline._buffer.diagnostics[-1].reason == "detached_handoff_failed"
 
 
 def test_self_poke_remains_observe_only_without_will_or_hermes_turn() -> None:

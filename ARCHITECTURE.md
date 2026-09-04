@@ -170,11 +170,30 @@ TTL map 的检查和插入必须原子完成，且早于资源补全、Will 和 
 
 ### 系统事件
 
-只有 `message_receive` 进入普通消息路径。recall、request、notice、lifecycle 和未知事件默认 observe-only，不伪装成普通消息。
+只有 `message_receive` 进入普通消息路径。Milky SSE `GET /event` 收到的
+`message_recall`、request、notice、lifecycle 和未知事件默认 observe-only，不伪装成普通消息。
 
-`group_nudge`、`friend_nudge`、`group_member_increase`、`group_member_decrease` 可写入每 chat 独立、有界、可丢失的 system context FIFO；不创建 canonical、dedup、Gate、Will、reply cost 或独立 Hermes turn。group nudge 只有 `receiver_id == self_id` 才产生 self-poke，friend nudge 只有明确的自身接收方向且无自身发送冲突才产生 self-poke；该特征仍不改变 nudge 的 observe-only 边界。它们与普通 wait 消息共享 ingress sequence，在下一次同 chat trigger 中按序合并并原子清除。缺少 chat key/必要字段时记录 `malformed`/`unsupported`；其他事件不自动发送或批准。
+`message_recall` 只有在 `message_scene` 为 `friend` 或 `group`，且 `peer_id`、`message_seq`、
+`sender_id` 是已确认的非负整数时，才写入对应 chat 的 system context FIFO：friend 使用
+`dm:<peer_id>`，group 使用 `group:<peer_id>`。`operator_id` 缺失或为 null 时，body 为
+`uid <sender_id> 撤回了消息 msg_seq <message_seq>`；群聊存在操作人时为
+`管理员 uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`；好友存在操作人时
+使用 `uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`，不推断管理员角色。
+事件类型前缀由 renderer 统一添加为 `<event message_recall>`。
 
-正文使用固定格式：`group_nudge` 为 `uid <sender_id> 戳了 uid <receiver_id>`，`friend_nudge` 为 `uid <user_id> 戳了一下`；成员加入/退出使用“加入了群聊”或“退出了群聊”，并附已确认的 JSON Details。缺少 `operator_id` 或 `invitor_id` 时省略，不补空字符串；display 文本、动作图片 URL 和未确认扩展字段不进入正文。
+`group_nudge`、`friend_nudge`、`group_member_increase`、`group_member_decrease` 和合法
+`message_recall` 可写入每 chat 独立、有界、可丢失的 system context FIFO；不创建 canonical、
+dedup、Gate、Will、reply cost 或独立 Hermes turn。group nudge 只有 `receiver_id == self_id` 才产生
+self-poke，friend nudge 只有明确的自身接收方向且无自身发送冲突才产生 self-poke；该特征仍不改变
+nudge 的 observe-only 边界。它们与普通 wait 消息共享 ingress sequence，在下一次同 chat trigger
+中按序合并并原子清除。缺少 chat key、撤回必要字段或撤回场景非法时记录 `malformed`/`unsupported`，
+不创建上下文；其他事件不自动发送或批准。
+
+正文使用固定格式：`group_nudge` 为 `uid <sender_id> 戳了 uid <receiver_id>`，`friend_nudge` 为
+`uid <user_id> 戳了一下`；成员加入/退出使用“加入了群聊”或“退出了群聊”，并附已确认的 JSON
+Details。缺少 `operator_id` 或 `invitor_id` 时省略，不补空字符串；撤回事件只展示撤回元数据，
+不调用 `get_message`，不恢复被撤回消息正文，也不把 `display_suffix`、动作图片 URL、timestamp、
+raw payload 或未确认扩展字段放入上下文。
 
 ## 7. Segment、资源与 Hermes 映射
 

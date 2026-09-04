@@ -3,7 +3,7 @@
 这些 fixture 是 T03 的脱敏协议输入，不是 live 响应快照。数字身份、消息序号、资源 ID、文件名和正文均为合成值，内容为中性测试内容。
 
 - `actions/` 保存带有 `status`、`retcode` 和 Action 专属 `data` 层级的 JSON 响应，以及脱敏的多媒体请求形状。
-- `events/` 保存单个外层事件 JSON；其中 `message_receive` 覆盖 friend、group、temp 和未知 segment。
+- `events/` 保存单个外层事件 JSON；其中 `message_receive` 覆盖 friend、group、temp 和未知 segment，`message_recall` 覆盖 friend/group、可选 `operator_id` 和非法字段边界。
 - `sse/` 保存原始 SSE 帧，用来区分外层 `milky_event` 和 data 内的业务 `event_type`。
 - `expected/` 保存 fixture 的预期分类和 T04 parser 使用的边界断言。
 - `multimedia_inputs.py` 和新增 upload envelope 只包含脱敏的 URI 形状、文件名和远端结果；本地媒体字节由测试临时生成，不提交完整资源。

@@ -17,6 +17,7 @@ _CONTEXT_EVENT_TYPES = frozenset(
         "friend_nudge",
         "group_member_increase",
         "group_member_decrease",
+        "message_recall",
     }
 )
 _MISSING = object()
@@ -64,12 +65,31 @@ def parse_context_event(event: Event) -> ContextEventResult:
             details = _details(event.data, ("group_id", "user_id", "operator_id", "invitor_id"))
             chat_key = normalize_chat_key("group", group_id)
             body = f"uid {user_id} 加入了群聊 Details: {_dump_details(details)}"
-        else:
+        elif event.event_type == "group_member_decrease":
             group_id = _required_id(event.data, "group_id")
             user_id = _required_id(event.data, "user_id")
             details = _details(event.data, ("group_id", "user_id", "operator_id"))
             chat_key = normalize_chat_key("group", group_id)
             body = f"uid {user_id} 退出了群聊 Details: {_dump_details(details)}"
+        else:
+            message_scene = event.data.get("message_scene", _MISSING)
+            if message_scene is _MISSING or not isinstance(message_scene, str):
+                raise TypeError("message_scene is invalid")
+            if message_scene not in {"friend", "group"}:
+                return ContextEventResult("unsupported", None, "message_scene is unsupported")
+            peer_id = _required_id(event.data, "peer_id")
+            message_seq = _required_id(event.data, "message_seq")
+            sender_id = _required_id(event.data, "sender_id")
+            operator_id = _optional_id(event.data, "operator_id")
+            chat_key = normalize_chat_key(message_scene, peer_id)
+            if operator_id is None:
+                body = f"uid {sender_id} 撤回了消息 msg_seq {message_seq}"
+            elif message_scene == "group":
+                body = (
+                    f"管理员 uid {operator_id} 撤回了 uid {sender_id} 的消息 msg_seq {message_seq}"
+                )
+            else:
+                body = f"uid {operator_id} 撤回了 uid {sender_id} 的消息 msg_seq {message_seq}"
     except (CanonicalError, TypeError, ValueError) as error:
         return ContextEventResult("malformed", None, _safe_reason(error))
 
@@ -97,6 +117,15 @@ def _required_id(data: Mapping[str, Any], field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{field_name} is invalid")
     return value
+
+
+def _optional_id(data: Mapping[str, Any], field_name: str) -> int | None:
+    """读取允许缺失或为 null 的非负 ID。"""
+
+    value = data.get(field_name, _MISSING)
+    if value is _MISSING or value is None:
+        return None
+    return _required_id(data, field_name)
 
 
 def _required_bool(data: Mapping[str, Any], field_name: str) -> bool:

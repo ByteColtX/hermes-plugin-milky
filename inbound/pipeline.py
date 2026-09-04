@@ -153,8 +153,8 @@ class InboundPipeline:
             context_result = parse_context_event(parsed_event)
             if context_result.value is not None:
                 await self._store_context_event(context_result.value)
-            elif context_result.classification == "malformed":
-                self._record("system_context:malformed")
+            elif context_result.classification in {"malformed", "unsupported"}:
+                self._record(f"system_context:{context_result.classification}")
             log_event(
                 logger,
                 "milky_inbound_observe_only",

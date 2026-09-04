@@ -346,12 +346,20 @@ cron 每次创建并关闭临时 Milky client，目前只支持无附件文本�
 
 ### 消息与媒体
 
-入站只处理 `message_receive`：
+普通入站只处理 `message_receive`：
 
 - friend 和 group 消息进入普通 Agent 流程；
 - `temp` 会话直接忽略；
-- recall、request、notice、lifecycle 和未知事件默认只观察，少数系统事件可作为上下文；
+- Milky SSE `GET /event` 中的 `message_recall`、request、notice、lifecycle 和未知事件默认只观察，少数系统事件可作为上下文；
 - 同一 chat 按顺序处理，`wait` 消息进入有界历史，`trigger` 时再交给 Hermes。
+
+`message_recall` 的上下文行为如下：
+
+- 只有字段完整且 `message_scene` 为 `friend` 或 `group` 时才登记；friend 写入 `dm:<peer_id>`，group 写入 `group:<peer_id>`，非法场景或 ID 只记录安全诊断；
+- 合法事件进入对应 chat 的有界 system context FIFO，在下一次同 chat `trigger` 的 `channel_context` 中按 ingress 顺序出现一次，格式为 `<event message_recall> ...`；
+- 无 `operator_id` 时显示 `uid <sender_id> 撤回了消息 msg_seq <message_seq>`；群聊有操作人时显示 `管理员 uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`，好友有操作人时不添加管理员角色；
+- 撤回事件不创建普通 Agent turn、不发送回复、不调用主动撤回工具，也不调用 `get_message` 或下载资源；插件只展示撤回元数据，不承诺恢复被撤回消息正文；
+- 该路径仍是 observe-only，不经过普通消息的 Gate/Will，也不扣 reply cost。fixture 和 fake host 测试不代表真实 Milky 服务端能力已被集成验证。
 
 Agent 发送本地媒体时，在回复中写入：
 
