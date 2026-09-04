@@ -12,16 +12,25 @@ if _PLUGIN_ROOT not in sys.path:
 
 from session.identity import BotIdentitySnapshot
 
-PLATFORM_HINT = "You are communicating via Hermes's Milky QQ platform."
-PLATFORM_GUIDANCE = (
-    "You can send files natively: write MEDIA:/absolute/path/to/file in your response. "
-    "If no reply is needed, return only NO_REPLY with no extra content. NO_REPLY means no output; the system will suppress message delivery. "
-    "For Hermes `send_message`, put the same directive in its `message` argument; images, audio, video, and documents use Milky's native media/file upload. "
-    "MEDIA: is separate from the fixed QQ ToolSpec list. "
-    "Use [CQ:at,qq=<uid>] to mention users and [CQ:reply,id=<msg_id>] to quote to messages; use only real IDs from the current message or channel context. "
-    "Never send a raw local path as chat text or report media as unsupported before the send entry point fails. "
-    "Load `hermes-plugin-milky:qq-reference` for CQ details or `hermes-plugin-milky:qq-tools` for QQ tools."
-)
+PLATFORM_HINT = "You are chatting on QQ through Hermes's Milky platform."
+
+PLATFORM_GUIDANCE = """
+- You can send files natively: write MEDIA:/absolute/path/to/file in your response.
+- Images, audio, video, and documents all go through Milky's native media/file upload — `MEDIA:` is separate from the fixed QQ ToolSpec list.
+- A raw local path exits as plain text, not media — never report media as unsupported before the send actually fails at the entry point.
+
+- Reply with only `[SILENT]` to suppress the reply entirely — no message is sent outbound.
+- Place exactly `[SPLIT]` alone on its own line between text sections to split the reply into up to 3 sequential messages; the marker line is stripped on outbound delivery.
+- `[SPLIT]` is case-sensitive, and empty sections are dropped.
+
+- Mention a user with `[CQ:at,qq=<uid>]`.
+- Quote a message with `[CQ:reply,id=<msg_id>]`.
+- Only use real IDs drawn from the current message or channel context.
+
+- CQ code details: view skill `hermes-plugin-milky:qq-reference`.
+- QQ tool list: view skill `hermes-plugin-milky:qq-tools`.
+"""
+
 MILKY_PROMPT_SECTION_ID = "hermes-plugin-milky.qq-platform-guidance"
 
 
@@ -32,7 +41,7 @@ def _render_platform_guidance(identity_snapshot: BotIdentitySnapshot, _session_i
     if identity is None:
         return ""
     return (
-        f"Your QQ uid is {identity.self_id}, and your nickname is {identity.nickname}.\n"
+        f"- Your QQ uid is {identity.self_id}, and your nickname is {identity.nickname}.\n"
         f"{PLATFORM_GUIDANCE}"
     )
 

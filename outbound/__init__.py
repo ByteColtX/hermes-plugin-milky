@@ -33,6 +33,7 @@ from .sender import (
     OutboundTarget,
     parse_outbound_target,
 )
+from .splitting import split_outbound_text
 from .standalone import make_standalone_sender, standalone_send
 
 __all__ = [
@@ -62,6 +63,7 @@ __all__ = [
     "prepare_materialization",
     "record_segment",
     "reply_segment",
+    "split_outbound_text",
     "standalone_send",
     "text_segment",
     "validate_materialization",

@@ -278,15 +278,27 @@ SSE receive loop 必须处理 `event:`、多行 `data:`、空行边界、断线�
 
 - `group:<id>` 只能调用 `send_group_message`；`dm:<id>` 只能调用 `send_private_message`；非法和 temp
   目标在网络访问前失败，不回退默认频道或另一种场景；
-- formatter 生成 Milky segment，空白消息在网络访问前拒绝，长文本由 `chunking.py` 拆分；
+- formatter 生成 Milky segment，空白消息在网络访问前拒绝，未使用 `[SPLIT]` 的长文本由
+  `chunking.py` 拆分；
 - 图片、语音、视频分别进入 `image`、`record`、`video` native segment；文档使用独立的
   `upload_group_file` / `upload_private_file`，不塞入 message segment；未实现的编辑、撤回、reaction
   等能力返回 `unsupported`，不报告假成功。
+
+普通出站文本只有在整行严格等于 `[SPLIT]`（区分大小写、无前后空白）时才启用分段。插件删除
+标记行及其分隔边界，过滤空段，最多形成三个逻辑文本单元；超过三段时把尾部按原顺序合并
+到第三段。随后每个逻辑单元仍使用既有长度边界分块；如果物理文本消息因此超过三条，插件
+在首个消息 Action 前整体返回本地边界错误，不截断、不部分发送。没有有效标记的普通长文本
+不受三条上限影响。
 
 Agent 的本地附件通过 Hermes 的 `MEDIA:<local_path>` 指令进入上述入口：普通回复把指令放在
 最终回复中，显式调用通用 `send_message` 时把指令放在 `message` 参数中。Hermes 按扩展名调用
 `send_image_file`、`send_voice`、`send_video` 或 `send_document`。该指令是平台发送约定，不是
 23 个显式 QQ ToolSpec；Agent 不应因为 ToolSpec 列表没有 `send_video` 而判断 Milky 没有媒体发送能力。
+
+Hermes 从同一 Agent 回复提取的 `MEDIA:` 附件不属于插件文本分段批次。插件先按顺序完成所有
+文本单元，再由 Hermes 按提取顺序调用图片、语音、视频 native 入口或独立文件 upload；当前
+不支持文本段与附件交错，插件不从原始正文中的 `MEDIA:` 位置推断顺序。需要交错投递时必须
+由 Hermes core 提供有序文本/附件交接契约。
 
 出站收到本地路径、`Path` 或 `file://localhost` 时，只读取一次常规、非空且不超过 8 MiB 的文件并
 生成 `base64://`；合法 `http(s)://` 和显式 `base64://` 原样保留，不下载或解码。文件上传携带
@@ -309,6 +321,9 @@ materialization。CQ sticker 的 `file://localhost`、`file:///...` 和本地路
 未确认映射、未知类型或参数错误按 text fallback 原样发送，但 fallback 不代表 native 语义
 执行。`uid` 和 `msg_id` 只能来自当前消息或 `channel_context` 的真实 header；不实现 CQ 入站、
 OneBot Action、OneBot echo 或 WebSocket RPC。
+
+`[SILENT]` 是 Hermes core 的无需回复控制标记。Milky plugin 不解析、删除或根据它调用 Action；
+仅接收 Hermes core 已决定交付的文本或独立附件。
 
 ### ToolSpec
 
@@ -392,7 +407,7 @@ uv run ruff check .
 uv run ruff format --check .
 uv build
 git diff --check
-npx --yes @fission-ai/openspec@1.11.0 validate --changes --strict
+npx --yes @fission-ai/openspec@1.12.0 validate --changes --strict
 ```
 
 测试优先使用 fake Hermes、fake Milky transport、SSE fixture 和脱敏合成数据，覆盖协议与错误分类、
@@ -405,7 +420,7 @@ ToolSpec schema/显式调用/最小响应校验及日志脱敏。
 ### 当前状态与未决边界
 
 当前未归档 change 有两项：`migrate-platform-hint-to-system-prompt` 的实现与自动化证据已完成，
-但尚未归档；`add-split-outbound-delivery` 仍处于规划阶段，`tasks.md` 尚未勾选实现任务。
+但尚未归档；`add-split-outbound-delivery` 的实现与自动化证据已完成，但尚未归档。
 已有主规范继续覆盖入站 context/图片合并、出站附件/native media/文件上传、固定 QQ ToolSpec
 和安全日志边界；当前工具清单为 23 项，完成项以各 change 的 `tasks.md` 和 evidence ledger
 为准。未归档 delta 不代表其规划目标已经成为当前能力。

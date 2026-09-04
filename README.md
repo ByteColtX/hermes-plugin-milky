@@ -362,9 +362,16 @@ MEDIA:<local_path>
 例如 `MEDIA:~/path/to/clip.mp4`。显式调用 Hermes `send_message` 时，把同一指令放在
 `message` 参数中。图片、语音和视频使用 Milky native segment，文档使用独立 file upload。
 
-如果无需回复，当前平台指引要求只返回 `NO_REPLY`，不附加其他内容；该约定由系统抑制消息投递，
-Milky plugin 不单独解析它。`[SPLIT]` 和 `[SILENT]` 仍属于未完成的
-`add-split-outbound-delivery` change，不是当前已交付的发送能力。
+如果无需回复，只返回 `[SILENT]`，不附加其他内容；该标记由 Hermes core 抑制消息投递，Milky
+plugin 不单独解析它。
+
+需要模拟自然聊天节奏时，可把区分大小写的 `[SPLIT]` 单独放在一行。标记行会被删除，空段不
+发送，文本按原顺序最多发送三条；超过三段时尾部合并到第三段。每个文本单元仍遵守既有长度
+边界，若实际文本消息会超过三条，则在网络访问前整体拒绝。普通长文本没有有效 `[SPLIT]` 时
+继续使用原有长度分块。
+
+回复同时包含文本分段和 `MEDIA:` 附件时，Hermes 先投递全部文本，再按提取顺序投递图片、语音、
+视频和文档；当前不支持文本段与附件交错，`[SPLIT]` 不改变 `MEDIA:` 的独立交接。
 
 > [!CAUTION]
 > `MEDIA:` 会读取本地文件并上传；当前只限制常规、非空且不超过 8 MiB 的文件，没有固定的

@@ -624,7 +624,7 @@ def test_root_section_renders_identity_published_by_ready_adapter(
             await stream.started.wait()
             rendered = callback({"self_id": 101, "nickname": "untrusted"})
             assert rendered.startswith(
-                "Your QQ uid is 900000001, and your nickname is 合成机器人.\n"
+                "- Your QQ uid is 900000001, and your nickname is 合成机器人.\n"
             )
             await adapter.disconnect()
 

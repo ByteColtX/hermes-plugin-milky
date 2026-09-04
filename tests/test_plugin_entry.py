@@ -133,7 +133,7 @@ def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) ->
         assert all(skill_path.is_file() for _, skill_path in context.skills)
 
         hint = context.platforms[0]["platform_hint"]
-        assert hint == "You are communicating via Hermes's Milky QQ platform."
+        assert hint == "You are chatting on QQ through Hermes's Milky platform."
         assert hint == entry.PLATFORM_HINT
         assert len(context.system_prompt_sections) == 1
         section = context.system_prompt_sections[0]
@@ -142,6 +142,12 @@ def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) ->
         assert callable(section["content"])
         assert section["content"]({}) == ""
         assert entry.PLATFORM_GUIDANCE not in hint
+        assert "NO_REPLY" not in entry.PLATFORM_GUIDANCE
+        assert "[SILENT]" in entry.PLATFORM_GUIDANCE
+        assert "[SPLIT]" in entry.PLATFORM_GUIDANCE
+        assert "up to 3 sequential messages" in entry.PLATFORM_GUIDANCE
+        assert "marker line is stripped on outbound delivery" in entry.PLATFORM_GUIDANCE
+        assert "no message is sent outbound" in entry.PLATFORM_GUIDANCE
         assert "101" not in hint
         assert "9001" not in hint
         assert "MILKY_ACCESS_TOKEN" not in hint
@@ -170,7 +176,7 @@ def test_milky_prompt_section_shares_registration_identity_snapshot(monkeypatch)
 
         assert snapshot.publish(900000001, "合成机器人") is True
         rendered = callback({"self_id": 101, "nickname": "session metadata"})
-        assert rendered.startswith("Your QQ uid is 900000001, and your nickname is 合成机器人.\n")
+        assert rendered.startswith("- Your QQ uid is 900000001, and your nickname is 合成机器人.\n")
         assert rendered.split("\n", 1)[1] == entry.PLATFORM_GUIDANCE
         assert rendered.count(entry.PLATFORM_GUIDANCE) == 1
         assert callback({"self_id": 999, "nickname": "changed metadata"}) == rendered
@@ -191,7 +197,7 @@ def test_milky_prompt_renderer_sanitizes_abnormal_nickname(monkeypatch) -> None:
         rendered = entry._render_platform_guidance(snapshot, {"nickname": "untrusted"})
         assert (
             rendered.splitlines()[0]
-            == "Your QQ uid is 900000001, and your nickname is 合成 机器人."
+            == "- Your QQ uid is 900000001, and your nickname is 合成 机器人."
         )
         assert "\n" not in rendered.splitlines()[0]
 

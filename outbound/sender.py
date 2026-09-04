@@ -25,6 +25,7 @@ from .formatter import (
     video_segment,
 )
 from .materialization import prepare_materialization
+from .splitting import split_outbound_text
 
 _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
@@ -929,11 +930,29 @@ class MilkyOutboundSender:
 
         del reply_to
         if isinstance(content, str):
+            split_sections = split_outbound_text(content)
+            if split_sections is not None:
+                return self._split_message_parts(split_sections)
             chunks = chunk_text(content, self._max_text_length)
             if not chunks:
                 return (format_message(content),)
             return tuple(format_message(chunk) for chunk in chunks)
         return (format_message(content),)
+
+    def _split_message_parts(self, sections: tuple[str, ...]) -> tuple[list[dict[str, Any]], ...]:
+        """先形成分段逻辑单元，再执行长度分块和完整预检。"""
+
+        if len(sections) > 3:
+            sections = (*sections[:2], "\n".join(sections[2:]))
+        if not sections:
+            raise OutboundFormatError("invalid_input", "message is blank")
+
+        chunks: list[str] = []
+        for section in sections:
+            chunks.extend(chunk_text(section, self._max_text_length))
+        if len(chunks) > 3:
+            raise OutboundFormatError("invalid_input", "split message exceeds text limit")
+        return tuple(format_message(chunk) for chunk in chunks)
 
     async def _send_segments(
         self, target: OutboundTarget, segments: list[dict[str, Any]]

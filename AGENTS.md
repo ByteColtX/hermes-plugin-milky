@@ -24,7 +24,7 @@ uv run ruff check .
 uv run ruff format --check .
 uv build
 git diff --check
-npx --yes @fission-ai/openspec@1.11.0 validate --changes --strict
+npx --yes @fission-ai/openspec@1.12.0 validate --changes --strict
 ```
 
 修改导入、生命周期、协议或出站路径后，运行相关测试、Ruff、format 和 diff 检查；行为变化
