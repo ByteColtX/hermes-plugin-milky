@@ -41,6 +41,7 @@
     {"path": "events/system.bot_offline.json", "classification": "observe_only"},
     {"path": "events/system.message_recall.json", "classification": "observe_only"},
     {"path": "events/system.message_recall.group.self.json", "classification": "observe_only", "assertions": ["group", "no_operator_id"]},
+    {"path": "events/system.message_recall.group.self.operator.json", "classification": "observe_only", "assertions": ["group", "operator_id=sender_id"]},
     {"path": "events/system.message_recall.friend.json", "classification": "observe_only", "assertions": ["friend", "dm_chat_key", "no_operator_id"]},
     {"path": "events/system.message_recall.friend.operator.json", "classification": "observe_only", "assertions": ["friend", "operator_id"]},
     {"path": "events/system.message_recall.malformed.missing_sender.json", "classification": "observe_only", "tags": ["malformed_context"]},

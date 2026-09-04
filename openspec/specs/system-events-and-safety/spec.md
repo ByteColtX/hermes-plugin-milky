@@ -25,15 +25,16 @@ group_whole_mute、group_file_upload、group_member_increase 和 group_member_de
 使用 `dm:<peer_id>`，group 必须使用 `group:<peer_id>`。`operator_id` 为缺失或 null 时
 不得补默认值；存在时必须是已确认的非负十进制 ID。
 
-对于 `group` 撤回事件，body MUST 根据 `operator_id` 是否存在使用以下两种文案之一：
+对于 `group` 撤回事件，body MUST 根据 `operator_id` 是否存在且是否与 `sender_id` 相同使用以下两种文案之一：
 
 ~~~text
 uid <sender_id> 撤回了消息 msg_seq <message_seq>
 管理员 uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>
 ~~~
 
-`operator_id` 缺失或 null 时使用第一种文案；存在时使用第二种文案。对于 `friend` 撤回事件，
-无 `operator_id` 时使用第一种文案；若协议提供操作人，则使用不带“管理员”角色判断的
+`operator_id` 缺失、null 或等于 `sender_id` 时使用第一种文案；在群聊中仅当 `operator_id` 存在且
+不等于 `sender_id` 时使用第二种文案。对于 `friend` 撤回事件，无 `operator_id` 或其等于
+`sender_id` 时使用第一种文案；若协议提供不同的操作人，则使用不带“管理员”角色判断的
 `uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`。`display_suffix`、
 未知扩展字段、时间戳和原始 payload 不得进入 body；该事件只表达撤回元数据，不承诺恢复被撤回
 消息正文。
@@ -104,8 +105,8 @@ uid <user_id> 退出了群聊 Details: {"group_id": <group_id>, "user_id": <user
 
 - **WHEN** 收到字段完整且 `message_scene` 为 `group` 的 `message_recall`
 - **THEN** 系统 SHALL 将事件写入 `group:<peer_id>` chat 的 context-only 缓冲
-- **AND** `operator_id` 缺失或 null 时，下一次该群 chat 的 trigger 上下文 SHALL 包含 `<event message_recall> uid <sender_id> 撤回了消息 msg_seq <message_seq>`
-- **AND** `operator_id` 存在时，下一次该群 chat 的 trigger 上下文 SHALL 包含 `<event message_recall> 管理员 uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`
+- **AND** `operator_id` 缺失、null 或等于 `sender_id` 时，下一次该群 chat 的 trigger 上下文 SHALL 包含 `<event message_recall> uid <sender_id> 撤回了消息 msg_seq <message_seq>`
+- **AND** `operator_id` 存在且不等于 `sender_id` 时，下一次该群 chat 的 trigger 上下文 SHALL 包含 `<event message_recall> 管理员 uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`
 - **AND** 系统 SHALL NOT 创建普通 Hermes MessageEvent、独立 Agent turn 或主动撤回 Action
 
 #### Scenario: 撤回好友消息事件

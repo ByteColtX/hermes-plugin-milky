@@ -233,6 +233,11 @@ def test_message_recall_maps_scene_operator_and_filters_extensions() -> None:
             "uid 800000002 撤回了消息 msg_seq 1001",
         ),
         (
+            "events/system.message_recall.group.self.operator.json",
+            "group:700000001",
+            "uid 800000002 撤回了消息 msg_seq 1002",
+        ),
+        (
             "events/system.message_recall.json",
             "group:700000001",
             "管理员 uid 900000001 撤回了 uid 800000002 的消息 msg_seq 1000",

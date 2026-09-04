@@ -176,9 +176,10 @@ TTL map 的检查和插入必须原子完成，且早于资源补全、Will 和 
 `message_recall` 只有在 `message_scene` 为 `friend` 或 `group`，且 `peer_id`、`message_seq`、
 `sender_id` 是已确认的非负整数时，才写入对应 chat 的 system context FIFO：friend 使用
 `dm:<peer_id>`，group 使用 `group:<peer_id>`。`operator_id` 缺失或为 null 时，body 为
-`uid <sender_id> 撤回了消息 msg_seq <message_seq>`；群聊存在操作人时为
-`管理员 uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`；好友存在操作人时
-使用 `uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`，不推断管理员角色。
+`uid <sender_id> 撤回了消息 msg_seq <message_seq>`；群聊仅在操作人存在且
+`operator_id != sender_id` 时为 `管理员 uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`；
+操作人缺失、为 null 或与发送者相同时使用前一文案。好友存在不同操作人时使用
+`uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`，不推断管理员角色。
 事件类型前缀由 renderer 统一添加为 `<event message_recall>`。
 
 `group_nudge`、`friend_nudge`、`group_member_increase`、`group_member_decrease` 和合法

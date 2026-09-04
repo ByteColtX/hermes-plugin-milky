@@ -82,7 +82,7 @@ def parse_context_event(event: Event) -> ContextEventResult:
             sender_id = _required_id(event.data, "sender_id")
             operator_id = _optional_id(event.data, "operator_id")
             chat_key = normalize_chat_key(message_scene, peer_id)
-            if operator_id is None:
+            if operator_id is None or operator_id == sender_id:
                 body = f"uid {sender_id} 撤回了消息 msg_seq {message_seq}"
             elif message_scene == "group":
                 body = (

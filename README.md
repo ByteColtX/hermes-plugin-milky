@@ -357,7 +357,7 @@ cron 每次创建并关闭临时 Milky client，目前只支持无附件文本�
 
 - 只有字段完整且 `message_scene` 为 `friend` 或 `group` 时才登记；friend 写入 `dm:<peer_id>`，group 写入 `group:<peer_id>`，非法场景或 ID 只记录安全诊断；
 - 合法事件进入对应 chat 的有界 system context FIFO，在下一次同 chat `trigger` 的 `channel_context` 中按 ingress 顺序出现一次，格式为 `<event message_recall> ...`；
-- 无 `operator_id` 时显示 `uid <sender_id> 撤回了消息 msg_seq <message_seq>`；群聊有操作人时显示 `管理员 uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`，好友有操作人时不添加管理员角色；
+- 无 `operator_id` 或 `operator_id == sender_id` 时显示 `uid <sender_id> 撤回了消息 msg_seq <message_seq>`；群聊仅在 `operator_id != sender_id` 时显示 `管理员 uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`，好友有不同操作人时不添加管理员角色；
 - 撤回事件不创建普通 Agent turn、不发送回复、不调用主动撤回工具，也不调用 `get_message` 或下载资源；插件只展示撤回元数据，不承诺恢复被撤回消息正文；
 - 该路径仍是 observe-only，不经过普通消息的 Gate/Will，也不扣 reply cost。fixture 和 fake host 测试不代表真实 Milky 服务端能力已被集成验证。
 
