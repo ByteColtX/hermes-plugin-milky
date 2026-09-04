@@ -59,7 +59,8 @@ metadata:
 
 ### 群管理
 
-最终权限由 Milky 服务端判断，通常要求 Bot 是目标群群主或管理员。
+设置群成员专属头衔必须由 Bot 作为目标群群主调用；管理员权限不足以执行此操作。是否成功仍
+以远端 envelope 为准，HTTP 200 也不等于业务成功。
 
 | ToolSpec | 参数 | 用途 |
 | --- | --- | --- |
@@ -82,6 +83,9 @@ metadata:
 | `accept_group_invitation` | `{group_id, invitation_seq}` | 接受群邀请 |
 | `reject_group_invitation` | `{group_id, invitation_seq}` | 拒绝群邀请 |
 | `set_group_member_special_title` | `{group_id, user_id, special_title}` | 设置群成员专属头衔 |
+
+`special_title` 必须是字符串，长度最多 6 个中文字符；空字符串用于清除专属头衔并原样传递。
+不要截断或补默认值，也不要把管理员权限当作足够。
 
 `notification_type` 只接受 `join_request` 和 `invited_join_request`。群请求、群邀请事件只做
 observe-only，通知、普通正文、关键词和 Will 都不会替你接受或拒绝。四个群请求 Action 只有
