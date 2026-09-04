@@ -1,0 +1,62 @@
+{
+  "valid_catalog": {
+    "schemaVersion": 1,
+    "packs": [
+      {
+        "packName": "合成表情包",
+        "emojis": [
+          {"qSid": "known-face", "qDes": "/合成微笑"},
+          {"qSid": "same-description", "qDes": "相同描述"},
+          {"qSid": " ", "qDes": "应跳过"},
+          {"qSid": "blank-description", "qDes": "   "},
+          {"qSid": 100, "qDes": "类型错误"},
+          {"qSid": "invalid-description", "qDes": 100},
+          {"qDes": "缺少 ID"},
+          {"qSid": "missing-description"}
+        ]
+      },
+      {
+        "packName": "另一个合成表情包",
+        "emojis": [
+          {"qSid": "same-description", "qDes": "相同描述"},
+          {"qSid": "conflicting-description", "qDes": "第一名称"}
+        ]
+      },
+      {
+        "packName": "冲突来源",
+        "emojis": [
+          {"qSid": "conflicting-description", "qDes": "第二名称"}
+        ]
+      },
+      {
+        "packName": "emoji 表情",
+        "emojis": [
+          {"qSid": "emoji-face", "qDes": "/不应使用"}
+        ]
+      },
+      {
+        "packName": "坏 pack",
+        "emojis": {"not": "an array"}
+      },
+      "坏 pack"
+    ]
+  },
+  "expected_labels": {
+    "known-face": "/合成微笑",
+    "same-description": "相同描述"
+  },
+  "excluded_ids": [
+    "emoji-face",
+    "blank-id",
+    "blank-description",
+    "invalid-description",
+    "missing-description",
+    "conflicting-description"
+  ],
+  "invalid_payloads": [
+    null,
+    [],
+    {"packs": "not-an-array"},
+    {"packs": {"not": "an-array"}}
+  ]
+}

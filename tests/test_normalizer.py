@@ -11,8 +11,10 @@ from pathlib import Path
 
 import pytest
 
+from inbound import extractor as extractor_module
 from inbound.normalizer import normalize_event
-from milky.models import UnknownSegment
+from milky.face_catalog import parse_face_catalog
+from milky.models import FaceSegment, UnknownSegment
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "protocol"
 WILL_FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "will_routing"
@@ -33,7 +35,9 @@ def load_will_fixture() -> dict[str, object]:
 def test_normalizer_preserves_all_known_segments_and_strategy_features() -> None:
     """规范化应保留 14 类 segment 顺序并一次性生成策略特征。"""
 
-    result = normalize_event(load_fixture("events/message_receive.group.all_segments.json"))
+    payload = load_fixture("events/message_receive.group.all_segments.json")
+    payload["data"]["segments"][3]["data"]["face_id"] = "14"
+    result = normalize_event(payload)
 
     assert result.classification == "accepted"
     assert result.value is not None
@@ -55,7 +59,7 @@ def test_normalizer_preserves_all_known_segments_and_strategy_features() -> None
         "markdown",
     ]
     assert normalized.body == (
-        "中性文本@合成机器人@全体成员[face:fixture-face]"
+        "中性文本@合成机器人@全体成员[face:/微笑]"
         "[img:file_name=[合成图片]][record:NOT SUPPORTED][video:NOT SUPPORTED]"
         "[file:file_id=fixture-file-id,file_name=fixture.txt,file_hash=NOT SUPPORTED]"
         "[forward:forward_id=fixture-forward-id][market_face:summary=[合成市场表情]]"
@@ -84,6 +88,97 @@ def test_normalizer_preserves_all_known_segments_and_strategy_features() -> None
     assert normalized.will_input.text == normalized.strategy_text
     assert normalized.will_input.chat_key == "group:700000001"
     assert normalized.will_input.channel == "group:700000001"
+
+
+def test_face_placeholder_uses_catalog_and_preserves_typed_segment_semantics() -> None:
+    """face 显示名称来自 catalog，typed 字段、原始 ID 和策略文本保持不变。"""
+
+    payload = load_fixture("events/message_receive.friend.json")
+    payload["data"]["segments"] = [
+        {"type": "face", "data": {"face_id": "14", "is_large": True}},
+        {"type": "face", "data": {"face_id": "😊", "is_large": False}},
+        {"type": "face", "data": {"face_id": "unknown-face"}},
+        {"type": "face", "data": {}},
+    ]
+
+    result = normalize_event(payload)
+
+    assert result.classification == "accepted"
+    assert result.value is not None
+    assert result.value.body == ("[face:/微笑][face:😊][face:unknown-face][face:NOT SUPPORTED]")
+    assert result.value.strategy_text == ""
+    assert isinstance(result.value.segments[0], FaceSegment)
+    assert result.value.segments[0].face_id == "14"
+    assert result.value.segments[0].is_large is True
+    assert result.value.segments[0].raw["data"]["face_id"] == "14"
+
+
+def test_synthetic_face_catalog_conflict_and_emoji_entries_fall_back_safely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """冲突和 emoji 条目回退原 ID，无冲突名称保留原 qDes。"""
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures/face_catalog/cases.json").read_text(encoding="utf-8")
+    )
+    monkeypatch.setattr(
+        extractor_module, "FACE_LABELS", parse_face_catalog(fixture["valid_catalog"])
+    )
+    payload = load_fixture("events/message_receive.friend.json")
+    payload["data"]["segments"] = [
+        {"type": "face", "data": {"face_id": "known-face"}},
+        {"type": "face", "data": {"face_id": "same-description"}},
+        {"type": "face", "data": {"face_id": "conflicting-description"}},
+        {"type": "face", "data": {"face_id": "emoji-face"}},
+    ]
+
+    result = normalize_event(payload)
+
+    assert result.value is not None
+    assert result.value.body == (
+        "[face:/合成微笑][face:相同描述][face:conflicting-description][face:emoji-face]"
+    )
+
+
+def test_unavailable_face_catalog_does_not_affect_other_segments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """catalog 不可用时 face 回退且其他 segment 仍按原规则处理。"""
+
+    monkeypatch.setattr(extractor_module, "FACE_LABELS", parse_face_catalog({"packs": "bad"}))
+    payload = load_fixture("events/message_receive.friend.json")
+    payload["data"]["segments"] = [
+        {"type": "text", "data": {"text": "前"}},
+        {"type": "face", "data": {"face_id": "14"}},
+        {"type": "mention_all", "data": {}},
+        {"type": "image", "data": {"resource_id": "fixture-image-resource"}},
+    ]
+
+    result = normalize_event(payload)
+
+    assert result.value is not None
+    assert result.value.body == "前[face:14]@全体成员[img:file_name=fixture-image-resource]"
+    assert result.value.strategy_text == "前@全体成员"
+
+
+def test_normalizer_does_not_reload_face_catalog_per_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """每条消息规范化不得重新读取 catalog 或执行文件系统操作。"""
+
+    payload = load_fixture("events/message_receive.friend.json")
+    payload["data"]["segments"] = [{"type": "face", "data": {"face_id": "14"}}]
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("normalizer reloaded face catalog")
+
+    monkeypatch.setattr(extractor_module, "load_face_catalog", fail, raising=False)
+    monkeypatch.setattr(Path, "read_text", fail)
+
+    result = normalize_event(payload)
+
+    assert result.value is not None
+    assert result.value.body == "[face:/微笑]"
 
 
 def test_normalizer_keeps_friend_scene_and_does_not_use_group_fields() -> None:

@@ -206,7 +206,7 @@ normalizer 不做网络 I/O。支持并保留 `text`、`mention`、`mention_all`
 
 | segment | 正文展示 |
 |---|---|
-| `face` | `[face:<face_id>]` |
+| `face` | `[face:<face_name>]`；启动时从插件目录 catalog 映射非 `emoji 表情` pack 的有效 `qSid`/`qDes`，名称保留原值；目录不可用、未命中或冲突时回退 `face_id` |
 | `mention_all` | `@全体成员` |
 | `image` | 临时 `[img:file_name=<summary/resource_id>]`；成功 materialize 后替换为 helper basename |
 | `record` / `video` | `[record:NOT SUPPORTED]` / `[video:NOT SUPPORTED]` |

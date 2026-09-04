@@ -132,10 +132,12 @@ def test_segment_placeholders_keep_order_and_variable_light_app_meta() -> None:
 
     from inbound.normalizer import normalize_event
 
-    result = normalize_event(load_fixture("events/message_receive.group.all_segments.json"))
+    payload = load_fixture("events/message_receive.group.all_segments.json")
+    payload["data"]["segments"][3]["data"]["face_id"] = "14"
+    result = normalize_event(payload)
     assert result.value is not None
     assert result.value.body == (
-        "中性文本@合成机器人@全体成员[face:fixture-face]"
+        "中性文本@合成机器人@全体成员[face:/微笑]"
         "[img:file_name=[合成图片]][record:NOT SUPPORTED][video:NOT SUPPORTED]"
         "[file:file_id=fixture-file-id,file_name=fixture.txt,file_hash=NOT SUPPORTED]"
         "[forward:forward_id=fixture-forward-id][market_face:summary=[合成市场表情]]"

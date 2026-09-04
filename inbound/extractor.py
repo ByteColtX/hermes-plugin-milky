@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from milky.face_catalog import FACE_LABELS, FaceLabelMap
 from milky.models import (
     FaceSegment,
     FileSegment,
@@ -112,9 +113,15 @@ class ExtractedSegments:
     quote_target_is_self: bool = False
 
 
-def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegments:
+def extract_segments(
+    segments: Sequence[Segment],
+    self_id: int,
+    *,
+    face_labels: FaceLabelMap | None = None,
+) -> ExtractedSegments:
     """按原始顺序从 typed segments 生成稳定正文和策略特征。"""
 
+    labels = FACE_LABELS if face_labels is None else face_labels
     body_parts: list[str] = []
     strategy_parts: list[str] = []
     mention_kinds: list[str] = []
@@ -285,7 +292,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
 
         if isinstance(segment, FaceSegment):
             has_supported_content = True
-            body_parts.append(_identifier_marker("face", segment.face_id))
+            body_parts.append(_face_marker(segment.face_id, labels))
             continue
 
         if isinstance(segment, MarketFaceSegment):
@@ -373,6 +380,17 @@ def _identifier_marker(kind: str, value: object) -> str:
 
     identifier = value.strip() if isinstance(value, str) else ""
     return f"[{kind}:{identifier or 'NOT SUPPORTED'}]"
+
+
+def _face_marker(face_id: object, face_labels: FaceLabelMap) -> str:
+    """生成使用本地 catalog 名称的 face placeholder。"""
+
+    identifier = face_id.strip() if isinstance(face_id, str) else ""
+    if not identifier:
+        return "[face:NOT SUPPORTED]"
+    label = face_labels.get(identifier)
+    display = label if isinstance(label, str) and label.strip() else identifier
+    return f"[face:{display}]"
 
 
 def _image_marker(segment: ImageSegment) -> str:
