@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import logging
+import os
+import stat
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Protocol
 
 from milky.client import ActionError
@@ -85,6 +88,50 @@ class ResourceDiagnostic:
 
 
 @dataclass(frozen=True, slots=True)
+class ResolvedImageOccurrence:
+    """保存图片 occurrence、展示槽位和最终代表之间的关联。"""
+
+    materialization: HermesAttachmentMaterialization
+    body_marker: str
+    body_start: int | None = None
+    body_end: int | None = None
+    order: tuple[int, ...] = ()
+    surface: str = "message"
+    representative: HermesAttachmentMaterialization | None = None
+    retained: bool = True
+
+    @property
+    def representative_materialization(self) -> HermesAttachmentMaterialization:
+        """返回该 occurrence 使用的首个代表 materialization。"""
+
+        return self.representative or self.materialization
+
+    @property
+    def path(self) -> str:
+        """返回最终展示和媒体输入使用的代表路径。"""
+
+        return self.representative_materialization.path
+
+    @property
+    def basename(self) -> str:
+        """返回最终代表路径的 basename。"""
+
+        return _path_basename(self.path)
+
+    @property
+    def mime_type(self) -> str:
+        """返回首次代表的 MIME。"""
+
+        return self.representative_materialization.mime_type
+
+    @property
+    def merged(self) -> bool:
+        """返回该 occurrence 是否合并到其他代表。"""
+
+        return not self.retained
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedReply:
     """保存 inline 或远端补全后的 reply 内容。"""
 
@@ -96,6 +143,8 @@ class ResolvedReply:
     segments: tuple[Segment, ...]
     hermes_attachment_materializations: tuple[HermesAttachmentMaterialization, ...] = ()
     diagnostics: tuple[ResourceDiagnostic, ...] = ()
+    body_template: str | None = None
+    image_occurrences: tuple[ResolvedImageOccurrence, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +181,8 @@ class ResolvedMessage:
     forwards: tuple[ResolvedForward, ...] = ()
     diagnostics: tuple[ResourceDiagnostic, ...] = ()
     context_image_materializations: tuple[HermesAttachmentMaterialization, ...] = ()
+    body_template: str | None = None
+    image_occurrences: tuple[ResolvedImageOccurrence, ...] = ()
 
     @property
     def media_materializations(self) -> tuple[HermesAttachmentMaterialization, ...]:
@@ -177,6 +228,8 @@ class _ContentResolution:
     replies: tuple[ResolvedReply, ...]
     forwards: tuple[ResolvedForward, ...]
     diagnostics: tuple[ResourceDiagnostic, ...]
+    body_template: str
+    image_occurrences: tuple[ResolvedImageOccurrence, ...]
 
 
 class ResourceResolver:
@@ -210,6 +263,8 @@ class ResourceResolver:
             forwards=content.forwards,
             diagnostics=content.diagnostics,
             context_image_materializations=content.context_image_materializations,
+            body_template=content.body_template,
+            image_occurrences=content.image_occurrences,
         )
 
     async def resolve_message(self, message: object) -> ResolvedMessage:
@@ -236,7 +291,9 @@ class ResourceResolver:
         )
         resolved_history = tuple([await self.resolve(item) for item in history])
         resolved_current = await self.resolve(current)
-        result = ResolvedTriggerBatch(chat_key, resolved_history, resolved_current)
+        result = _finalize_trigger_batch(
+            ResolvedTriggerBatch(chat_key, resolved_history, resolved_current)
+        )
         materialized_count, degraded_count, reply_count, forward_count = _resource_counts(result)
         completion_fields = _resource_log_fields(chat_key, batch)
         log_event(
@@ -293,28 +350,50 @@ class ResourceResolver:
         peer_id: int,
         self_id: int,
         depth: int,
+        image_order_prefix: tuple[int, ...] = (),
     ) -> _ContentResolution:
+        body_template = body
         materializations: list[HermesAttachmentMaterialization] = []
         context_image_materializations: list[HermesAttachmentMaterialization] = []
+        image_occurrences: list[ResolvedImageOccurrence] = []
         diagnostics: list[ResourceDiagnostic] = []
         replies: list[ResolvedReply] = []
         forwards: list[ResolvedForward] = []
+        replacements: list[tuple[int, int, str]] = []
+        fallback_replacements: list[tuple[str, str]] = []
 
-        for reference in media_references:
+        for reference_index, reference in enumerate(media_references):
             resolved, diagnostic = await self._resolve_media_reference(reference)
             if resolved is not None:
                 materializations.append(resolved)
                 if _field(reference, "kind") == "image":
                     context_image_materializations.append(resolved)
-                    body = _replace_first(
-                        body,
-                        _available_marker(reference),
+                    marker = _available_marker(reference)
+                    image_occurrences.append(
+                        ResolvedImageOccurrence(
+                            materialization=resolved,
+                            body_marker=marker,
+                            body_start=_optional_non_negative_int(reference, "body_start"),
+                            body_end=_optional_non_negative_int(reference, "body_end"),
+                            order=image_order_prefix
+                            + (_reference_index(reference, reference_index), 0),
+                        )
+                    )
+                    _add_body_replacement(
+                        replacements,
+                        fallback_replacements,
+                        body_template,
+                        reference,
+                        marker,
                         _image_path_marker(resolved.path),
                     )
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
-                body = _replace_first(
-                    body,
+                _add_body_replacement(
+                    replacements,
+                    fallback_replacements,
+                    body_template,
+                    reference,
                     _available_marker(reference),
                     _failure_marker(_field(reference, "kind")),
                 )
@@ -326,13 +405,15 @@ class ResourceResolver:
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
 
-        for reference in reply_references:
+        for reference_index, reference in enumerate(reply_references):
             reply, nested_diagnostics = await self._resolve_reply_reference(
                 reference,
                 scene=scene,
                 peer_id=peer_id,
                 self_id=self_id,
                 depth=depth,
+                image_order_prefix=image_order_prefix
+                + (_reference_index(reference, reference_index), 1),
             )
             if reply is not None:
                 replies.append(reply)
@@ -359,12 +440,18 @@ class ResourceResolver:
                 diagnostics.extend(nested_diagnostics)
 
         return _ContentResolution(
-            body=body,
+            body=_render_body_replacements(
+                body_template,
+                replacements,
+                fallback_replacements,
+            ),
             materializations=tuple(materializations),
             context_image_materializations=tuple(context_image_materializations),
             replies=tuple(replies),
             forwards=tuple(forwards),
             diagnostics=tuple(diagnostics),
+            body_template=body_template,
+            image_occurrences=tuple(image_occurrences),
         )
 
     async def _resolve_media_reference(
@@ -478,6 +565,7 @@ class ResourceResolver:
         peer_id: int,
         self_id: int,
         depth: int,
+        image_order_prefix: tuple[int, ...] = (),
     ) -> tuple[ResolvedReply | None, tuple[ResourceDiagnostic, ...]]:
         message_seq = _optional_non_negative_int(reference, "message_seq")
         reference_id = None if message_seq is None else str(message_seq)
@@ -546,6 +634,7 @@ class ResourceResolver:
             peer_id=peer_id,
             self_id=self_id,
             depth=depth + 1,
+            image_order_prefix=image_order_prefix,
         )
         return ResolvedReply(
             message_seq=message_seq,
@@ -556,6 +645,10 @@ class ResourceResolver:
             segments=segments,
             hermes_attachment_materializations=content.materializations,
             diagnostics=content.diagnostics,
+            body_template=content.body_template,
+            image_occurrences=tuple(
+                replace(occurrence, surface="reply") for occurrence in content.image_occurrences
+            ),
         ), ()
 
     async def _resolve_forward_reference(
@@ -706,6 +799,12 @@ def _materialization_from_path(
     )
 
 
+def _is_local_path(value: object) -> bool:
+    """判断 helper 返回值是否是非空本地路径，而非远端 URI。"""
+
+    return isinstance(value, str) and bool(value.strip()) and "://" not in value
+
+
 def _segments_body(segments: tuple[Segment, ...], self_id: int) -> str:
     return _extract_segments(segments, self_id).body
 
@@ -738,6 +837,55 @@ def _replace_first(body: str, old: str, new: str) -> str:
     return body.replace(old, new, 1)
 
 
+def _reference_index(reference: object, fallback: int) -> int:
+    """返回引用的原始 segment 顺序；缺失时使用引用列表顺序。"""
+
+    value = _optional_non_negative_int(reference, "segment_index")
+    return fallback if value is None else value
+
+
+def _add_body_replacement(
+    replacements: list[tuple[int, int, str]],
+    fallback_replacements: list[tuple[str, str]],
+    body: str,
+    reference: object,
+    old: str,
+    new: str,
+) -> None:
+    """登记一个有结构化槽位的正文替换，避免从正文反解析图片身份。"""
+
+    start = _optional_non_negative_int(reference, "body_start")
+    end = _optional_non_negative_int(reference, "body_end")
+    if (
+        start is not None
+        and end is not None
+        and start < end <= len(body)
+        and body[start:end] == old
+    ):
+        replacements.append((start, end, new))
+        return
+    fallback_replacements.append((old, new))
+
+
+def _render_body_replacements(
+    body: str,
+    replacements: Sequence[tuple[int, int, str]],
+    fallback_replacements: Sequence[tuple[str, str]],
+) -> str:
+    """按记录的正文槽位替换图片或媒体 placeholder。"""
+
+    rendered = body
+    previous_end = len(body) + 1
+    for start, end, replacement in sorted(replacements, reverse=True):
+        if start < 0 or start >= end or end > len(body) or end > previous_end:
+            continue
+        rendered = rendered[:start] + replacement + rendered[end:]
+        previous_end = start
+    for old, new in fallback_replacements:
+        rendered = _replace_first(rendered, old, new)
+    return rendered
+
+
 def _available_marker(reference: object) -> str:
     kind = _field(reference, "kind")
     if kind == "image":
@@ -753,12 +901,18 @@ def _available_marker(reference: object) -> str:
 def _image_path_marker(path: object) -> str:
     """用 Hermes helper 返回路径的 basename 生成最终图片占位符。"""
 
+    return f"[img:file_name={_path_basename(path)}]"
+
+
+def _path_basename(path: object) -> str:
+    """提取已通过 materialization 校验的路径 basename。"""
+
     if not isinstance(path, str) or not path.strip():
         raise ValueError("Hermes image helper returned an empty path")
     basename = path.replace("\\", "/").rsplit("/", 1)[-1]
     if not basename or basename in {".", ".."}:
         raise ValueError("Hermes image helper returned an invalid basename")
-    return f"[img:file_name={basename}]"
+    return basename
 
 
 def _failure_marker(kind: object) -> str:
@@ -812,6 +966,272 @@ def _diagnostic_from_error(
     else:
         classification = "unsupported"
     return _diagnostic(classification, reference_kind, reason, reference_id)
+
+
+_MAX_IMAGE_HASH_BYTES = 8 * 1024 * 1024
+_IMAGE_HASH_CHUNK_BYTES = 64 * 1024
+
+
+def _finalize_trigger_batch(batch: ResolvedTriggerBatch) -> ResolvedTriggerBatch:
+    """在单个 trigger batch 内选择图片内容代表并重建展示正文。"""
+
+    hash_cache: dict[str, str | None] = {}
+    registry: dict[tuple[str, str], HermesAttachmentMaterialization] = {}
+    occurrence_updates: dict[int, ResolvedImageOccurrence] = {}
+    diagnostics_by_message: dict[int, list[ResourceDiagnostic]] = {}
+
+    candidates: list[tuple[ResolvedMessage, ResolvedImageOccurrence]] = []
+    for message in batch.history:
+        candidates.extend((message, occurrence) for occurrence in message.image_occurrences)
+
+    current_reply = batch.current.replies[:1]
+    current_occurrences = [*batch.current.image_occurrences]
+    current_occurrences.extend(
+        occurrence for reply in current_reply for occurrence in reply.image_occurrences
+    )
+    current_occurrences.sort(key=lambda occurrence: occurrence.order)
+    candidates.extend((batch.current, occurrence) for occurrence in current_occurrences)
+
+    for _owner, occurrence in candidates:
+        materialization = occurrence.materialization
+        path = materialization.path
+        digest = hash_cache.get(path) if path in hash_cache else _safe_image_digest(path)
+        hash_cache[path] = digest
+        if digest is None:
+            key = ("path", path)
+        else:
+            key = ("digest", digest)
+        representative = registry.setdefault(key, materialization)
+        occurrence_updates[id(occurrence)] = replace(
+            occurrence,
+            representative=representative,
+            retained=representative is materialization,
+        )
+
+    # 对 hash 失败路径只产生一次无敏感字段诊断；诊断归属通过第二次遍历补齐。
+    failed_paths: set[str] = set()
+    for owner, occurrence in candidates:
+        path = occurrence.materialization.path
+        if hash_cache.get(path) is not None or path in failed_paths:
+            continue
+        failed_paths.add(path)
+        diagnostics_by_message.setdefault(id(owner), []).append(
+            _diagnostic("unsupported", "image", "image_hash_unavailable", None)
+        )
+
+    history = tuple(
+        _finalize_message(
+            message,
+            occurrence_updates,
+            diagnostics_by_message.get(id(message), ()),
+            is_current=False,
+        )
+        for message in batch.history
+    )
+    current = _finalize_message(
+        batch.current,
+        occurrence_updates,
+        diagnostics_by_message.get(id(batch.current), ()),
+        is_current=True,
+    )
+    return replace(batch, history=history, current=current)
+
+
+def _finalize_message(
+    message: ResolvedMessage,
+    occurrence_updates: Mapping[int, ResolvedImageOccurrence],
+    hash_diagnostics: Sequence[ResourceDiagnostic],
+    *,
+    is_current: bool,
+) -> ResolvedMessage:
+    """更新一条消息的直接图片展示和最终媒体集合。"""
+
+    occurrences = tuple(
+        occurrence_updates.get(id(occurrence), occurrence)
+        for occurrence in message.image_occurrences
+    )
+    body = _rewrite_resolved_body(message.body, message.body_template, occurrences)
+    replies = message.replies
+    materializations = message.hermes_attachment_materializations
+    if is_current:
+        replies = tuple(
+            _finalize_reply(
+                reply,
+                occurrence_updates,
+                visible=index == 0,
+            )
+            for index, reply in enumerate(replies)
+        )
+        materializations = _finalize_current_materializations(
+            materializations,
+            occurrences,
+            replies,
+        )
+    context_images = tuple(
+        occurrence.materialization
+        for occurrence in occurrences
+        if occurrence.retained and _is_local_path(occurrence.materialization.path)
+    )
+    return replace(
+        message,
+        body=body,
+        hermes_attachment_materializations=materializations,
+        replies=replies,
+        diagnostics=(*message.diagnostics, *hash_diagnostics),
+        context_image_materializations=context_images,
+        image_occurrences=occurrences,
+    )
+
+
+def _finalize_reply(
+    reply: ResolvedReply,
+    occurrence_updates: Mapping[int, ResolvedImageOccurrence],
+    *,
+    visible: bool,
+) -> ResolvedReply:
+    """更新当前 MessageEvent 实际展示的 reply 文本。"""
+
+    if not visible:
+        return reply
+    occurrences = tuple(
+        occurrence_updates.get(id(occurrence), occurrence) for occurrence in reply.image_occurrences
+    )
+    return replace(
+        reply,
+        body=_rewrite_resolved_body(reply.body, reply.body_template, occurrences),
+        image_occurrences=occurrences,
+    )
+
+
+def _rewrite_resolved_body(
+    body: str,
+    body_template: str | None,
+    occurrences: Sequence[ResolvedImageOccurrence],
+) -> str:
+    """依据 image occurrence 槽位重建正文，不从 basename 反解析内容。"""
+
+    if not occurrences:
+        return body
+    if body_template is None:
+        rendered = body
+        for occurrence in occurrences:
+            old = _image_path_marker(occurrence.materialization.path)
+            new = _image_path_marker(occurrence.path)
+            rendered = _replace_first(rendered, old, new)
+        return rendered
+    replacements = [
+        (occurrence.body_start, occurrence.body_end, _image_path_marker(occurrence.path))
+        for occurrence in occurrences
+        if occurrence.body_start is not None and occurrence.body_end is not None
+    ]
+    fallback = [
+        (occurrence.body_marker, _image_path_marker(occurrence.path))
+        for occurrence in occurrences
+        if occurrence.body_start is None or occurrence.body_end is None
+    ]
+    return _render_body_replacements(body_template, replacements, fallback)
+
+
+def _finalize_current_materializations(
+    materializations: Sequence[HermesAttachmentMaterialization],
+    direct_occurrences: Sequence[ResolvedImageOccurrence],
+    replies: Sequence[ResolvedReply],
+) -> tuple[HermesAttachmentMaterialization, ...]:
+    """过滤 current 的重复图片，并保留当前既有的非图片附件。"""
+
+    all_occurrences = [*direct_occurrences]
+    all_occurrences.extend(
+        occurrence for reply in replies for occurrence in reply.image_occurrences
+    )
+    if not all_occurrences:
+        return tuple(materializations)
+    occurrence_ids = {id(occurrence.materialization) for occurrence in all_occurrences}
+    visible_occurrences = [*direct_occurrences]
+    if replies:
+        visible_occurrences.extend(replies[0].image_occurrences)
+    visible_occurrences.sort(key=lambda occurrence: occurrence.order)
+    kept_images = [
+        occurrence.materialization
+        for occurrence in visible_occurrences
+        if occurrence.retained and _is_local_path(occurrence.materialization.path)
+    ]
+    image_indices = [
+        index
+        for index, materialization in enumerate(materializations)
+        if materialization.kind == "image" and id(materialization) in occurrence_ids
+    ]
+    if not image_indices:
+        return tuple(materializations)
+    kept_index = 0
+    result: list[HermesAttachmentMaterialization] = []
+    image_index_set = set(image_indices)
+    for index, materialization in enumerate(materializations):
+        if index not in image_index_set:
+            result.append(materialization)
+            continue
+        if kept_index < len(kept_images):
+            result.append(kept_images[kept_index])
+            kept_index += 1
+    return tuple(result)
+
+
+def _safe_image_digest(path: object) -> str | None:
+    """以 descriptor 和固定块大小读取一个受限的普通图片文件。"""
+
+    if not _is_local_path(path) or not isinstance(path, str):
+        return None
+    flags = os.O_RDONLY
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    flags |= no_follow
+    try:
+        if not no_follow:
+            before_path = os.lstat(path)
+            if not stat.S_ISREG(before_path.st_mode):
+                return None
+        descriptor = os.open(path, flags)
+    except (OSError, TypeError, ValueError):
+        return None
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            return None
+        if before.st_size <= 0 or before.st_size > _MAX_IMAGE_HASH_BYTES:
+            return None
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(descriptor, _IMAGE_HASH_CHUNK_BYTES)
+            if not isinstance(chunk, bytes):
+                return None
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _MAX_IMAGE_HASH_BYTES:
+                return None
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        if not _same_file_snapshot(before, after) or total != before.st_size:
+            return None
+        return digest.hexdigest()
+    except Exception:  # noqa: BLE001 - hash failure must conservatively downgrade
+        return None
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+
+def _same_file_snapshot(before: os.stat_result, after: os.stat_result) -> bool:
+    """比较 descriptor 两端的文件身份和大小状态。"""
+
+    return (
+        before.st_dev == after.st_dev
+        and before.st_ino == after.st_ino
+        and before.st_size == after.st_size
+        and before.st_mtime_ns == after.st_mtime_ns
+        and before.st_ctime_ns == after.st_ctime_ns
+    )
 
 
 def _resource_log_fields(chat_key: str, batch: object) -> dict[str, object]:
@@ -870,6 +1290,7 @@ __all__ = [
     "HermesMediaHelpers",
     "ResolvedForward",
     "ResolvedForwardedMessage",
+    "ResolvedImageOccurrence",
     "ResolvedMessage",
     "ResolvedReply",
     "ResolvedTriggerBatch",

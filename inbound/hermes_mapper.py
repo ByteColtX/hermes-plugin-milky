@@ -73,14 +73,15 @@ def map_message_event(
         context_image_materializations,
         current_materializations,
     )
-    media_urls = [item.path for item in materializations if _is_local_path(item.path)]
-    media_types = [
-        item.mime_type
+    media_pairs = [
+        (item.path, item.mime_type)
         for item in materializations
-        if _is_local_path(item.path) and isinstance(item.mime_type, str) and item.mime_type
+        if _is_local_path(item.path)
+        and isinstance(item.mime_type, str)
+        and bool(item.mime_type.strip())
     ]
-    if len(media_types) != len(media_urls):
-        raise ValueError("materialized attachment MIME does not match local paths")
+    media_urls = [path for path, _mime_type in media_pairs]
+    media_types = [mime_type for _path, mime_type in media_pairs]
 
     reply = resolved.replies[0] if resolved.replies else None
     reply_text = reply.body if reply is not None else None

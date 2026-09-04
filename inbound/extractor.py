@@ -48,6 +48,9 @@ class MediaResourceReference:
     mime_type: str | None = None
     file_size: int | None = None
     raw: JsonObject = field(default_factory=dict)
+    body_start: int | None = None
+    body_end: int | None = None
+    segment_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +87,7 @@ class ReplyReference:
     segments: tuple[Segment, ...] = ()
     complete: bool = False
     raw: JsonObject = field(default_factory=dict)
+    segment_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +131,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
     has_image = False
     has_supported_content = False
 
-    for segment in segments:
+    for segment_index, segment in enumerate(segments):
         if isinstance(segment, TextSegment):
             if segment.text:
                 has_supported_content = True
@@ -171,6 +175,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
                     segments=segment.segments,
                     complete=complete,
                     raw=_safe_mapping(segment.raw),
+                    segment_index=segment_index,
                 )
             )
             if reply_message_seq is None and segment.message_seq is not None:
@@ -187,6 +192,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
             has_supported_content = True
             has_image = True
             marker = _image_marker(segment)
+            body_start = sum(len(part) for part in body_parts)
             body_parts.append(marker)
             if marker == "[img:file_name=NOT SUPPORTED]":
                 _append_once(diagnostics, "incomplete_media_reference")
@@ -199,6 +205,9 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
                     mime_type=_extra_text(segment, "mime_type"),
                     file_size=_extra_nonnegative_int(segment, "file_size"),
                     raw=_safe_mapping(segment.raw),
+                    body_start=body_start,
+                    body_end=body_start + len(marker),
+                    segment_index=segment_index,
                 )
             )
             continue
@@ -216,6 +225,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
                     mime_type=_extra_text(segment, "mime_type"),
                     file_size=_extra_nonnegative_int(segment, "file_size"),
                     raw=_safe_mapping(segment.raw),
+                    segment_index=segment_index,
                 )
             )
             continue
@@ -233,6 +243,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
                     mime_type=_extra_text(segment, "mime_type"),
                     file_size=_extra_nonnegative_int(segment, "file_size"),
                     raw=_safe_mapping(segment.raw),
+                    segment_index=segment_index,
                 )
             )
             continue

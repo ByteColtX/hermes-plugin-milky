@@ -215,7 +215,7 @@ wait 阶段只保存 URL、resource/file ID、文件名、MIME/大小提示和�
 
 Hermes 拥有入站资源的下载、缓存、SSRF、权限和本地路径规则；plugin 不创建第二套 media cache、下载目录或权限规则。只有 Hermes helper 返回且通过本地路径校验的结果才能进入 `MessageEvent.media_urls` / `media_types`。
 
-同一 trigger 的媒体按“历史 context 中成功 materialize 的直接图片，再到当前消息既有 materialization”顺序合并；按有效本地路径首次出现去重，并同步维护等长 `media_types`。不得从 context 文本反解析路径，也不得提升历史音频、视频、文件、未知引用或未展示的嵌套 reply 图片。
+同一 trigger 的媒体按“历史 context 中成功 materialize 的直接图片，再到当前消息和实际展示的 reply 图片”顺序合并；成功图片先在本批次内以受限流式 SHA-256 按 bytes 选择首次代表，hash 失败时仅按有效本地路径去重，并同步维护等长 `media_types`。正文 occurrence、代表 basename、MIME、`channel_context`、`media_urls` 和 `media_types` 必须来自同一份 batch finalization；不得从 context 文本反解析路径，也不得提升历史音频、视频、文件、未知引用或未展示的嵌套 reply 图片。hash 只读取 Hermes helper 已返回的非空常规本地文件，大小上限为 8 MiB，不建立跨 batch/session 的缓存。
 
 ### Hermes MessageEvent
 
@@ -419,8 +419,9 @@ ToolSpec schema/显式调用/最小响应校验及日志脱敏。
 
 ### 当前状态与未决边界
 
-当前未归档 change 有两项：`migrate-platform-hint-to-system-prompt` 的实现与自动化证据已完成，
-但尚未归档；`add-split-outbound-delivery` 的实现与自动化证据已完成，但尚未归档。
+当前未归档 change 有三项：`migrate-platform-hint-to-system-prompt`、
+`add-split-outbound-delivery` 和 `deduplicate-inbound-image-media` 的实现与自动化证据已完成，
+但尚未归档。
 已有主规范继续覆盖入站 context/图片合并、出站附件/native media/文件上传、固定 QQ ToolSpec
 和安全日志边界；当前工具清单为 23 项，完成项以各 change 的 `tasks.md` 和 evidence ledger
 为准。未归档 delta 不代表其规划目标已经成为当前能力。

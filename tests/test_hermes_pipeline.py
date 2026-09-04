@@ -13,6 +13,7 @@ from milky.resources import (
     HermesAttachmentMaterialization,
     ResolvedMessage,
     ResolvedTriggerBatch,
+    ResourceResolver,
 )
 from session import ChatAdmissionCoordinator, TtlDeduplicator, WaitBuffer
 from will import RoutingConfig, RoutingWillEngine
@@ -353,6 +354,63 @@ def test_context_images_precede_current_images_and_deduplicate_media_paths() -> 
     assert event.channel_context is not None
     assert "历史消息" not in event.text
     assert "触发消息" not in event.channel_context
+
+
+def test_pipeline_uses_finalized_body_context_and_media_representatives(tmp_path: Path) -> None:
+    """pipeline 应从同一批次 finalization 交付正文、上下文和媒体。"""
+
+    class PipelineHermes(FakeHermes):
+        """将两个脱敏 URL 映射到内容相同的临时文件。"""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.paths = {
+                "history": str(tmp_path / "history.png"),
+                "current": str(tmp_path / "current.webp"),
+            }
+            Path(self.paths["history"]).write_bytes(b"same-image")
+            Path(self.paths["current"]).write_bytes(b"same-image")
+
+        async def cache_image_from_url(self, url: str, ext: str = ".jpg") -> str:
+            """返回 fake Hermes 已落盘的本地路径。"""
+
+            del ext
+            return self.paths[url]
+
+    async def scenario() -> FakeMessageEvent:
+        hermes = PipelineHermes()
+        pipeline = make_pipeline(
+            hermes,
+            ResourceResolver(object(), hermes),
+            routing=RoutingConfig(direct="trigger", mention="trigger", all_message="wait"),
+        )
+        history = load_fixture("events/message_receive.group.all_segments.json")
+        history["data"]["message_seq"] = 2301
+        history["data"]["segments"] = [
+            {
+                "type": "image",
+                "data": {"temp_url": "history", "summary": "历史图", "mime_type": "image/png"},
+            }
+        ]
+        current = load_fixture("events/message_receive.group.all_segments.json")
+        current["data"]["message_seq"] = 2302
+        current["data"]["segments"] = [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "image", "data": {"temp_url": "current", "summary": "当前图"}},
+        ]
+        assert (await pipeline.handle_event(history)).classification == "wait"
+        assert (await pipeline.handle_event(current)).classification == "trigger"
+        await pipeline.wait_idle()
+        return hermes.events[0]
+
+    event = asyncio.run(scenario())
+
+    assert event.channel_context is not None
+    assert "history.png" in event.channel_context
+    assert str(tmp_path / "current.webp") not in event.text
+    assert "history.png" in event.text
+    assert event.media_urls == [str(tmp_path / "history.png")]
+    assert event.media_types == ["image/png"]
 
 
 def test_failed_context_image_keeps_placeholder_without_media_url() -> None:
