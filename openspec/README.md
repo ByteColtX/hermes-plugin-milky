@@ -24,8 +24,8 @@ section。主规范位于
 ## 常用命令
 
 ```text
-npx --yes @fission-ai/openspec@1.11.0 status --change <change-name>
-npx --yes @fission-ai/openspec@1.11.0 validate --changes --strict
+npx --yes @fission-ai/openspec@1.12.0 status --change <change-name>
+npx --yes @fission-ai/openspec@1.12.0 validate --changes --strict
 $openspec-apply-change <change-name>
 ```
 

@@ -2,28 +2,30 @@ schema: spec-driven
 
 context: |
   项目是 Python 3.13+ 的 Hermes Milky QQ 平台适配器，使用 uv 管理环境。
-  ARCHITECTURE.md 是协议、所有权和行为契约的项目基线；当前 OpenSpec change 的
-  proposal、specs、design 和 tasks 是本次工作的事实来源。仓库已有运行时实现；新 change
-  仍必须区分规划目标、代码证据和真实 Hermes/Milky 环境验证，不得把未验证的目标行为写成已交付功能。
+  ARCHITECTURE.md 是协议、所有权和行为契约的项目基线。OpenSpec artifacts 描述目标行为；
+  实现状态和是否已交付必须以代码、测试和 evidence 为准。发现规划、实现、文档或契约冲突时，
+  必须报告冲突并更新正确的事实来源，不得静默宣称已完成。
   OpenSpec 规范必须描述可观察行为，而不是类名、函数名、库选择或逐行实现方案。
+  所有 OpenSpec artifacts 使用中文撰写；协议名、代码标识、命令和字段名保留原文。
   Milky v1.3 使用 HTTP POST Action 和 SSE GET /event；friend/group/temp 必须保持独立
   的 dm:/group: chat key；temp 消息在协议解析后直接记录 ignored_temp，不创建 chat key。
   Gate 是确定性的硬性门禁，Will 是独立的发言决策。
   入站媒体的下载、缓存、SSRF、权限和本地路径由 Hermes 公共 helper 所有；出站本地附件
-  仅按 active outbound 规范由插件执行受限 materialization，插件不得复制入站资源规则。
+  仅按 ARCHITECTURE.md 和现行 outbound-messaging 规范由插件执行受限 materialization，插件不得复制入站资源规则。
   token、Authorization header、个人 QQ、真实媒体路径和敏感正文不得进入规范、fixture、
-  日志、异常、快照或提交。新增实现必须先有 fixture/契约，再有测试和 uv 质量门禁。
-  代码与文档遵循 Google Python Style Guide，提交消息遵循中文 Conventional Commits。
+  日志、异常、快照或提交。
 
 rules:
   proposal:
-    - 必须明确目标能力相对于当前实现的状态，不得把规划或未验证能力写成已交付行为。
-    - Capabilities 必须与 specs/<capability-path>/spec.md 一一对应，并说明非目标。
+    - 对包含 spec-level behavior change 的 change，必须明确目标能力相对于当前实现的状态，不得把规划或未验证能力写成已交付行为。
+    - 对包含 spec-level behavior change 的 change，Capabilities 必须与 specs/<capability-path>/spec.md 一一对应，并说明非目标。
+    - 若 change 的 .openspec.yaml 设置 skip_specs=true，必须说明没有 spec-level behavior change，不得为了通过校验虚构 capability 或 spec。
   specs:
-    - 一个 capability 只使用一个 spec.md；每个 requirement 必须是可观察的 SHALL 或 MUST 行为。
+    - 对需要生成 spec 的 capability，一个 capability 只使用一个 spec.md；每个 requirement 必须是可观察的 SHALL 或 MUST 行为。
     - 每个 requirement 至少包含一个严格使用四级标题 `#### Scenario:` 的 WHEN/THEN 场景。
     - 优先覆盖错误、未知、边界、重连、隐私和降级行为；不得把实现步骤写进 spec。
     - 遵守 ARCHITECTURE.md 的 Gate/Will、Hermes 媒体所有权、temp 忽略和安全边界。
+    - 若 change 的 .openspec.yaml 设置 skip_specs=true，不创建 spec 文件，也不为了满足规则虚构 requirement。
   design:
     - 说明规范之间的边界、依赖方向、未实现状态和未来归档条件。
     - 不因协议或 Hermes API 未确认而猜测行为；保留 unsupported 或待实机反馈边界。
@@ -33,10 +35,12 @@ rules:
 operations:
   apply:
     guidance:
-      - 先读取 ARCHITECTURE.md，再读取本次 change 的全部 artifacts，尤其是 tasks.md。
-      - 按任务闭环执行：契约或 fixture、实现、测试、ruff/build/diff 检查，必要时再做本地 Milky smoke。
+      - 先读取 ARCHITECTURE.md，并按 openspec instructions 返回的 contextFiles 读取当前 change artifacts；不要假定固定 artifact 文件名。
+      - 按变更类型选择验证：行为变化先补契约或 fixture，再实现和测试；按项目要求运行相关 Ruff、format、build 和 diff 检查，不为文档或纯配置变更强制虚构 fixture 或完整构建。
+      - 本地 Milky smoke 默认只读；发送或上传必须有用户明确授权、使用 --allow-write，且目标命中运行时 MILKY_ALLOWED_CHATS。
       - 仅在 Hermes handle_message 提交成功后更新 reply cost；不为未知远端结果盲目重试。
   archive:
     guidance:
-      - 只有对应运行时能力已实现并有自动化证据后，才将 delta 同步到 openspec/specs/。
-      - 未经自动化或真实环境证据确认的目标规范保持在 active change 中，不得通过归档制造“已实现”的错觉。
+      - 归档前检查必要 artifacts、tasks 和 evidence；运行时能力应在相关自动化证据具备后再同步 delta，纯文档、重构或 skip_specs change 按其适用验证处理。
+      - 实机 Hermes/Milky 未覆盖的边界必须保留在 evidence 中；归档或 validate 通过不等于真实环境认证，不得报告假成功。
+      - 关注 validate 输出中的 archive merge INFO；退出码为 0 仍不保证 archive 一定成功，冲突应在归档前处理或明确交由用户确认。
