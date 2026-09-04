@@ -27,5 +27,15 @@
       ],
       "future_data": "fixture-requests-extension"
     }
+  },
+  "get_friend_info": {
+    "status": "ok",
+    "retcode": 0,
+    "data": {
+      "user_id": 800000001,
+      "nickname": "合成好友",
+      "opaque_extension": {"kind": "fixture"}
+    },
+    "future_envelope": "fixture-friend-envelope"
   }
 }

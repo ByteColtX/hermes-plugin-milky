@@ -64,8 +64,10 @@ _TOOL_ACTIONS = frozenset(
         "quit_group",
         "delete_friend",
         "get_friend_requests",
+        "get_friend_info",
         "accept_friend_request",
         "reject_friend_request",
+        "set_group_member_special_title",
     }
 )
 _MISSING = object()
@@ -1045,6 +1047,24 @@ class MilkyClient:
         _validate_tool_response("get_friend_requests", envelope)
         return envelope
 
+    async def get_friend_info(self, user_id: object) -> MilkyEnvelope:
+        """查询指定好友信息，并保留目标服务返回的 opaque object。"""
+
+        envelope = await self.call(
+            "get_friend_info",
+            {
+                "user_id": _validate_tool_integer(
+                    user_id,
+                    "user_id",
+                    "get_friend_info",
+                    minimum=_MIN_QQ_ID,
+                    maximum=_MAX_QQ_ID,
+                )
+            },
+        )
+        _validate_tool_response("get_friend_info", envelope)
+        return envelope
+
     async def accept_friend_request(
         self,
         initiator_uid: object,
@@ -1098,6 +1118,41 @@ class MilkyClient:
             params["reason"] = reason
         envelope = await self.call("reject_friend_request", params)
         _validate_tool_response("reject_friend_request", envelope)
+        return envelope
+
+    async def set_group_member_special_title(
+        self,
+        group_id: object,
+        user_id: object,
+        special_title: object,
+    ) -> MilkyEnvelope:
+        """设置群成员专属头衔并原样保留字符串值。"""
+
+        if not isinstance(special_title, str):
+            raise ActionError(
+                "invalid_input",
+                "set_group_member_special_title",
+                "special_title is invalid",
+            )
+        params = {
+            "group_id": _validate_tool_integer(
+                group_id,
+                "group_id",
+                "set_group_member_special_title",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            ),
+            "user_id": _validate_tool_integer(
+                user_id,
+                "user_id",
+                "set_group_member_special_title",
+                minimum=_MIN_QQ_ID,
+                maximum=_MAX_QQ_ID,
+            ),
+            "special_title": special_title,
+        }
+        envelope = await self.call("set_group_member_special_title", params)
+        _validate_tool_response("set_group_member_special_title", envelope)
         return envelope
 
     async def upload_group_file(
@@ -1383,10 +1438,15 @@ def _validate_tool_params(action: str, params: Mapping[str, Any] | None) -> None
         "quit_group": ({"group_id"}, {"group_id"}),
         "delete_friend": ({"user_id"}, {"user_id"}),
         "get_friend_requests": ({"limit", "is_filtered"}, set()),
+        "get_friend_info": ({"user_id"}, {"user_id"}),
         "accept_friend_request": ({"initiator_uid", "is_filtered"}, {"initiator_uid"}),
         "reject_friend_request": (
             {"initiator_uid", "is_filtered", "reason"},
             {"initiator_uid"},
+        ),
+        "set_group_member_special_title": (
+            {"group_id", "user_id", "special_title"},
+            {"group_id", "user_id", "special_title"},
         ),
     }
     allowed, required = schemas[action]
@@ -1424,6 +1484,8 @@ def _validate_tool_params(action: str, params: Mapping[str, Any] | None) -> None
     for field in ("forward_id", "file_id", "file_hash", "initiator_uid"):
         if field in values:
             _validate_nonempty_tool_text(values[field], field, action)
+    if "special_title" in values and not isinstance(values["special_title"], str):
+        raise ActionError("invalid_input", action, "special_title is invalid")
     if "notification_type" in values and (
         not isinstance(values["notification_type"], str)
         or values["notification_type"] not in {"join_request", "invited_join_request"}
@@ -1459,6 +1521,8 @@ def _validate_tool_response(action: str, envelope: MilkyEnvelope) -> None:
     elif action == "get_friend_requests":
         if not _is_object_array(data.get("requests")):
             raise ActionError("malformed", action, "response requests are malformed")
+    elif action == "get_friend_info" and not data:
+        raise ActionError("malformed", action, "response data is malformed")
     elif (
         action
         in {
@@ -1467,6 +1531,7 @@ def _validate_tool_response(action: str, envelope: MilkyEnvelope) -> None:
             "delete_friend",
             "accept_friend_request",
             "reject_friend_request",
+            "set_group_member_special_title",
             "accept_group_request",
             "reject_group_request",
             "accept_group_invitation",

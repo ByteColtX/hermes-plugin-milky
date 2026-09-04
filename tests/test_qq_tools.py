@@ -37,6 +37,10 @@ GROUP_TOOL_NAMES = (
     "reject_group_invitation",
     "get_group_files",
 )
+ADDITIONAL_TOOL_NAMES = (
+    "get_friend_info",
+    "set_group_member_special_title",
+)
 DEFAULT_ENV = {
     "MILKY_BASE_URL": "https://localhost:5500/milky/",
     "MILKY_ACCESS_TOKEN": "runtime-token",
@@ -137,6 +141,12 @@ class FakeToolClient:
             data = {"download_url": "fixture-download-url", "future_data": True}
         elif action == "get_friend_requests":
             data = {"requests": [{"initiator_uid": "fixture-uid"}], "future_data": "fixture"}
+        elif action == "get_friend_info":
+            data = {
+                "user_id": 800000001,
+                "nickname": "合成好友",
+                "opaque_extension": {"kind": "fixture"},
+            }
         else:
             data = {}
         return MilkyEnvelope(
@@ -149,13 +159,13 @@ class FakeToolClient:
 
 
 def test_schema_fixture_matches_all_new_tool_specs_and_is_synthetic() -> None:
-    """schema fixture 应覆盖 14 个新增工具并排除凭证、路径和可访问 URL。"""
+    """schema fixture 应覆盖当前新增工具并排除凭证、路径和可访问 URL。"""
 
     fixture = load_fixture("schemas.json")
     actual = {spec["name"]: spec["parameters"] for spec in TOOL_SPECS}
     expected = {entry["operation_id"]: entry for entry in fixture["tools"]}
 
-    all_new_names = NEW_TOOL_NAMES + GROUP_TOOL_NAMES
+    all_new_names = NEW_TOOL_NAMES + GROUP_TOOL_NAMES + ADDITIONAL_TOOL_NAMES
     assert set(expected) == set(all_new_names)
     assert set(actual) >= set(all_new_names)
     for name in all_new_names:
@@ -188,7 +198,7 @@ def test_schema_fixture_matches_all_new_tool_specs_and_is_synthetic() -> None:
 
 
 def test_query_response_fixtures_keep_minimum_fields_and_unknown_values() -> None:
-    """三个查询 fixture 应包含最小字段和非敏感未知扩展。"""
+    """好友资料和其他查询 fixture 应包含最小字段和非敏感未知扩展。"""
 
     fixture = load_fixture("responses/query_ok.json")
     assert isinstance(fixture["get_forwarded_messages"]["data"]["messages"], list)
@@ -199,6 +209,28 @@ def test_query_response_fixtures_keep_minimum_fields_and_unknown_values() -> Non
     assert fixture["get_private_file_download_url"]["data"]["future_data"] == {"kind": "fixture"}
     assert isinstance(fixture["get_friend_requests"]["data"]["requests"], list)
     assert fixture["get_friend_requests"]["data"]["future_data"] == "fixture-requests-extension"
+    assert fixture["get_friend_info"]["data"]["opaque_extension"] == {"kind": "fixture"}
+    assert fixture["get_friend_info"]["future_envelope"] == "fixture-friend-envelope"
+
+
+def test_friend_info_contract_keeps_opaque_data_and_records_unconfirmed_fields() -> None:
+    """公开 v1.3 未声明好友资料字段时只测试 object data，不创建本地 DTO。"""
+
+    fixture = load_fixture("responses/friend_info_outcomes.json")
+    assert isinstance(fixture["success"]["data"], dict)
+    assert fixture["success"]["data"]["opaque_extension"] == "fixture-friend-extension"
+    assert fixture["transport_unknown"]["classification"] == "transport_unknown"
+    contents = json.dumps(fixture, ensure_ascii=False)
+    for forbidden in (
+        "MILKY_ACCESS_TOKEN",
+        "Authorization",
+        "Bearer ",
+        "https://",
+        "http://",
+        "/Users/",
+        "/home/",
+    ):
+        assert forbidden not in contents
 
 
 def test_management_response_fixture_covers_empty_success_and_error_shapes() -> None:
@@ -226,6 +258,13 @@ def test_request_fixture_covers_omitted_nullable_and_sensitive_input_projection(
     assert requests[6]["body"] == {}
     assert requests[7]["body"] == {"limit": None, "is_filtered": False}
     assert requests[9]["body"]["reason"] == "synthetic-reason"
+    assert requests[10]["body"] == {"user_id": 800000001}
+    assert requests[11]["body"] == {
+        "group_id": 700000001,
+        "user_id": 800000001,
+        "special_title": "合成头衔",
+    }
+    assert requests[12]["body"]["special_title"] == ""
     contents = json.dumps(fixture, ensure_ascii=False)
     for forbidden in (
         "MILKY_ACCESS_TOKEN",
@@ -314,7 +353,7 @@ def test_file_placeholder_fixture_covers_hash_presence_and_missing_values() -> N
 
 
 def test_client_calls_each_new_action_once_with_prefixed_post_and_exact_body() -> None:
-    """8 个 operationId 应各自只访问对应 path，并保持请求字段。"""
+    """好友请求、资料查询和其他 friend Action 应各自只访问对应 path。"""
 
     query = load_fixture("responses/query_ok.json")
     success = load_fixture("responses/management_outcomes.json")["success"]
@@ -327,12 +366,14 @@ def test_client_calls_each_new_action_once_with_prefixed_post_and_exact_body() -
         query["get_friend_requests"],
         success,
         success,
+        query["get_friend_info"],
+        success,
     ]
     transport = FakeTransport([http_response(payload) for payload in payloads])
     client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
 
     async def call_all() -> None:
-        """按工具顺序执行 8 个 client Action。"""
+        """按工具顺序执行新增 friend/group Action。"""
 
         await client.call_tool("get_forwarded_messages", {"forward_id": "fixture-forward-id"})
         await client.call_tool(
@@ -356,17 +397,214 @@ def test_client_calls_each_new_action_once_with_prefixed_post_and_exact_body() -
             "reject_friend_request",
             {"initiator_uid": "fixture-uid", "is_filtered": False, "reason": "synthetic-reason"},
         )
+        await client.call_tool("get_friend_info", {"user_id": 800000001})
+        await client.call_tool(
+            "set_group_member_special_title",
+            {"group_id": 700000001, "user_id": 800000001, "special_title": ""},
+        )
 
     asyncio.run(call_all())
     assert [request["url"].rsplit("/", 1)[-1] for request in transport.requests] == list(
-        NEW_TOOL_NAMES
+        NEW_TOOL_NAMES + ADDITIONAL_TOOL_NAMES
     )
-    assert [request["method"] for request in transport.requests] == ["POST"] * 8
+    assert [request["method"] for request in transport.requests] == ["POST"] * 10
     assert transport.requests[0]["body"] == {"forward_id": "fixture-forward-id"}
     assert transport.requests[1]["body"]["is_self_send"] is None
     assert transport.requests[2]["body"]["reject_add_request"] is True
     assert transport.requests[5]["body"] == {}
     assert transport.requests[7]["body"]["reason"] == "synthetic-reason"
+    assert transport.requests[8]["body"] == {"user_id": 800000001}
+    assert transport.requests[9]["body"] == {
+        "group_id": 700000001,
+        "user_id": 800000001,
+        "special_title": "",
+    }
+
+
+@pytest.mark.parametrize(
+    ("action", "params"),
+    [
+        ("get_friend_info", {}),
+        ("get_friend_info", {"user_id": True}),
+        ("get_friend_info", {"user_id": 10000}),
+        ("get_friend_info", {"user_id": 800000001, "extra": "fixture"}),
+        (
+            "set_group_member_special_title",
+            {"group_id": 700000001, "user_id": 800000001},
+        ),
+        (
+            "set_group_member_special_title",
+            {"group_id": True, "user_id": 800000001, "special_title": "fixture"},
+        ),
+        (
+            "set_group_member_special_title",
+            {"group_id": 700000001, "user_id": 4294967296, "special_title": "fixture"},
+        ),
+        (
+            "set_group_member_special_title",
+            {"group_id": 700000001, "user_id": 800000001, "special_title": 1},
+        ),
+        (
+            "set_group_member_special_title",
+            {
+                "group_id": 700000001,
+                "user_id": 800000001,
+                "special_title": "fixture",
+                "extra": True,
+            },
+        ),
+    ],
+)
+def test_added_client_tool_params_are_rejected_before_network(
+    action: str, params: dict[str, object]
+) -> None:
+    """新增工具的缺失、类型、范围和额外字段错误不得触网。"""
+
+    transport = FakeTransport([])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(client.call_tool(action, params))
+
+    assert error_info.value.classification == "invalid_input"
+    assert transport.requests == []
+
+
+def test_sender_added_tools_preserve_exact_params_and_raw_envelopes() -> None:
+    """sender 应为两个新增工具只委托同名 Action，并保留成功 envelope。"""
+
+    client = FakeToolClient()
+    sender = MilkyOutboundSender(client)
+
+    friend_result = asyncio.run(sender.get_friend_info(800000001))
+    title_result = asyncio.run(sender.set_group_member_special_title(700000001, 800000001, ""))
+
+    assert isinstance(friend_result, MilkyEnvelope)
+    assert friend_result.data["opaque_extension"]["kind"] == "fixture"
+    assert isinstance(title_result, MilkyEnvelope)
+    assert title_result.data == {}
+    assert client.calls == [
+        ("get_friend_info", {"user_id": 800000001}),
+        (
+            "set_group_member_special_title",
+            {"group_id": 700000001, "user_id": 800000001, "special_title": ""},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda sender: sender.get_friend_info(True),
+        lambda sender: sender.get_friend_info(10000),
+        lambda sender: sender.set_group_member_special_title(700000001, 800000001, 1),
+    ],
+)
+def test_sender_added_tool_invalid_params_do_not_call_client(call) -> None:
+    """sender 的新增工具参数错误应在 client 前返回 invalid_input。"""
+
+    client = FakeToolClient()
+    sender = MilkyOutboundSender(client)
+    result = asyncio.run(call(sender))
+
+    assert result.error_kind == "invalid_input"
+    assert client.calls == []
+
+
+@pytest.mark.parametrize(
+    ("payload_name", "expected"),
+    [
+        ("success", None),
+        ("rejected", "rejected"),
+        ("malformed_data", "malformed"),
+        ("malformed_non_object", "malformed"),
+    ],
+)
+def test_friend_info_response_keeps_opaque_fields_and_classifies_errors(
+    payload_name: str, expected: str | None
+) -> None:
+    """好友资料只要求 object data，协议拒绝和损坏结构不报告成功。"""
+
+    outcomes = load_fixture("responses/friend_info_outcomes.json")
+    payload = outcomes[payload_name]
+    client = MilkyClient(
+        load_config(DEFAULT_ENV), transport=FakeTransport([http_response(payload)])
+    )
+
+    if expected is not None:
+        with pytest.raises(ActionError) as error_info:
+            asyncio.run(client.call_tool("get_friend_info", {"user_id": 800000001}))
+        assert error_info.value.classification == expected
+        return
+
+    result = asyncio.run(client.call_tool("get_friend_info", {"user_id": 800000001}))
+    assert result.data["opaque_extension"] == "fixture-friend-extension"
+    assert result.extras["future_envelope"] is True
+
+
+@pytest.mark.parametrize(
+    ("action", "params", "payload"),
+    [
+        ("get_friend_info", {"user_id": 800000001}, {"status": "ok", "retcode": 0, "data": {}}),
+        (
+            "set_group_member_special_title",
+            {"group_id": 700000001, "user_id": 800000001, "special_title": "fixture"},
+            {"status": "ok", "retcode": 0, "data": {"unexpected": True}},
+        ),
+    ],
+)
+def test_added_client_tool_success_shapes_reject_wrong_data(
+    action: str, params: dict[str, object], payload: dict[str, object]
+) -> None:
+    """好友资料拒绝空对象，专属头衔拒绝非空成功 data。"""
+
+    transport = FakeTransport([http_response(payload)])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(client.call_tool(action, params))
+
+    assert error_info.value.classification == "malformed"
+    assert len(transport.requests) == 1
+
+
+def test_friend_info_http_unsupported_boundary_is_http_error_without_redaction_leak() -> None:
+    """公开未确认的好友资料 Action 遇 HTTP 404 时保持明确错误边界。"""
+
+    outcome = load_fixture("responses/friend_info_outcomes.json")["http_error"]
+    transport = FakeTransport(
+        [
+            http_response(
+                {"status": "ok", "retcode": 0, "data": {}}, status_code=outcome["status_code"]
+            )
+        ]
+    )
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(client.call_tool("get_friend_info", {"user_id": 800000001}))
+
+    assert error_info.value.classification == "http_error"
+    assert len(transport.requests) == 1
+    assert "synthetic-http-error" not in str(error_info.value)
+
+
+def test_special_title_unknown_result_is_not_retried() -> None:
+    """专属头衔 Action 的超时只提交一次并返回 transport_unknown。"""
+
+    transport = FakeTransport([TimeoutError("synthetic-timeout"), http_response({})])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(
+            client.call_tool(
+                "set_group_member_special_title",
+                {"group_id": 700000001, "user_id": 800000001, "special_title": "fixture"},
+            )
+        )
+
+    assert error_info.value.classification == "transport_unknown"
+    assert len(transport.requests) == 1
     assert transport.requests[0]["headers"]["Authorization"] == "Bearer runtime-token"
 
 
@@ -706,6 +944,10 @@ def test_client_classifies_protocol_rejection_and_malformed_management_payload(
         ),
         ("accept_group_invitation", {"group_id": 700000001, "invitation_seq": 1}),
         ("reject_group_invitation", {"group_id": 700000001, "invitation_seq": 1}),
+        (
+            "set_group_member_special_title",
+            {"group_id": 700000001, "user_id": 800000001, "special_title": "fixture"},
+        ),
     ],
 )
 def test_group_management_results_keep_rejection_and_malformed_boundaries(
@@ -755,16 +997,17 @@ def test_client_classifies_http_non_json_and_unknown_transport_without_retry(
     assert "transport detail" not in str(error_info.value)
 
 
-def test_registered_handlers_cover_23_fixed_specs_and_dispatch_only_explicitly() -> None:
-    """注册应包含既有 9 项和新增 14 项，且每个 handler 只调用对应 Action。"""
+def test_registered_handlers_cover_25_fixed_specs_and_dispatch_only_explicitly() -> None:
+    """注册应包含 25 个固定工具，且每个 handler 只调用对应 Action。"""
 
     context = ToolContext()
     register_tools(context)
     names = [item["name"] for item in context.registered]
-    assert len(names) == 23
-    assert len(set(names)) == 23
+    assert len(names) == 25
+    assert len(set(names)) == 25
     assert names[9:17] == list(NEW_TOOL_NAMES)
-    assert names[17:] == list(GROUP_TOOL_NAMES)
+    assert names[17:23] == list(GROUP_TOOL_NAMES)
+    assert names[23:] == list(ADDITIONAL_TOOL_NAMES)
     assert all(item["toolset"] == "milky" for item in context.registered)
     assert all(item["is_async"] is True for item in context.registered)
 
@@ -863,6 +1106,18 @@ def test_registered_handlers_cover_23_fixed_specs_and_dispatch_only_explicitly()
                     handlers["get_group_files"]({"group_id": 700000001, "parent_folder_id": None})
                 )
             ),
+            json.loads(asyncio.run(handlers["get_friend_info"]({"user_id": 800000001}))),
+            json.loads(
+                asyncio.run(
+                    handlers["set_group_member_special_title"](
+                        {
+                            "group_id": 700000001,
+                            "user_id": 800000001,
+                            "special_title": "",
+                        }
+                    )
+                )
+            ),
         ]
     finally:
         unbind_sender()
@@ -871,11 +1126,17 @@ def test_registered_handlers_cover_23_fixed_specs_and_dispatch_only_explicitly()
     assert results[1]["data"]["download_url"] == "fixture-download-url"
     assert all(result["data"] == {} for result in results[2:5])
     assert results[5]["data"]["requests"]
+    assert results[14]["data"]["opaque_extension"]["kind"] == "fixture"
+    assert results[15]["data"] == {}
     assert all(result["status"] == "ok" for result in results)
-    assert [call[0] for call in client.calls] == list(NEW_TOOL_NAMES + GROUP_TOOL_NAMES)
+    assert [call[0] for call in client.calls] == list(
+        NEW_TOOL_NAMES + GROUP_TOOL_NAMES + ADDITIONAL_TOOL_NAMES
+    )
     assert client.calls[1][1]["is_self_send"] is None
     assert client.calls[5][1] == {}
-    assert client.calls[-1][1]["parent_folder_id"] is None
+    assert client.calls[13][1]["parent_folder_id"] is None
+    assert client.calls[14][1] == {"user_id": 800000001}
+    assert client.calls[15][1]["special_title"] == ""
 
 
 @pytest.mark.parametrize(
@@ -892,6 +1153,27 @@ def test_registered_handlers_cover_23_fixed_specs_and_dispatch_only_explicitly()
         ("get_friend_requests", {"is_filtered": "false"}),
         ("accept_friend_request", {"initiator_uid": 800000001}),
         ("reject_friend_request", {"initiator_uid": "fixture-uid", "reason": 1}),
+        ("get_friend_info", {}),
+        ("get_friend_info", {"user_id": True}),
+        ("get_friend_info", {"user_id": 4294967296}),
+        ("get_friend_info", {"user_id": 800000001, "extra": True}),
+        (
+            "set_group_member_special_title",
+            {"group_id": 700000001, "user_id": 800000001},
+        ),
+        (
+            "set_group_member_special_title",
+            {"group_id": 700000001, "user_id": 800000001, "special_title": 1},
+        ),
+        (
+            "set_group_member_special_title",
+            {
+                "group_id": 700000001,
+                "user_id": 800000001,
+                "special_title": "fixture",
+                "extra": True,
+            },
+        ),
         (
             "accept_group_request",
             {
@@ -1048,6 +1330,44 @@ def test_tool_audit_log_projects_sensitive_result_but_returns_raw_envelope(caplo
     }
     assert records[0].tool_result["has_download_url"] is True
     assert "fixture-download-url" not in repr(records[0].tool_result)
+
+
+def test_added_tool_audit_logs_exclude_friend_data_and_special_title(caplog) -> None:
+    """新增工具日志只保留结构和安全 ID，不记录资料值或完整头衔。"""
+
+    context = ToolContext()
+    register_tools(context)
+    handlers = {item["name"]: item["handler"] for item in context.registered}
+    client = FakeToolClient()
+    bind_sender(MilkyOutboundSender(client))
+    try:
+        with caplog.at_level("INFO", logger="outbound.tools"):
+            friend_result = json.loads(
+                asyncio.run(handlers["get_friend_info"]({"user_id": 800000001}))
+            )
+            title_result = json.loads(
+                asyncio.run(
+                    handlers["set_group_member_special_title"](
+                        {
+                            "group_id": 700000001,
+                            "user_id": 800000001,
+                            "special_title": "synthetic-sensitive-title",
+                        }
+                    )
+                )
+            )
+    finally:
+        unbind_sender()
+
+    records = [record for record in caplog.records if record.event_name == "milky_tool_call"]
+    assert friend_result["data"]["nickname"] == "合成好友"
+    assert title_result["data"] == {}
+    assert len(records) == 2
+    assert records[0].tool_args == {"user_id": 800000001}
+    assert records[1].tool_args == {"group_id": 700000001, "user_id": 800000001}
+    rendered_records = repr(records)
+    assert "合成好友" not in rendered_records
+    assert "synthetic-sensitive-title" not in rendered_records
 
 
 def test_group_tool_audit_log_keeps_safe_ids_but_excludes_url_and_reason(caplog) -> None:

@@ -290,8 +290,10 @@ def test_manifest_declares_only_the_new_environment_contract_and_tools() -> None
         "quit_group",
         "delete_friend",
         "get_friend_requests",
+        "get_friend_info",
         "accept_friend_request",
         "reject_friend_request",
+        "set_group_member_special_title",
     ):
         assert manifest.count(f"  - {tool_name}") == 1
     for old_name in ("milky_profile_like", "milky_nudge", "milky_recall_group_message"):

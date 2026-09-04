@@ -56,6 +56,26 @@
         "is_filtered": false,
         "reason": "synthetic-reason"
       }
+    },
+    {
+      "action": "get_friend_info",
+      "body": {"user_id": 800000001}
+    },
+    {
+      "action": "set_group_member_special_title",
+      "body": {
+        "group_id": 700000001,
+        "user_id": 800000001,
+        "special_title": "合成头衔"
+      }
+    },
+    {
+      "action": "set_group_member_special_title",
+      "body": {
+        "group_id": 700000001,
+        "user_id": 800000001,
+        "special_title": ""
+      }
     }
   ]
 }

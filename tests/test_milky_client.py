@@ -392,6 +392,9 @@ def test_profile_like_accepts_explicit_nullable_count() -> None:
         ("get_group_member_info", (700000001, 1)),
         ("set_group_member_mute", (700000001, 900000001, -1)),
         ("set_group_whole_mute", (700000001, "true")),
+        ("get_friend_info", (True,)),
+        ("get_friend_info", (10000,)),
+        ("set_group_member_special_title", (700000001, 800000001, 1)),
     ],
 )
 def test_explicit_outbound_action_parameters_fail_before_network(

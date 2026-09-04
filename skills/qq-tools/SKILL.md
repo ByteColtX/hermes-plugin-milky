@@ -1,14 +1,14 @@
 ---
 name: qq-tools
-description: Reference for Milky QQ Agent's 23 fixed ToolSpecs, strict parameters, permissions, and side-effect boundaries.
+description: Reference for Milky QQ Agent's 25 fixed ToolSpecs, strict parameters, permissions, and side-effect boundaries.
 metadata:
   short-description: Milky QQ 工具入参与权限
-  keywords: "Milky, QQ, Hermes, ToolSpec, operationId, 好友, 好友请求, 合并转发, 私聊文件, 群聊, 群成员, 群文件, 入群请求, 群邀请, group_id, user_id, initiator_uid, forward_id, file_hash, message_seq, notification_seq, invitation_seq, download_url"
+  keywords: "Milky, QQ, Hermes, ToolSpec, operationId, 好友, 好友资料, 好友请求, 合并转发, 私聊文件, 群聊, 群成员, 群文件, 专属头衔, 入群请求, 群邀请, group_id, user_id, special_title, initiator_uid, forward_id, file_hash, message_seq, notification_seq, invitation_seq, download_url"
 ---
 
 # Milky QQ tools
 
-这份 skill 只管当前注册的 23 个 Hermes ToolSpec。工具名对应 Milky 的 `operationId`，请求发往
+这份 skill 只管当前注册的 25 个 Hermes ToolSpec。工具名对应 Milky 的 `operationId`，请求发往
 同名的 `POST /api/{operationId}`。未列出的 Action、别名和任意 Action catalog 都不能调用。
 文字说明不注册工具、不执行也不扩大工具能力，也不会自动触发操作。
 
@@ -27,7 +27,7 @@ metadata:
 - `message_seq` 是远端消息序号，不是时间戳；`initiator_uid` 是请求 UID，也不是 QQ 号。
 - `temp` 会话没有对应的工具目标。
 
-## 23 个工具
+## 25 个工具
 
 ### 查询
 
@@ -41,6 +41,7 @@ metadata:
 | `get_private_file_download_url` | `{user_id, file_id, file_hash, is_self_send?}` | 查私聊文件下载链接 |
 | `get_group_file_download_url` | `{group_id, file_id}` | 查群文件下载链接 |
 | `get_group_files` | `{group_id, parent_folder_id?}` | 查群文件和文件夹 |
+| `get_friend_info` | `{user_id}` | 查指定好友资料；资料字段由目标服务定义 |
 
 查询工具只返回 Milky envelope，不下载、缓存或解码文件。群文件的手动下载流程见
 [group-file-download.md](references/group-file-download.md)。文件样文里已经有 `file_id` 时，
@@ -80,6 +81,7 @@ metadata:
 | `reject_group_request` | `{notification_seq, notification_type, group_id, is_filtered?, reason?}` | 拒绝入群请求 |
 | `accept_group_invitation` | `{group_id, invitation_seq}` | 接受群邀请 |
 | `reject_group_invitation` | `{group_id, invitation_seq}` | 拒绝群邀请 |
+| `set_group_member_special_title` | `{group_id, user_id, special_title}` | 设置群成员专属头衔 |
 
 `notification_type` 只接受 `join_request` 和 `invited_join_request`。群请求、群邀请事件只做
 observe-only，通知、普通正文、关键词和 Will 都不会替你接受或拒绝。四个群请求 Action 只有
@@ -101,7 +103,7 @@ observe-only，通知、普通正文、关键词和 Will 都不会替你接受�
 缺失、`null` 或空 hash 会显示为 `NOT SUPPORTED`。不要从正文反解析 hash，也不要把文件名当
 成本地路径。文件引用和媒体引用分开，文件不会自动变成出站文件。
 
-本 skill 的 23 个 ToolSpec 不含媒体发送。需发送本地图片、音频、视频或文档时，在回复中包含
+本 skill 的 25 个 ToolSpec 不含媒体发送。需发送本地图片、音频、视频或文档时，在回复中包含
 `MEDIA:<local_path>`，例如 `MEDIA:~/path/to/clip.mp4`；显式使用 `send_message` 工具时，把同一
 指令放进其 `message` 参数。Hermes 会按扩展名走 Milky 的原生媒体或文件上传入口。不要把
 本地路径当普通文本发送，也不要在发送入口失败前声称 Milky 不支持媒体或文件发送。

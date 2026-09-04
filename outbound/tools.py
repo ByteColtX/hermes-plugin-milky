@@ -388,6 +388,24 @@ GET_FRIEND_REQUESTS_SCHEMA = {
     },
 }
 
+GET_FRIEND_INFO_SCHEMA = {
+    "name": "get_friend_info",
+    "description": "查询指定好友资料并保留完整 Milky 结果；资料字段由目标服务定义。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "user_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "好友 QQ 号",
+            }
+        },
+        "required": ["user_id"],
+        "additionalProperties": False,
+    },
+}
+
 ACCEPT_FRIEND_REQUEST_SCHEMA = {
     "name": "accept_friend_request",
     "description": "接受指定好友请求；仅在显式调用时执行。",
@@ -606,6 +624,34 @@ GET_GROUP_FILES_SCHEMA = {
     },
 }
 
+SET_GROUP_MEMBER_SPECIAL_TITLE_SCHEMA = {
+    "name": "set_group_member_special_title",
+    "description": "设置群成员专属头衔；仅在显式调用时执行，空字符串按原值传递。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "group_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "群号",
+            },
+            "user_id": {
+                "type": "integer",
+                "minimum": 10001,
+                "maximum": 4294967295,
+                "description": "群成员 QQ 号",
+            },
+            "special_title": {
+                "type": "string",
+                "description": "专属头衔；空字符串表示按目标服务语义清除或设置为空",
+            },
+        },
+        "required": ["group_id", "user_id", "special_title"],
+        "additionalProperties": False,
+    },
+}
+
 TOOL_SPECS = (
     SEND_PROFILE_LIKE_SCHEMA,
     SEND_FRIEND_NUDGE_SCHEMA,
@@ -630,6 +676,8 @@ TOOL_SPECS = (
     ACCEPT_GROUP_INVITATION_SCHEMA,
     REJECT_GROUP_INVITATION_SCHEMA,
     GET_GROUP_FILES_SCHEMA,
+    GET_FRIEND_INFO_SCHEMA,
+    SET_GROUP_MEMBER_SPECIAL_TITLE_SCHEMA,
 )
 
 
@@ -650,7 +698,7 @@ def unbind_sender() -> None:
 
 
 def register_tools(ctx: Any) -> None:
-    """向 Hermes 注册与 Milky operationId 对齐的二十三个异步 ToolSpec。"""
+    """向 Hermes 注册与 Milky operationId 对齐的二十五个异步 ToolSpec。"""
 
     register_tool = getattr(ctx, "register_tool", None)
     if not callable(register_tool):
@@ -679,6 +727,8 @@ def register_tools(ctx: Any) -> None:
         _handle_accept_group_invitation,
         _handle_reject_group_invitation,
         _handle_get_group_files,
+        _handle_get_friend_info,
+        _handle_set_group_member_special_title,
     )
     for spec, handler in zip(TOOL_SPECS, handlers, strict=True):
         register_tool(
@@ -1267,6 +1317,53 @@ async def _handle_get_group_files(args: object, **kwargs: Any) -> str:
     )
 
 
+async def _handle_get_friend_info(args: object, **kwargs: Any) -> str:
+    """校验并执行好友资料查询工具。"""
+
+    del kwargs
+    if not _valid_keys(args, {"user_id"}) or "user_id" not in args:
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_integer(values["user_id"], minimum=10001, maximum=4294967295):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "get_friend_info",
+        values,
+        lambda: sender.get_friend_info(values["user_id"]),
+    )
+
+
+async def _handle_set_group_member_special_title(args: object, **kwargs: Any) -> str:
+    """校验并执行群成员专属头衔工具。"""
+
+    del kwargs
+    required = {"group_id", "user_id", "special_title"}
+    if not _valid_keys(args, required) or not required.issubset(args):
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_integer(values["group_id"], minimum=10001, maximum=4294967295):
+        return _tool_error("invalid_input")
+    if not _tool_integer(values["user_id"], minimum=10001, maximum=4294967295):
+        return _tool_error("invalid_input")
+    if not isinstance(values["special_title"], str):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "set_group_member_special_title",
+        values,
+        lambda: sender.set_group_member_special_title(
+            values["group_id"],
+            values["user_id"],
+            values["special_title"],
+        ),
+    )
+
+
 def _valid_group_request_values(values: Mapping[str, object], *, allow_reason: bool) -> bool:
     """校验群请求工具的公共字段。"""
 
@@ -1536,6 +1633,7 @@ __all__ = [
     "ACCEPT_GROUP_REQUEST_SCHEMA",
     "DELETE_FRIEND_SCHEMA",
     "GET_FORWARDED_MESSAGES_SCHEMA",
+    "GET_FRIEND_INFO_SCHEMA",
     "GET_FRIEND_REQUESTS_SCHEMA",
     "GET_GROUP_FILES_SCHEMA",
     "GET_GROUP_FILE_DOWNLOAD_URL_SCHEMA",
@@ -1552,6 +1650,7 @@ __all__ = [
     "SEND_FRIEND_NUDGE_SCHEMA",
     "SEND_PROFILE_LIKE_SCHEMA",
     "SET_GROUP_MEMBER_MUTE_SCHEMA",
+    "SET_GROUP_MEMBER_SPECIAL_TITLE_SCHEMA",
     "SET_GROUP_WHOLE_MUTE_SCHEMA",
     "TOOL_SPECS",
     "bind_sender",

@@ -1,0 +1,22 @@
+{
+  "success": {
+    "status": "ok",
+    "retcode": 0,
+    "data": {
+      "user_id": 800000001,
+      "opaque_extension": "fixture-friend-extension"
+    },
+    "future_envelope": true
+  },
+  "rejected": {
+    "status": "failed",
+    "retcode": 1001,
+    "data": {},
+    "message": "synthetic-rejection"
+  },
+  "malformed_data": {"status": "ok", "retcode": 0, "data": null},
+  "malformed_non_object": {"status": "ok", "retcode": 0, "data": []},
+  "http_error": {"status_code": 404, "body": "synthetic-http-error"},
+  "non_json": {"status_code": 200, "body": "synthetic-non-json"},
+  "transport_unknown": {"classification": "transport_unknown"}
+}

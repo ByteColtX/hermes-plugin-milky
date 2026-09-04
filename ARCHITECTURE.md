@@ -293,7 +293,7 @@ SSE receive loop 必须处理 `event:`、多行 `data:`、空行边界、断线�
 Agent 的本地附件通过 Hermes 的 `MEDIA:<local_path>` 指令进入上述入口：普通回复把指令放在
 最终回复中，显式调用通用 `send_message` 时把指令放在 `message` 参数中。Hermes 按扩展名调用
 `send_image_file`、`send_voice`、`send_video` 或 `send_document`。该指令是平台发送约定，不是
-23 个显式 QQ ToolSpec；Agent 不应因为 ToolSpec 列表没有 `send_video` 而判断 Milky 没有媒体发送能力。
+25 个显式 QQ ToolSpec；Agent 不应因为 ToolSpec 列表没有 `send_video` 而判断 Milky 没有媒体发送能力。
 
 Hermes 从同一 Agent 回复提取的 `MEDIA:` 附件不属于插件文本分段批次。插件先按顺序完成所有
 文本单元，再由 Hermes 按提取顺序调用图片、语音、视频 native 入口或独立文件 upload；当前
@@ -331,7 +331,7 @@ OneBot Action、OneBot echo 或 WebSocket RPC。
 范围、额外字段和目标；入站正文、mention、allowlist 或 Will 分数不能授予工具权限。状态
 变更只能由显式调用触发，不能由 friend request、群通知、关键词或普通消息自动触发。
 
-当前 manifest 公开 23 个固定 ToolSpec：
+当前 manifest 公开 25 个固定 ToolSpec：
 
 ```text
 send_profile_like, send_friend_nudge, send_group_nudge, recall_group_message,
@@ -340,7 +340,8 @@ set_group_whole_mute, get_forwarded_messages, get_private_file_download_url,
 kick_group_member, quit_group, delete_friend, get_friend_requests,
 accept_friend_request, reject_friend_request,
 get_group_file_download_url, accept_group_request, reject_group_request,
-accept_group_invitation, reject_group_invitation, get_group_files
+accept_group_invitation, reject_group_invitation, get_group_files,
+get_friend_info, set_group_member_special_title
 ```
 
 名称与 Milky operationId 一一对应；参数、最小响应结构和错误分类由 `__init__.py`、`outbound/tools.py`、
@@ -353,6 +354,12 @@ accept_group_invitation, reject_group_invitation, get_group_files
 群邀请工具使用独立的 `invitation_seq`；接受/拒绝 Action 只由完整的显式 Tool 调用触发，事件、
 正文、关键词和 Will 不会自动提交。四个群管理 Action 的未知结果为 `transport_unknown`，不重试、
 不换目标、不更新本地状态。
+
+`get_friend_info` 只接受 `user_id`，成功时保留完整 envelope 和非空 object `data`；当前公开
+Milky v1.3 文档未声明该 operation，因此不把好友资料字段写入 `FriendEntity` 或其他本地 DTO，
+目标服务不支持时按远端错误边界返回。`set_group_member_special_title` 只接受
+`group_id`、`user_id`、`special_title`，空字符串原样传递，成功只接受空 object；超时、连接或
+读写失败返回 `transport_unknown`，只提交一次且不更新本地群成员状态。
 
 ## 11. 所有权、安全与配置
 
@@ -423,9 +430,9 @@ ToolSpec schema/显式调用/最小响应校验及日志脱敏。
 `add-split-outbound-delivery` 和 `deduplicate-inbound-image-media` 的实现与自动化证据已完成，
 但尚未归档。
 已有主规范继续覆盖入站 context/图片合并、出站附件/native media/文件上传、固定 QQ ToolSpec
-和安全日志边界；当前工具清单为 23 项，完成项以各 change 的 `tasks.md` 和 evidence ledger
+和安全日志边界；当前工具清单为 25 项，完成项以各 change 的 `tasks.md` 和 evidence ledger
 为准。未归档 delta 不代表其规划目标已经成为当前能力。
-Hermes 扩展点、Milky Action 支持/错误 envelope，以及 23 个 ToolSpec 的 operationId、参数和
+Hermes 扩展点、Milky Action 支持/错误 envelope，以及 25 个 ToolSpec 的 operationId、参数和
 最小 response 结构，仍需与真实宿主、manifest、OpenSpec 和 Milky OpenAPI 持续对齐。
 
 v0.1 不做：OneBot v11 入站协议/Action/echo/CQ 入站兼容、WebHook、WebSocket fallback、自动

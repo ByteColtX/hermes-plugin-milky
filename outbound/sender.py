@@ -857,6 +857,21 @@ class MilkyOutboundSender:
         except (ActionError, TypeError, ValueError) as error:
             return _failure(_error_classification(error), _safe_reason(error))
 
+    async def get_friend_info(self, user_id: object) -> object:
+        """查询好友资料并保留完整的 opaque 成功 envelope。"""
+
+        try:
+            user_value = _strict_qq_id(user_id, "user_id")
+            return await self._execute_tool_action(
+                "get_friend_info",
+                {"user_id": user_value},
+                lambda: self._client.get_friend_info(user_value),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
     async def accept_friend_request(
         self,
         initiator_uid: object,
@@ -918,6 +933,42 @@ class MilkyOutboundSender:
                     uid_value,
                     is_filtered=is_filtered,
                     reason=reason,
+                ),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
+    async def set_group_member_special_title(
+        self,
+        group_id: object,
+        user_id: object,
+        special_title: object,
+    ) -> object:
+        """显式设置群成员专属头衔，原样保留包括空字符串的值。"""
+
+        try:
+            group_value = _strict_qq_id(group_id, "group_id")
+            user_value = _strict_qq_id(user_id, "user_id")
+            if not isinstance(special_title, str):
+                raise ActionError(
+                    "invalid_input",
+                    "set_group_member_special_title",
+                    "special_title is invalid",
+                )
+            params = {
+                "group_id": group_value,
+                "user_id": user_value,
+                "special_title": special_title,
+            }
+            return await self._execute_tool_action(
+                "set_group_member_special_title",
+                params,
+                lambda: self._client.set_group_member_special_title(
+                    group_value,
+                    user_value,
+                    special_title,
                 ),
             )
         except asyncio.CancelledError:
@@ -1213,12 +1264,15 @@ def _validate_tool_response(action: str, envelope: MilkyEnvelope) -> None:
         requests = envelope.data.get("requests")
         if not _is_object_sequence(requests):
             raise ActionError("malformed", action, "response requests are malformed")
+    elif action == "get_friend_info" and not envelope.data:
+        raise ActionError("malformed", action, "response data is malformed")
     elif (
         action
         in {
             "kick_group_member",
             "quit_group",
             "delete_friend",
+            "set_group_member_special_title",
             "accept_friend_request",
             "reject_friend_request",
             "accept_group_request",

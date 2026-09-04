@@ -62,6 +62,15 @@
       "additionalProperties": false
     },
     {
+      "operation_id": "get_friend_info",
+      "required": ["user_id"],
+      "optional": [],
+      "properties": {
+        "user_id": {"type": "integer", "minimum": 10001, "maximum": 4294967295}
+      },
+      "additionalProperties": false
+    },
+    {
       "operation_id": "accept_friend_request",
       "required": ["initiator_uid"],
       "optional": ["is_filtered"],
@@ -144,6 +153,17 @@
       "properties": {
         "group_id": {"type": "integer", "minimum": 10001, "maximum": 4294967295},
         "parent_folder_id": {"type": "string", "nullable": true, "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    {
+      "operation_id": "set_group_member_special_title",
+      "required": ["group_id", "user_id", "special_title"],
+      "optional": [],
+      "properties": {
+        "group_id": {"type": "integer", "minimum": 10001, "maximum": 4294967295},
+        "user_id": {"type": "integer", "minimum": 10001, "maximum": 4294967295},
+        "special_title": {"type": "string"}
       },
       "additionalProperties": false
     }
