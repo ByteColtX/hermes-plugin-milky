@@ -9,7 +9,7 @@ MessageEvent，同时严格区分历史上下文、当前正文、系统观察�
 
 ### Requirement: friend 和 group 映射到明确 MessageEvent
 
-正常 friend 消息 MUST 映射为 private message，正常 group 消息 MUST 映射为 group message，并保留 sender ID/name、Milky message ID 字符串、`source=milky`、正文、raw、timestamp、reply、已 materialize 的附件路径/MIME、channel_context 和安全 metadata。对于同一次 trigger，`MessageEvent.media_urls`/`media_types` MUST 将 `channel_context` 中历史消息的已 materialize 图片与当前 trigger 消息的已 materialize 图片合并；历史图片按上下文顺序在前，当前图片按当前消息顺序在后，并按本地路径去重且保持两字段一一对应。原始 `media_resource_references` 与 `file_attachment_references` 不得直接写入 `MessageEvent.media_urls`。
+正常 friend 消息 MUST 映射为 private message，正常 group 消息 MUST 映射为 group message，并保留 sender ID/name、Milky message ID 字符串、`source=milky`、正文、raw、timestamp、reply、已 materialize 的附件路径/MIME、channel_context 和安全 metadata。对于同一次 trigger，`MessageEvent.media_urls`/`media_types` MUST 将 `channel_context` 中历史消息的已 materialize 直接图片与当前 trigger 消息和可见 reply 内容的已 materialize 图片按规定顺序合并；相同图片 bytes 只保留当前 batch 中首次出现的代表，hash 不可用时仅按本地路径去重。历史图片按上下文顺序在前，当前图片按当前消息顺序在后，并同步维护两字段一一对应。原始 `media_resource_references` 与 `file_attachment_references` 不得直接写入 `MessageEvent.media_urls`。
 
 #### Scenario: friend 消息交接
 
@@ -27,15 +27,22 @@ MessageEvent，同时严格区分历史上下文、当前正文、系统观察�
 #### Scenario: 历史图片和当前图片按顺序交给 Hermes
 
 - **WHEN** 一个 trigger batch 包含按上下文顺序排列的两张历史图片，以及当前消息中按 segment 顺序排列的两张图片
-- **THEN** `MessageEvent.media_urls` SHALL 先包含历史两张图片，再包含当前两张图片
+- **THEN** `MessageEvent.media_urls` SHALL 先包含历史图片代表，再包含当前图片代表
 - **AND** `MessageEvent.media_types` SHALL 与 `media_urls` 按相同顺序逐项对应
 - **AND** 当前消息 SHALL 仍只作为正文，历史消息 SHALL 仍只作为 `channel_context`
 
 #### Scenario: 历史和当前图片路径重复
 
-- **WHEN** 历史图片与当前图片的 materialized 本地路径有重复
-- **THEN** `MessageEvent.media_urls` SHALL 只保留每个重复路径的首次出现
-- **AND** `MessageEvent.media_types` SHALL 不产生孤立或重复的类型项
+- **WHEN** 历史图片与当前图片的 materialized 本地路径不同但文件内容相同
+- **THEN** `MessageEvent.media_urls` SHALL 只保留历史 occurrence 的首次代表路径
+- **AND** 当前正文中对应的 image placeholder SHALL 使用历史代表 basename
+- **AND** `MessageEvent.media_types` SHALL 保留历史代表首次出现时的 MIME 且不产生孤立项
+
+#### Scenario: hash 不可用时不推断图片相同
+
+- **WHEN** 两个不同本地路径的 image materialization 无法安全计算 hash
+- **THEN** 两个路径 SHALL 不因 resource_id、URL、summary 或文件名相似而合并
+- **AND** 系统 SHALL 仅执行既有的 exact path 去重
 
 #### Scenario: 历史图片未 materialize
 
@@ -90,26 +97,13 @@ trigger 的当前消息 MUST 只作为本次正文；已经 drain 的历史 wait
 ### Requirement: Agent-facing 文本区分历史上下文和当前消息
 
 当存在 detached 历史时，适配器 MUST 将历史紧凑记录只放入 `MessageEvent.channel_context`，
-并将当前 trigger 消息以同一紧凑 header 格式放入 `MessageEvent.text`。适配器 MUST NOT
-把 `[New message]` 标记或当前消息复制到 `channel_context`；Hermes 已有的 Agent 输入组装
-语义负责在历史块和当前消息之间加入该标记。没有历史时，适配器 MUST 保持
-`channel_context=None`，并只交付当前消息正文。
+并使用资源解析及 batch 内容去重完成后的历史正文；当前 trigger 消息 MUST 以同一紧凑 header 格式放入 `MessageEvent.text`，并使用与其媒体代表一致的图片 basename。适配器 MUST NOT 把 `[New message]` 标记或当前消息复制到 `channel_context`；Hermes 已有的 Agent 输入组装语义负责在历史块和当前消息之间加入该标记。没有历史时，适配器 MUST 保持 `channel_context=None`，并只交付当前消息正文。
 
 #### Scenario: Agent 收到历史和当前消息
 
-- **WHEN** 两条历史消息后收到一条当前 trigger 消息
-- **THEN** `channel_context` SHALL 仅为历史记录块，例如：
-  ~~~text
-  [Alice uid 101 msg_id 7]
-  第一条
-  [Bob uid 202 msg_id 8]
-  第二条
-  ~~~
-- **AND** `text` SHALL 仅为当前消息记录，例如：
-  ~~~text
-  [Carol uid 303 msg_id 9]
-  触发
-  ~~~
+- **WHEN** 两条历史消息后收到一条当前 trigger 消息，且历史中有重复内容图片
+- **THEN** `channel_context` SHALL 仅为按顺序渲染的历史记录块，并引用首次代表 basename
+- **AND** `text` SHALL 仅为当前消息记录，并引用 batch 选择的图片代表 basename
 - **AND** Hermes 的有效 Agent 输入 SHALL 在历史块后以空行和 `[New message]` 分隔当前消息
 - **AND** 当前消息 SHALL 不出现在 `channel_context`
 

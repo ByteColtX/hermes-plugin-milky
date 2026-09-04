@@ -37,10 +37,12 @@ segment 类型。payload 无法解析或没有 `meta` 字段时，正文 MUST �
 时，正文 MAY 使用 `[reply:NOT SUPPORTED]`，并保留 malformed 或安全资源诊断。
 
 normalizer 阶段生成的 image placeholder 是临时展示。trigger 阶段 image 经 Hermes image helper
-成功落盘后，最终正文 MUST 将对应 image placeholder 替换为
-`[img:file_name=<basename>]`，其中 `<basename>` MUST 与交给 Hermes `media_urls` 的对应路径
+成功落盘后，最终正文 MUST 将对应 image occurrence 替换为其在当前
+`ResolvedTriggerBatch` 中选定的首次代表路径 basename；所有已确认内容相同的可见 occurrence
+MUST 使用同一个代表 basename。代表 basename MUST 与交给 Hermes `media_urls` 的对应路径
 basename 一致。helper 不可用、下载失败或返回无效本地路径时，正文 MUST 使用
-`[img:file_name=NOT SUPPORTED]`；不得继续使用 `summary` 作为成功占位文件名。
+`[img:file_name=NOT SUPPORTED]`；hash 不可用时不得用 summary、resource_id、URL、文件名或
+其他协议字段推断图片相同。
 
 `file` 只属于入站消息，不属于 outgoing message segment。除架构明确允许主消息
 `message_seq` 缺失并进入 `no_stable_message_id` 降级外，规范化 SHALL 不补造 OpenAPI 必填
@@ -101,16 +103,27 @@ basename 一致。helper 不可用、下载失败或返回无效本地路径时�
 
 #### Scenario: image placeholder follows Hermes basename
 
-- **WHEN** trigger 阶段 image helper 成功返回本地落盘路径
-- **THEN** 最终正文 SHALL 使用 `[img:file_name=<returned basename>]`
-- **AND** `<returned basename>` SHALL 与 Hermes `media_urls` 中对应路径的 basename 相同
-- **AND** SHALL 不使用 image `summary` 作为最终成功占位文件名
+- **WHEN** trigger 阶段 image helper 成功返回本地落盘路径，且该 occurrence 在当前 batch 中可计算
+  内容摘要
+- **THEN** 最终正文 SHALL 使用当前 batch 选定的首次代表路径 basename
+- **AND** 该 basename SHALL 与 Hermes `media_urls` 中对应路径的 basename 相同
+- **AND** SHALL 不使用 image `summary`、`resource_id` 或 helper 的其他随机命名作为跨 occurrence
+  的 identity
 
 #### Scenario: multiple image placeholders keep helper basename order
 
-- **WHEN** 一条消息按顺序包含多个 image segment 且 helper 依次返回多个本地路径
-- **THEN** 每个 image placeholder SHALL 替换为对应 helper 返回路径的 basename
-- **AND** 替换结果 SHALL 保持 image segment 与 `media_urls` 的顺序
+- **WHEN** 一条消息或其可见 reply 内容按顺序包含多个 image occurrence，且其中若干 helper 返回
+  路径的文件内容完全相同
+- **THEN** 内容相同的 occurrence 的 placeholder SHALL 全部使用首次 occurrence 的代表 basename
+- **AND** 内容不同的 occurrence SHALL 按首次出现顺序使用各自代表 basename
+- **AND** 正文中 occurrence 的数量和原始顺序 SHALL 保持不变
+
+#### Scenario: image hash unavailable keeps conservative identity
+
+- **WHEN** image helper 成功但本地文件不可安全读取、文件状态不符合限制或 SHA-256 计算失败
+- **THEN** 系统 SHALL 不宣称该 occurrence 与其他图片内容相同
+- **AND** SHALL 保留该 occurrence 的独立 helper basename（若其路径仍是可交给 Hermes 的本地路径）或
+  现有失败占位
 
 #### Scenario: image helper failure keeps typed fallback
 
