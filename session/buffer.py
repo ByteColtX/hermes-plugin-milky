@@ -279,6 +279,8 @@ def render_message_record(message: object) -> str:
     reply_id = getattr(message, "quote_message_id", None)
     if reply_id is None:
         reply_id = getattr(message, "reply_message_id", None)
+    if reply_id is not None and getattr(message, "quote_target_is_self", False) is True:
+        reply_id = "your_previous_msg"
 
     fields = [
         _escape_header(sender_name),

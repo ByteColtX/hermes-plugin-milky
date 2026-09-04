@@ -60,6 +60,7 @@ class CanonicalMessage:
     diagnostics: tuple[str, ...] = ()
     will_input: WillInput | None = None
     is_self_quote: bool = False
+    quote_target_is_self: bool = False
 
     @property
     def time(self) -> int:
@@ -221,6 +222,7 @@ def _canonicalize_normalized(
         diagnostics=diagnostics,
         will_input=normalized.will_input,
         is_self_quote=normalized.is_self_quote,
+        quote_target_is_self=normalized.quote_target_is_self,
     )
 
 

@@ -44,6 +44,7 @@ class ContextMessage:
     body: str
     message_id: str | None = None
     reply_message_id: str | None = None
+    quote_target_is_self: bool = False
 
 
 def load_fixture(relative_path: str) -> object:
@@ -75,6 +76,55 @@ def test_message_context_is_single_line_and_escapes_header_boundaries() -> None:
     assert render_message_record(second) == fixture["expected"]["second"]
     assert "\n" not in render_message_record(first)
     assert "\r" not in render_message_record(first)
+
+
+def test_context_renderer_labels_only_confirmed_self_reply_target() -> None:
+    """Agent-facing header 只将已确认的实际引用目标显示为自引用。"""
+
+    self_reply = ContextMessage(
+        "group:700000001",
+        "合成机器人",
+        800000002,
+        "回复正文",
+        message_id="7001",
+        reply_message_id="6999",
+        quote_target_is_self=True,
+    )
+    other_reply = ContextMessage(
+        "group:700000001",
+        "合成用户",
+        800000003,
+        "回复正文",
+        message_id="7002",
+        reply_message_id="6998",
+    )
+    unknown_target = ContextMessage(
+        "group:700000001",
+        "合成用户",
+        800000003,
+        "回复正文",
+        message_id="7003",
+        reply_message_id="6997",
+    )
+    no_target = ContextMessage(
+        "group:700000001",
+        "合成用户",
+        800000003,
+        "无引用",
+        message_id="7004",
+        quote_target_is_self=True,
+    )
+
+    assert render_message_record(self_reply) == (
+        "<合成机器人 uid 800000002 msg_id 7001 reply_to your_previous_msg> 回复正文"
+    )
+    assert render_message_record(other_reply) == (
+        "<合成用户 uid 800000003 msg_id 7002 reply_to 6998> 回复正文"
+    )
+    assert render_message_record(unknown_target) == (
+        "<合成用户 uid 800000003 msg_id 7003 reply_to 6997> 回复正文"
+    )
+    assert render_message_record(no_target) == "<合成用户 uid 800000003 msg_id 7004> 无引用"
 
 
 def test_segment_placeholders_keep_order_and_variable_light_app_meta() -> None:
@@ -335,3 +385,94 @@ def test_complete_reply_uses_reply_header_without_success_placeholder() -> None:
     assert event.text == "<合成好友 uid 800000001 msg_id 7991 reply_to 7989> 引用消息"
     assert event.reply_to_message_id == "7989"
     assert "[引用]" not in event.text
+
+
+def test_current_bot_reply_uses_label_and_preserves_hermes_reply_metadata() -> None:
+    """当前消息显示自引用文案时仍保留 Hermes 的真实 reply 元数据。"""
+
+    from tests.test_hermes_pipeline import FakeHermes, make_pipeline
+    from tests.test_resources import FakeHermesMedia, make_client
+
+    async def scenario():
+        hermes = FakeHermes()
+        resolver = ResourceResolver(make_client(), FakeHermesMedia())
+        pipeline = make_pipeline(hermes, resolver)
+        payload = load_fixture("events/message_receive.friend.json")
+        payload["data"]["message_seq"] = 7992
+        payload["data"]["segments"] = [
+            {
+                "type": "reply",
+                "data": {
+                    "message_seq": 7989,
+                    "sender_id": 900000001,
+                    "sender_name": "合成机器人",
+                    "time": 1700000009,
+                    "segments": [{"type": "text", "data": {"text": "机器人原文"}}],
+                },
+            },
+            {"type": "text", "data": {"text": "引用机器人"}},
+        ]
+        assert (await pipeline.handle_event(payload)).classification == "trigger"
+        await pipeline.wait_idle()
+        return hermes.events[0]
+
+    event = asyncio.run(scenario())
+
+    assert (
+        event.text == "<合成好友 uid 800000001 msg_id 7992 reply_to your_previous_msg> 引用机器人"
+    )
+    assert event.message_id == "7992"
+    assert event.reply_to_message_id == "7989"
+    assert event.reply_to_author_id == "900000001"
+    assert event.reply_to_author_name == "合成机器人"
+    assert event.reply_to_is_own_message is True
+
+
+def test_history_bot_reply_uses_same_label_and_excludes_current_message() -> None:
+    """wait 历史引用 Bot 时使用同一文案，current 仍只进入本次正文。"""
+
+    from tests.test_hermes_pipeline import FakeHermes, make_pipeline
+    from tests.test_resources import FakeHermesMedia, make_client
+    from will import RoutingConfig
+
+    async def scenario():
+        hermes = FakeHermes()
+        resolver = ResourceResolver(make_client(), FakeHermesMedia())
+        pipeline = make_pipeline(
+            hermes,
+            resolver,
+            routing=RoutingConfig(direct="trigger", mention="trigger", all_message="wait"),
+        )
+        history = load_fixture("events/message_receive.group.all_segments.json")
+        history["data"]["message_seq"] = 6101
+        history["data"]["segments"] = [
+            {
+                "type": "reply",
+                "data": {
+                    "message_seq": 6099,
+                    "sender_id": 900000001,
+                    "sender_name": "合成机器人",
+                    "time": 1700000009,
+                    "segments": [{"type": "text", "data": {"text": "机器人原文"}}],
+                },
+            },
+            {"type": "text", "data": {"text": "历史引用"}},
+        ]
+        current = load_fixture("events/message_receive.group.all_segments.json")
+        current["data"]["message_seq"] = 6102
+        current["data"]["segments"] = [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "text", "data": {"text": "触发消息"}},
+        ]
+        assert (await pipeline.handle_event(history)).classification == "wait"
+        assert (await pipeline.handle_event(current)).classification == "trigger"
+        await pipeline.wait_idle()
+        return hermes.events[0]
+
+    event = asyncio.run(scenario())
+
+    assert event.channel_context == (
+        "<合成名片 uid 800000002 msg_id 6101 reply_to your_previous_msg> 历史引用"
+    )
+    assert event.text == "<合成名片 uid 800000002 msg_id 6102> @合成机器人触发消息"
+    assert "触发消息" not in event.channel_context

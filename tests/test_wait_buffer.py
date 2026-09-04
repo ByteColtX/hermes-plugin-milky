@@ -25,6 +25,7 @@ class FakeMessage:
     body: str
     message_id: str | None = None
     quote_message_id: str | None = None
+    quote_target_is_self: bool = False
     raw: dict[str, str] | None = None
 
 
@@ -36,6 +37,7 @@ def message(
     body: str | None = None,
     message_id: str | None = None,
     quote_message_id: str | None = None,
+    quote_target_is_self: bool = False,
 ) -> FakeMessage:
     """构造一条最小的规范化历史消息。"""
 
@@ -46,6 +48,7 @@ def message(
         body=body or f"body-{number}",
         message_id=message_id if message_id is not None else str(number),
         quote_message_id=quote_message_id,
+        quote_target_is_self=quote_target_is_self,
     )
 
 
@@ -141,6 +144,22 @@ def test_context_omits_empty_ids_and_escapes_untrusted_boundaries() -> None:
     )
     assert render_message_record(no_ids) == "<sender-2 uid 102> body-2"
     assert render_channel_context(()) is None
+
+
+def test_renderer_uses_self_quote_label_only_for_explicit_target_fact() -> None:
+    """renderer 只接受实际 header 目标的显式归属事实。"""
+
+    assert (
+        render_message_record(message(1, quote_message_id="9001", quote_target_is_self=True))
+        == "<sender-1 uid 101 msg_id 1 reply_to your_previous_msg> body-1"
+    )
+    assert render_message_record(message(2, quote_message_id="9002")) == (
+        "<sender-2 uid 102 msg_id 2 reply_to 9002> body-2"
+    )
+    assert (
+        render_message_record(message(3, quote_target_is_self=True))
+        == "<sender-3 uid 103 msg_id 3> body-3"
+    )
 
 
 def test_context_does_not_read_raw_payload() -> None:

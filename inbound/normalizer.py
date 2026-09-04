@@ -70,6 +70,7 @@ class NormalizedMessage:
     friend: FriendEntity | None
     group: GroupEntity | None
     group_member: GroupMemberEntity | None
+    quote_target_is_self: bool = False
 
     @property
     def time(self) -> int:
@@ -237,6 +238,7 @@ def normalize_message(
         friend=message.friend,
         group=message.group,
         group_member=message.group_member,
+        quote_target_is_self=extracted.quote_target_is_self,
     )
     if not extracted.has_supported_content:
         return NormalizationResult("dropped", None, "no_supported_content")

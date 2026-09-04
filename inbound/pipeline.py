@@ -586,6 +586,7 @@ def _render_resolved_history(batch: object, resolved_batch: ResolvedTriggerBatch
                     body=resolved.body,
                     message_id=canonical.message_id,
                     quote_message_id=canonical.quote_message_id,
+                    quote_target_is_self=canonical.quote_target_is_self,
                 ),
             )
         )
@@ -621,6 +622,7 @@ class _HistoryRecord:
     body: str
     message_id: str | None
     quote_message_id: str | None
+    quote_target_is_self: bool = False
 
 
 def _error_category(error: Exception) -> str:

@@ -105,6 +105,7 @@ class ExtractedSegments:
     diagnostics: tuple[str, ...] = ()
     has_supported_content: bool = False
     metadata: JsonObject = field(default_factory=dict)
+    quote_target_is_self: bool = False
 
 
 def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegments:
@@ -122,6 +123,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
     has_reply = False
     reply_message_seq: int | None = None
     is_self_quote = False
+    quote_target_is_self = False
     has_image = False
     has_supported_content = False
 
@@ -173,6 +175,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
             )
             if reply_message_seq is None and segment.message_seq is not None:
                 reply_message_seq = segment.message_seq
+                quote_target_is_self = segment.sender_id == self_id
             if segment.sender_id == self_id:
                 is_self_quote = True
             if not complete:
@@ -325,6 +328,7 @@ def extract_segments(segments: Sequence[Segment], self_id: int) -> ExtractedSegm
         diagnostics=tuple(diagnostics),
         has_supported_content=has_supported_content,
         metadata=metadata,
+        quote_target_is_self=quote_target_is_self,
     )
 
 

@@ -197,6 +197,37 @@ def test_inline_reply_does_not_need_remote_resolution() -> None:
     assert "[引用]" not in result.value.body
 
 
+def test_quote_target_ownership_uses_first_rendered_reply_only() -> None:
+    """header 归属只由第一个带目标序号的 reply 决定。"""
+
+    def reply(message_seq: int, *, sender_id: int | None = 800000002) -> dict[str, object]:
+        data: dict[str, object] = {
+            "message_seq": message_seq,
+            "time": 1700000005,
+            "segments": [{"type": "text", "data": {"text": "被引用正文"}}],
+        }
+        if sender_id is not None:
+            data["sender_id"] = sender_id
+            data["sender_name"] = "合成回复者"
+        return {"type": "reply", "data": data}
+
+    cases = (
+        ([reply(2001, sender_id=900000001)], True, True),
+        ([reply(2002)], False, False),
+        ([reply(2003, sender_id=None)], False, False),
+        ([reply(2004), reply(2005, sender_id=900000001)], False, True),
+        ([{"type": "text", "data": {"text": "无引用"}}], False, False),
+    )
+    for segments, expected_target, expected_any_self_quote in cases:
+        payload = load_fixture("events/message_receive.friend.json")
+        payload["data"]["segments"] = segments
+        result = normalize_event(payload)
+
+        assert result.value is not None
+        assert result.value.quote_target_is_self is expected_target
+        assert result.value.is_self_quote is expected_any_self_quote
+
+
 def test_target_fixture_keeps_self_quote_separate_from_reply_and_sender() -> None:
     """reply 作者才决定 self quote，当前消息作者和嵌套 mention 不参与判断。"""
 

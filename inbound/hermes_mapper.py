@@ -40,6 +40,7 @@ class _MappedRecord:
     body: str
     message_id: str | None
     quote_message_id: str | None
+    quote_target_is_self: bool = False
 
 
 def map_message_event(
@@ -88,7 +89,15 @@ def map_message_event(
     metadata = _event_metadata(message, resolved, media_urls)
     return event_cls(
         text=render_message_record(
-            _MappedRecord(chat_key, sender_name, sender_id, body, message_id, quote_id)
+            _MappedRecord(
+                chat_key,
+                sender_name,
+                sender_id,
+                body,
+                message_id,
+                quote_id,
+                getattr(message, "quote_target_is_self", False) is True,
+            )
         ),
         message_type=_message_type(message, current_materializations, type_cls),
         user_id=str(sender_id),
