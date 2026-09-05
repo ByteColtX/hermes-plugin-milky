@@ -13,7 +13,7 @@
 | 协议 | Milky v1.3；HTTP Action + SSE `GET /event` |
 | 公开入口 | 根目录 `__init__.py::register(ctx)` |
 | 仓库 | [ByteColtX/hermes-plugin-milky](https://github.com/ByteColtX/hermes-plugin-milky) |
-| 更新日期 | 2026-09-04 |
+| 更新日期 | 2026-09-05 |
 
 边界以本文和 `AGENTS.md` 为准；可观察行为、测试要求和 change 进度以 `openspec/` 为准，安装与配置以 `README.md` 为准，代码与测试提供当前实现证据。单次本地测试、fake host、OpenAPI 文档清单或 fixture 不能证明真实 Hermes 宿主和 Milky 服务已经支持某项能力。
 
@@ -446,9 +446,7 @@ ToolSpec schema/显式调用/最小响应校验及日志脱敏。
 
 ### 当前状态与未决边界
 
-当前未归档 change 有三项：`migrate-platform-hint-to-system-prompt`、
-`add-split-outbound-delivery` 和 `deduplicate-inbound-image-media` 的实现与自动化证据已完成，
-但尚未归档。
+当前未归档 change 只有 `map-face-id-to-chinese-name`；其实现与自动化证据已完成，但尚未归档。
 已有主规范继续覆盖入站 context/图片合并、出站附件/native media/文件上传、固定 QQ ToolSpec
 和安全日志边界；当前工具清单为 25 项，完成项以各 change 的 `tasks.md` 和 evidence ledger
 为准。未归档 delta 不代表其规划目标已经成为当前能力。

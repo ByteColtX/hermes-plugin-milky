@@ -16,7 +16,7 @@ Hermes 的 Milky QQ 平台适配器
 >
 > - **Slash command：** 没有独立的发送者门禁。白名单会话中的任意成员都可能触发 Hermes
 >   内置命令或插件命令。
-> - **ToolSpec：** 23 个 QQ 工具没有独立的调用者和目标授权。模型、其他会话或 cron
+> - **ToolSpec：** 25 个 QQ 工具没有独立的调用者和目标授权。模型、其他会话或 cron
 >   可能查询无关群/好友，或执行禁言、踢人、撤回、退群、删好友、接受/拒绝请求等操作。
 >
 > **最低限度的安全配置：**
@@ -351,6 +351,7 @@ cron 每次创建并关闭临时 Milky client，目前只支持无附件文本�
 - friend 和 group 消息进入普通 Agent 流程；
 - `temp` 会话直接忽略；
 - Milky SSE `GET /event` 中的 `message_recall`、request、notice、lifecycle 和未知事件默认只观察，少数系统事件可作为上下文；
+- `face` segment 的正文占位符对非 `emoji 表情` pack 优先使用随插件发布的本地 catalog 名称；未命中、冲突或目录不可用时回退原 `face_id`，缺失 ID 时使用 `NOT SUPPORTED`；
 - 同一 chat 按顺序处理，`wait` 消息进入有界历史，`trigger` 时再交给 Hermes。
 
 `message_recall` 的上下文行为如下：
@@ -400,7 +401,7 @@ CQ image 仅用于本地 `file://` URI 的 sticker，例如：
 
 ### QQ ToolSpec
 
-插件固定提供 23 个 QQ ToolSpec，覆盖：
+插件固定提供 25 个 QQ ToolSpec，覆盖：
 
 - 群组和成员查询；
 - 文件、转发消息和私聊文件链接查询；
