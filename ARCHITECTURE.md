@@ -31,7 +31,7 @@ hermes-plugin-milky/
 ├── gates/ / will/              # Gate、routing、willingness 和 reply cost
 ├── session/ / state/           # identity、dedup、buffer、MuteTracker
 ├── outbound/                   # formatter、sender、附件、上传和 ToolSpec handler
-├── skills/                     # milky-qq-cq-reference、qq-tools 只读 bundled skill
+├── skills/                     # milky-qq-cq-reference、milky-qq-action-tools 只读 bundled skill
 ├── scripts/                    # milky_smoke.py；受控本地 smoke
 ├── tests/                      # 脱敏 fixture、fake transport 和模块测试
 ├── openspec/                   # 主 specs、active changes 和 evidence ledger
@@ -120,7 +120,7 @@ Gate 不做网络 I/O，Will 不做授权，session 不复制 Hermes 队列；�
 
 ### 注册与连接
 
-`register(ctx)` 是唯一公开入口：读取 context、一次性解析配置，注册 `milky-qq-cq-reference`、`qq-tools`、`/milky` 和显式 ToolSpec，登记 `MILKY_HOME_CHANNEL`，组装 client/SSE/MuteTracker/Will/session/pipeline/sender，并调用 Hermes 平台注册接口。`platform_hint` 只包含 `You are communicating via Hermes's Milky QQ platform.`；宿主提供 `register_system_prompt_section` 时，入口另外登记 `hermes-plugin-milky.qq-platform-guidance` 的 `after_memory` section。
+`register(ctx)` 是唯一公开入口：读取 context、一次性解析配置，注册 `milky-qq-cq-reference`、`milky-qq-action-tools`、`/milky` 和显式 ToolSpec，登记 `MILKY_HOME_CHANNEL`，组装 client/SSE/MuteTracker/Will/session/pipeline/sender，并调用 Hermes 平台注册接口。`platform_hint` 只包含 `You are communicating via Hermes's Milky QQ platform.`；宿主提供 `register_system_prompt_section` 时，入口另外登记 `hermes-plugin-milky.qq-platform-guidance` 的 `after_memory` section。
 
 该 section 使用注册实例共享的进程内身份快照。adapter 在登录、群列表和每个群的 Bot 成员状态同步成功、普通消息入口完成组装后发布已确认的 `self_id` 和 `nickname`；section renderer 只读快照，不访问 Milky client，不读取 session metadata，也不从消息或配置推断身份。未连接、同步失败或 nickname 无法安全规范化时，section 返回空内容，由 Hermes 跳过该 section；缺少宿主 section API 时仍完成只含首句的平台注册。
 

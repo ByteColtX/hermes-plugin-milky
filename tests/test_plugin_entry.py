@@ -128,7 +128,7 @@ def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) ->
 
         assert dict(context.skills) == {
             "milky-qq-cq-reference": PROJECT_ROOT / "skills" / "milky-qq-cq-reference" / "SKILL.md",
-            "qq-tools": PROJECT_ROOT / "skills" / "qq-tools" / "SKILL.md",
+            "milky-qq-action-tools": PROJECT_ROOT / "skills" / "milky-qq-action-tools" / "SKILL.md",
         }
         assert all(skill_path.is_file() for _, skill_path in context.skills)
 
@@ -310,18 +310,18 @@ def test_bundled_skill_uses_host_namespace_and_does_not_overwrite_siblings() -> 
 
     milky = NamespacedSkillContext("hermes-plugin-milky")
     sibling = NamespacedSkillContext("another-plugin")
-    for skill_name in ("milky-qq-cq-reference", "qq-tools"):
+    for skill_name in ("milky-qq-cq-reference", "milky-qq-action-tools"):
         skill_path = PROJECT_ROOT / "skills" / skill_name / "SKILL.md"
         milky.register_skill(skill_name, skill_path)
         sibling.register_skill(skill_name, skill_path)
 
     assert set(milky.plugin_skills) == {
         "hermes-plugin-milky:milky-qq-cq-reference",
-        "hermes-plugin-milky:qq-tools",
+        "hermes-plugin-milky:milky-qq-action-tools",
     }
     assert set(sibling.plugin_skills) == {
         "another-plugin:milky-qq-cq-reference",
-        "another-plugin:qq-tools",
+        "another-plugin:milky-qq-action-tools",
     }
     assert milky.user_skills == {}
     assert sibling.user_skills == {}
@@ -340,7 +340,9 @@ def test_qq_skills_are_split_and_do_not_add_tools() -> None:
         / "references"
         / "face-id-to-chinese-name.md"
     ).read_text(encoding="utf-8")
-    tools_skill = (PROJECT_ROOT / "skills" / "qq-tools" / "SKILL.md").read_text(encoding="utf-8")
+    tools_skill = (PROJECT_ROOT / "skills" / "milky-qq-action-tools" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
 
     assert "[CQ:at,qq=<uid>]" in cq_skill
     assert "[CQ:reply,id=<msg_id>]" in cq_skill

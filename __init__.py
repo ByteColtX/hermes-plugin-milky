@@ -28,7 +28,7 @@ PLATFORM_GUIDANCE = """
 - Only use real IDs drawn from the current message or channel context.
 
 - CQ code details: view skill `hermes-plugin-milky:milky-qq-cq-reference`.
-- QQ tool list: view skill `hermes-plugin-milky:qq-tools`.
+- QQ action tool list: view skill `hermes-plugin-milky:milky-qq-action-tools`.
 """
 
 MILKY_PROMPT_SECTION_ID = "hermes-plugin-milky.qq-platform-guidance"
@@ -66,7 +66,7 @@ def _register_bundled_skill(ctx: Any) -> None:
     if not callable(register_skill):
         return
 
-    for skill_name in ("milky-qq-cq-reference", "qq-tools"):
+    for skill_name in ("milky-qq-cq-reference", "milky-qq-action-tools"):
         skill_path = Path(_PLUGIN_ROOT) / "skills" / skill_name / "SKILL.md"
         if skill_path.is_file():
             register_skill(skill_name, skill_path)
