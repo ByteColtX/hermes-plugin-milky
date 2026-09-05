@@ -71,8 +71,8 @@
 
 入站 trigger 的资源引用 MUST 只交给 Hermes core 已确认的资源入口；该边界继续由 Hermes
 负责远端下载、缓存、路径和权限。出站 adapter 是明确例外：对 Hermes host 传入的本地
-路径、`Path` 或 `file://localhost`，plugin MAY 在 Milky Action 边界只读取一次不超过 8 MiB
-的常规非空文件并生成 `base64://`。plugin MUST NOT 下载远端 URL、读取远端 bytes、创建
+路径、`Path` 或 `file://localhost`，plugin MAY 在 Milky Action 边界只读取一次不超过启动配置
+`MILKY_MAX_LOCAL_MEDIA_BYTES` 的常规非空文件并生成 `base64://`。plugin MUST NOT 下载远端 URL、读取远端 bytes、创建
 持久化缓存或下载目录、拼接 Hermes 入站路径，或复制 Hermes 的 SSRF/权限规则。
 
 #### Scenario: 入站 Hermes 资源入口可用
@@ -90,5 +90,6 @@
 #### Scenario: 出站本地附件由 plugin 受限 materialize
 
 - **WHEN** 出站 adapter 收到存在的本地路径、`Path` 或 `file://localhost` 文件
-- **THEN** plugin SHALL 在 Milky 网络访问前检查常规、非空和 8 MiB 上限并生成 `base64://`
+- **THEN** plugin SHALL 在 Milky 网络访问前检查常规、非空和启动配置的
+  `MILKY_MAX_LOCAL_MEDIA_BYTES` 上限并生成 `base64://`
 - **AND** SHALL 不把本地路径、完整文件内容或 Base64 内容写入日志、异常或 `SendResult`

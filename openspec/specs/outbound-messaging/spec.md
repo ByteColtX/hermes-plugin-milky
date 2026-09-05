@@ -64,7 +64,8 @@ MUST 按 Milky segment schema 生成；图片、语音和视频等媒体 MUST �
 - **WHEN** Hermes 提供仅用于 sticker 的 `[CQ:image,file=file:///...,type=sticker]` 控制码
 - **THEN** 系统 SHALL 在调用消息 Action 前将该本地常规文件只读取一次并转换为 `base64://`
 - **AND** 请求 SHALL 包含 `image` segment 及 `sub_type=sticker`，不得包含原始 `file://` URI
-- **AND** 本地文件不存在、不可读、为空或超过 8 MiB 时 SHALL 在网络访问前返回 `invalid_input`
+- **AND** 本地文件不存在、不可读、为空或超过启动配置的 `MILKY_MAX_LOCAL_MEDIA_BYTES` 时 SHALL
+  在网络访问前返回 `invalid_input`
 - **AND** SHALL 不发送原始 CQ 文本或其他用户可见 fallback
 
 #### Scenario: 普通图片使用 MEDIA 入口
@@ -159,8 +160,8 @@ MUST 按 Milky segment schema 生成；图片、语音和视频等媒体 MUST �
 
 出站文件 MUST 根据目标调用 `upload_group_file` 或 `upload_private_file`，不得将 file 放入
 send message segments，也不得假设远端能访问本地路径。对当前 Hermes adapter 传入的本地
-路径、`Path` 或 `file://localhost`，plugin MUST 在出站边界只读取一次常规、非空且不超过
-8 MiB 的文件并生成 `base64://`；合法 `http(s)://` 和显式 `base64://` MUST 原样保留，
+路径、`Path` 或 `file://localhost`，plugin MUST 在出站边界只读取一次常规、非空且不超过启动配置
+`MILKY_MAX_LOCAL_MEDIA_BYTES` 的文件并生成 `base64://`；合法 `http(s)://` 和显式 `base64://` MUST 原样保留，
 不得下载或解码。其他本地资源边界失败时 MUST 在网络访问前返回 `invalid_input` 或
 `unsupported`。
 
@@ -184,7 +185,8 @@ send message segments，也不得假设远端能访问本地路径。对当前 H
 
 #### Scenario: 本地文件超出 plugin 边界
 
-- **WHEN** 文件输入为空、不是常规文件、不可读、超过 8 MiB 或是远端 `file://` URI
+- **WHEN** 文件输入为空、不是常规文件、不可读、超过启动配置的 `MILKY_MAX_LOCAL_MEDIA_BYTES`
+  或是远端 `file://` URI
 - **THEN** 系统 SHALL 返回 `invalid_input` 或 `unsupported`
 - **AND** SHALL 不把路径交给 Milky 或生成部分 `base64://` 内容
 
@@ -295,7 +297,8 @@ mention 或 reply segment。没有显式控制码时，系统 MUST NOT 自动引
 
 当 Hermes 将 Agent 输出中的资源解析为图片、语音、视频或文档附件时，Milky plugin MUST
 在出站边界统一 materialize 资源。对本地路径、`Path` 或 `file://localhost`，plugin MUST
-只读取常规、非空且不超过 8 MiB 的文件一次并生成 `base64://` URI；对合法 `http(s)://`
+只读取常规、非空且不超过启动配置的 `MILKY_MAX_LOCAL_MEDIA_BYTES` 的文件一次并生成 `base64://`
+URI；对合法 `http(s)://`
 或显式 `base64://`，plugin MUST 原样保留且不得下载或解码。所有失败 MUST 在 Milky
 网络访问前分类返回，并且不得把路径、URI、Base64 内容或完整异常写入结果或日志。
 
@@ -343,7 +346,8 @@ after the send entry point returns a failure.
 
 #### Scenario: 本地附件超过边界
 
-- **WHEN** 本地路径不存在、不是常规文件、为空、超过 8 MiB、使用远端 `file://` 或
+- **WHEN** 本地路径不存在、不是常规文件、为空、超过启动配置的 `MILKY_MAX_LOCAL_MEDIA_BYTES`、
+  使用远端 `file://` 或
   使用未知 scheme
 - **THEN** plugin SHALL 在 Milky 网络访问前返回 `invalid_input` 或 `unsupported`
 - **AND** SHALL 不执行 message/upload Action，不回显路径或资源内容
