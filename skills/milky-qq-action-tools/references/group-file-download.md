@@ -53,7 +53,7 @@
 QQ_TARGET="/tmp/hermes-qq-downloads/report.pdf"
 
 curl --fail --silent --show-error --location \
-  --connect-timeout 10 --max-time 30 --max-filesize 8388608 \
+  --connect-timeout 10 --max-time 30 \
   --output "$QQ_TARGET" "$QQ_DOWNLOAD_URL"
 ```
 
@@ -66,8 +66,7 @@ wget --no-verbose --max-redirect=5 --timeout=30 --tries=1 \
   --output-document="$QQ_TARGET" "$QQ_DOWNLOAD_URL"
 ```
 
-命令里的 8 MiB 是示例上限，实际值要看文件用途和已确认的业务限制。下载前应保证目标目录
-已经存在，并在下载后检查文件是否为空、类型是否符合预期。
+下载前应保证目标目录已经存在，并在下载后检查文件是否为空、类型是否符合预期。
 
 ## 安全边界
 
