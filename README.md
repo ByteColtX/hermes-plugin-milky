@@ -397,7 +397,7 @@ CQ image 仅用于本地 `file://` URI 的 sticker，例如：
 ### Slash command
 
 纯文本 `/...` 消息会在 canonical、去重和 Gate 之后分流，不进入 Will 历史或普通 Agent 正文。
-合法命令交给 Hermes 既有命令分发；插件自身提供无参数 `/milky`，用于返回 Milky 实现信息。
+合法命令交给 Hermes 既有命令分发；插件自身提供无参数 `/milky`，用于以可读摘要返回 Milky 实现信息。
 
 ### QQ ToolSpec
 

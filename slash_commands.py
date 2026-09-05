@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from threading import RLock
 
 from milky.client import ActionError
@@ -18,6 +19,40 @@ _SAFE_FAILURES = frozenset(
         "http_error",
     }
 )
+
+_IMPL_INFO_FIELDS = (
+    "impl_name",
+    "impl_version",
+    "milky_version",
+    "qq_protocol_type",
+    "qq_protocol_version",
+)
+
+
+def format_impl_info(raw_response: str) -> str:
+    """将已校验的 ``get_impl_info`` 响应转换为可读的中文摘要。"""
+
+    try:
+        payload = json.loads(raw_response)
+    except (TypeError, json.JSONDecodeError):
+        raise ActionError("malformed", "get_impl_info", "response is not valid JSON") from None
+
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+        raise ActionError("malformed", "get_impl_info", "response data is unavailable")
+
+    data = payload["data"]
+    if any(not isinstance(data.get(field), str) for field in _IMPL_INFO_FIELDS):
+        raise ActionError("malformed", "get_impl_info", "response data is unavailable")
+
+    return "\n".join(
+        (
+            "Milky 信息",
+            f"实现: {data['impl_name']}",
+            f"版本: {data['impl_version']}",
+            f"Milky 版本: {data['milky_version']}",
+            f"QQ 协议: {data['qq_protocol_type']} ({data['qq_protocol_version']})",
+        )
+    )
 
 
 class SlashCommandService:
@@ -50,7 +85,7 @@ class SlashCommandService:
             self._clients = [candidate for candidate in self._clients if candidate is not client]
 
     async def handle(self, raw_args: str) -> str:
-        """处理无参数 ``/milky``，并只返回安全分类或完整成功 JSON。"""
+        """处理无参数 ``/milky``，并只返回安全分类或格式化成功信息。"""
 
         if not isinstance(raw_args, str) or raw_args.strip():
             return "invalid_input: usage: /milky"
@@ -72,7 +107,10 @@ class SlashCommandService:
             return "malformed: get_impl_info failed"
         if not isinstance(result, str) or not result:
             return "malformed: get_impl_info response is unavailable"
-        return result
+        try:
+            return format_impl_info(result)
+        except ActionError as error:
+            return self._failure(getattr(error, "classification", None))
 
     def _unique_client(self) -> object | None:
         with self._lock:
@@ -90,4 +128,4 @@ class SlashCommandService:
         return f"{safe}: get_impl_info failed"
 
 
-__all__ = ["SlashCommandService"]
+__all__ = ["SlashCommandService", "format_impl_info"]

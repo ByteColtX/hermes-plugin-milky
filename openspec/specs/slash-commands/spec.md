@@ -88,25 +88,26 @@ message ID；普通消息仍 MUST 保持不允许 gateway control 的安全标�
 - **THEN** 命令 SHALL 继续携带 gateway control 语义并交给 Hermes 的既有 busy 处理
 - **AND** Milky plugin SHALL 不创建第二个命令队列或承诺超出宿主能力的即时执行顺序
 
-### Requirement: `/milky` 必须直接返回 get_impl_info 的原始 JSON
+### Requirement: `/milky` 必须格式化返回 get_impl_info 的实现信息
 
 插件 MUST 注册首个 `/milky` 命令。无参数调用时，系统 MUST 使用已连接且由 Milky adapter
 生命周期拥有的 client 调用 `get_impl_info`，请求 MUST 为对应 `/api/get_impl_info` 的
-HTTP POST、Bearer 认证和 JSON `{}` body。成功时，命令回复正文 MUST 直接是服务端返回的完整
-JSON envelope，不得只返回 `data`、字段摘要、解释前缀、代码围栏或后缀；服务端 JSON 中的
-未知扩展字段也 MUST 保留。协议失败、malformed 或传输未知时不适用成功原始 JSON 交付。
+HTTP POST、Bearer 认证和 JSON `{}` body。成功时，命令回复正文 MUST 使用固定的可读文本格式展示
+`data.impl_name`、`data.impl_version`、`data.milky_version`、`data.qq_protocol_type` 和
+`data.qq_protocol_version`；不得展示完整 JSON envelope 或未知扩展字段。协议失败、malformed
+或传输未知时不适用成功摘要交付。
 
 #### Scenario: 成功获取协议端信息
 
 - **WHEN** 已连接 adapter 收到无参数 `/milky`
 - **THEN** 系统 SHALL POST `/api/get_impl_info` 并发送 `{}`
-- **AND** 成功回复 SHALL 原样返回完整 JSON envelope，包含服务端提供的 `status`、`retcode`、`data` 和扩展字段
+- **AND** 成功回复 SHALL 返回包含上述 5 个已知字段的格式化中文摘要
 
 #### Scenario: get_impl_info 数据形状
 
 - **WHEN** Action 返回成功 envelope 且 `data` 包含实现名、实现版本、Milky 版本、QQ 协议类型和 QQ 协议版本
-- **THEN** 命令 SHALL 将完整响应作为 JSON 文本直接交付
-- **AND** SHALL 不把已知字段重新组织成另一种摘要格式
+- **THEN** 命令 SHALL 将已知字段重新组织成格式化中文摘要
+- **AND** SHALL 不把未知顶层或 `data` 扩展字段带入回复
 
 #### Scenario: `/milky` 带参数
 

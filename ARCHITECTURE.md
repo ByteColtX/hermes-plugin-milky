@@ -144,7 +144,7 @@ connect
 
 `disconnect()` 必须幂等地取消 SSE consumer、detached pipeline、定时器和状态刷新，关闭 HTTP/SSE 资源，并解除 sender/command 生命周期绑定。
 
-插件只有 `/milky` 命令，在 Gate 通过后、Will 之前分流，不进入 wait buffer、资源补全或普通 Agent 正文；无参数时通过已连接 client 调用 `get_impl_info`。未连接、参数错误、rejected、malformed、HTTP 错误和 transport unknown 只返回安全分类，不临时创建 client。
+插件只有 `/milky` 命令，在 Gate 通过后、Will 之前分流，不进入 wait buffer、资源补全或普通 Agent 正文；无参数时通过已连接 client 调用 `get_impl_info`，将已知实现字段格式化为可读摘要。未连接、参数错误、rejected、malformed、HTTP 错误和 transport unknown 只返回安全分类，不临时创建 client。
 
 ## 6. 入站消息契约
 

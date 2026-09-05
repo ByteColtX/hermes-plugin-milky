@@ -1,4 +1,4 @@
-"""验证 Milky 斜杠命令通道、原始诊断响应和生命周期边界。"""
+"""验证 Milky 斜杠命令通道、格式化诊断响应和生命周期边界。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from inbound.pipeline import InboundPipeline
 from milky.client import MilkyClient, TransportResponse
 from milky.resources import ResolvedMessage, ResolvedTriggerBatch
 from session import ChatAdmissionCoordinator, TtlDeduplicator, WaitBuffer
-from slash_commands import SlashCommandService
+from slash_commands import SlashCommandService, format_impl_info
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "slash_commands"
 PROTOCOL_ROOT = Path(__file__).parent / "fixtures" / "protocol"
@@ -447,6 +447,20 @@ def test_get_impl_info_posts_empty_body_and_returns_exact_raw_json() -> None:
     assert json.loads(raw)["data"]["data_extension"] == "preserve-me"
 
 
+def test_format_impl_info_returns_human_readable_summary_without_extensions() -> None:
+    """get_impl_info 命令应将已知字段格式化为中文摘要并忽略扩展字段。"""
+
+    raw = (FIXTURE_ROOT / "actions/get_impl_info.ok.json").read_text(encoding="utf-8")
+
+    assert format_impl_info(raw) == (
+        "Milky 信息\n"
+        "实现: Synthetic Milky\n"
+        "版本: fixture-1\n"
+        "Milky 版本: 1.3\n"
+        "QQ 协议: synthetic (fixture-qq-1)"
+    )
+
+
 @pytest.mark.parametrize(
     ("response", "status_code", "classification"),
     [
@@ -563,10 +577,14 @@ def test_friend_group_pipeline_connects_command_service_to_one_fake_action_clien
     hermes, transport, resolver, will = asyncio.run(scenario())
 
     assert hermes.routes == ["plugin", "plugin"]
-    assert hermes.plugin_results == [
-        (FIXTURE_ROOT / "actions/get_impl_info.ok.json").read_text(encoding="utf-8"),
-        (FIXTURE_ROOT / "actions/get_impl_info.ok.json").read_text(encoding="utf-8"),
-    ]
+    expected_result = (
+        "Milky 信息\n"
+        "实现: Synthetic Milky\n"
+        "版本: fixture-1\n"
+        "Milky 版本: 1.3\n"
+        "QQ 协议: synthetic (fixture-qq-1)"
+    )
+    assert hermes.plugin_results == [expected_result, expected_result]
     assert [request["url"] for request in transport.requests] == [
         "https://localhost:5500/milky/api/get_impl_info",
         "https://localhost:5500/milky/api/get_impl_info",
