@@ -64,6 +64,7 @@
   "examples": {
     "at": "[CQ:at,qq=<uid>]",
     "reply": "[CQ:reply,id=<msg_id>]",
+    "face": "[CQ:face,id=<face_id>] 或 [CQ:face,id=<超级表情face_id>,large=1]",
     "combined": "前文[CQ:reply,id=<msg_id>][CQ:at,qq=<uid>]后文",
     "unknown": "[CQ:future_extension,key=value]",
     "malformed": "[CQ:at,qq=<invalid>]"
@@ -74,7 +75,7 @@
     "file 不进入 message segment；文件发送继续使用独立 upload Action。",
     "缺少真实 uid 或 msg_id 时不伪造控制码目标。",
     "Hermes 隐式 reply anchor 默认不参与出站消息。",
-    "qq-reference 是只读、按插件命名空间按需加载的 skill，不扩大 ToolSpec。"
+    "milky-qq-cq-reference 是只读、按插件命名空间按需加载的 skill，不扩大 ToolSpec。"
   ],
   "safety": {
     "contains_credentials": false,

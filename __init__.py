@@ -27,7 +27,7 @@ PLATFORM_GUIDANCE = """
 - Quote a message with `[CQ:reply,id=<msg_id>]`.
 - Only use real IDs drawn from the current message or channel context.
 
-- CQ code details: view skill `hermes-plugin-milky:qq-reference`.
+- CQ code details: view skill `hermes-plugin-milky:milky-qq-cq-reference`.
 - QQ tool list: view skill `hermes-plugin-milky:qq-tools`.
 """
 
@@ -66,7 +66,7 @@ def _register_bundled_skill(ctx: Any) -> None:
     if not callable(register_skill):
         return
 
-    for skill_name in ("qq-reference", "qq-tools"):
+    for skill_name in ("milky-qq-cq-reference", "qq-tools"):
         skill_path = Path(_PLUGIN_ROOT) / "skills" / skill_name / "SKILL.md"
         if skill_path.is_file():
             register_skill(skill_name, skill_path)

@@ -26,7 +26,7 @@
 
 #### Scenario: 注册阶段登记 bundled skill
 
-- **WHEN** Hermes 调用根插件入口且 `skills/qq-reference/SKILL.md` 存在
+- **WHEN** Hermes 调用根插件入口且 `skills/milky-qq-cq-reference/SKILL.md` 存在
 - **THEN** 插件 SHALL 将该文件作为插件自带的只读 skill 登记
 - **AND** SHALL 不复制或改写用户全局 skills 目录中的文件
 
@@ -120,27 +120,27 @@
 - **THEN** 系统通知的 home target 元数据 MAY 已被 Hermes 发现
 - **AND** 普通 `message_receive` SHALL 仍遵守既有初始化就绪门槛
 
-### Requirement: bundled QQ reference skill 按插件命名空间只读提供
+### Requirement: bundled Milky QQ CQ reference skill 按插件命名空间只读提供
 
-插件 MUST 提供一个名为 `qq-reference` 的 bundled skill 模板，用于承载基础 CQ-compatible
-语法之外的全部 NapCat 文档 CQ 类型、各类型的 Milky 转换状态、转换失败时的原样 text
-fallback、Milky 映射、QQ 工具说明和待补充项。该 skill MUST 通过插件命名空间按需加载，
-且不得把仅能 fallback 的 CQ 码或未注册的 ToolSpec 描述为已具备原生执行能力。
+插件 MUST 提供一个名为 `milky-qq-cq-reference` 的 bundled skill 模板，用于承载 Milky QQ
+Agent 出站 `at`、`reply`、`face` 和本地贴纸图片的 CQ-compatible 语法、入站 face placeholder
+的中文名称索引以及明确的 fallback 限制。该 skill MUST 通过插件命名空间按需加载，且不得把
+仅能 fallback 的 CQ 码或未注册的 ToolSpec 描述为已具备原生执行能力。
 
-#### Scenario: Agent 按需加载 QQ reference skill
+#### Scenario: Agent 按需加载 Milky QQ CQ reference skill
 
-- **WHEN** Agent 请求加载本插件的 QQ reference skill
+- **WHEN** Agent 请求加载本插件的 Milky QQ CQ reference skill
 - **THEN** Hermes SHALL 能以插件命名空间形式解析该 skill
-- **AND** skill 内容 SHALL 包含全部文档 CQ 类型、当前转换状态、fallback 限制和明确的待补充项
+- **AND** skill 内容 SHALL 包含确认支持的 CQ 类型、face 映射索引、fallback 限制和 ID 来源约束
 
 #### Scenario: Skill 保持只读和命名空间隔离
 
-- **WHEN** 插件被加载或多个插件提供同名 `qq-reference` skill
+- **WHEN** 插件被加载或多个插件提供同名 `milky-qq-cq-reference` skill
 - **THEN** 本插件 skill SHALL 保持只读并使用自身命名空间
 - **AND** SHALL 不覆盖用户全局或其他插件的同名 skill
 
 #### Scenario: Skill 不替代 ToolSpec
 
-- **WHEN** Agent 读取 QQ reference skill 中的工具说明
+- **WHEN** Agent 读取 Milky QQ CQ reference skill 中的能力说明
 - **THEN** 工具可用性和参数校验 SHALL 仍以实际注册的 ToolSpec 为准
 - **AND** skill SHALL 不通过文字说明扩大可调用的 Milky Action 范围，也不得把 text fallback 误称为原生 CQ 执行

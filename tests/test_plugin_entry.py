@@ -127,7 +127,7 @@ def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) ->
         entry.register(context)
 
         assert dict(context.skills) == {
-            "qq-reference": PROJECT_ROOT / "skills" / "qq-reference" / "SKILL.md",
+            "milky-qq-cq-reference": PROJECT_ROOT / "skills" / "milky-qq-cq-reference" / "SKILL.md",
             "qq-tools": PROJECT_ROOT / "skills" / "qq-tools" / "SKILL.md",
         }
         assert all(skill_path.is_file() for _, skill_path in context.skills)
@@ -310,17 +310,17 @@ def test_bundled_skill_uses_host_namespace_and_does_not_overwrite_siblings() -> 
 
     milky = NamespacedSkillContext("hermes-plugin-milky")
     sibling = NamespacedSkillContext("another-plugin")
-    for skill_name in ("qq-reference", "qq-tools"):
+    for skill_name in ("milky-qq-cq-reference", "qq-tools"):
         skill_path = PROJECT_ROOT / "skills" / skill_name / "SKILL.md"
         milky.register_skill(skill_name, skill_path)
         sibling.register_skill(skill_name, skill_path)
 
     assert set(milky.plugin_skills) == {
-        "hermes-plugin-milky:qq-reference",
+        "hermes-plugin-milky:milky-qq-cq-reference",
         "hermes-plugin-milky:qq-tools",
     }
     assert set(sibling.plugin_skills) == {
-        "another-plugin:qq-reference",
+        "another-plugin:milky-qq-cq-reference",
         "another-plugin:qq-tools",
     }
     assert milky.user_skills == {}
@@ -330,14 +330,34 @@ def test_bundled_skill_uses_host_namespace_and_does_not_overwrite_siblings() -> 
 def test_qq_skills_are_split_and_do_not_add_tools() -> None:
     """CQ 和工具说明应拆分，实际工具仍只有 manifest 中的明确项。"""
 
-    cq_skill = (PROJECT_ROOT / "skills" / "qq-reference" / "SKILL.md").read_text(encoding="utf-8")
+    cq_skill = (PROJECT_ROOT / "skills" / "milky-qq-cq-reference" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    face_reference = (
+        PROJECT_ROOT
+        / "skills"
+        / "milky-qq-cq-reference"
+        / "references"
+        / "face-id-to-chinese-name.md"
+    ).read_text(encoding="utf-8")
     tools_skill = (PROJECT_ROOT / "skills" / "qq-tools" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "[CQ:at,qq=<uid>]" in cq_skill
     assert "[CQ:reply,id=<msg_id>]" in cq_skill
+    assert "[CQ:face,id=<face_id>]" in cq_skill
+    assert "[CQ:face,id=<超级表情face_id>,large=1]" in cq_skill
+    assert "只有“超级表情”条目的 `face_id` 才能使用 `large=1`" in cq_skill
+    assert "478 /对的对的" in cq_skill
+    assert "9007199254740991" not in cq_skill
+    assert "10001..4294967295" not in cq_skill
     assert "[CQ:image,file=file:///path/to/sticker.ext,type=sticker]" in cq_skill
+    assert "| face ID | 中文名称 | 备注 |" in cq_skill
+    assert "| 14 | /微笑 | 现代聊天中常用于阴阳、讽刺或表达不满" in cq_skill
+    assert "| face ID (`qSid`) | 中文名称 (`qDes`) | 备注 |" in face_reference
+    assert "| 14 | /微笑 | 现代聊天中常用于阴阳、讽刺或表达不满" in face_reference
+    assert "Unicode emoji 不纳入本表。" in face_reference
+    assert "## emoji 表情（运行时不参与映射）" not in face_reference
     for removed_type in (
-        "face",
         "record",
         "video",
         "rps",
