@@ -109,6 +109,34 @@ def test_split_sections_preserve_internal_whitespace_without_marker_lines() -> N
     )
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "第一段\n[SPLIT]\n\n第二段",
+        "第一段\r\n[SPLIT]\r\n\r\n第二段",
+    ],
+)
+def test_split_removes_blank_lines_adjacent_to_marker(content: str) -> None:
+    """标记相邻的空行属于分隔边界，不应进入下一条消息。"""
+
+    assert split_outbound_text(content) == ("第一段", "第二段")
+
+
+def test_sender_does_not_prefix_split_section_with_blank_line() -> None:
+    """模型在标记后多输出一个空行时，下一条消息仍从可见正文开始。"""
+
+    client = SplitClient()
+    sender = MilkyOutboundSender(client)
+
+    result = asyncio.run(sender.send("dm:800000001", "可以试试\n[SPLIT]\n\n但别拿退群吓奶龙～"))
+
+    assert result.success is True
+    assert [body["message"] for _, body in client.calls] == [
+        [{"type": "text", "data": {"text": "可以试试"}}],
+        [{"type": "text", "data": {"text": "但别拿退群吓奶龙～"}}],
+    ]
+
+
 def test_sender_sends_split_text_in_order_and_removes_markers() -> None:
     """有效分段应按顺序串行发送，用户不可见标记不进入 body。"""
 
