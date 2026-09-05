@@ -125,3 +125,11 @@ optional_env:
       allowlist；未配置时不创建隐式目标，cron 显式目标优先。
     prompt: 系统和 cron 默认目标
     password: false
+  - name: MILKY_MAX_LOCAL_MEDIA_BYTES
+    description: >-
+      可选的出站本地资源原始字节数上限，默认 `33554432`（`32 MiB`），只接受
+      `8388608`（`8 MiB`）至 `33554432`（`32 MiB`）的十进制整数。仅约束 plugin
+      读取的本地路径和 `file://localhost`；`http(s)://` 与显式 `base64://` 原样传递，
+      Base64 会产生约 `4/3` 的编码放大，内网部署也不消除 Milky 或下游服务端限制。
+    prompt: 出站本地资源大小上限（字节）
+    password: false

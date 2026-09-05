@@ -56,9 +56,10 @@ npx --yes @fission-ai/openspec@1.12.0 validate --changes --strict
 - SSE 必须处理事件边界、断线重连、取消和未知/损坏事件；handler 不得阻塞接收循环。
 - normalizer 不做网络 I/O；unknown segment 不变成文本或 Agent 指令，普通 forward 只保留
   `forward_id`。入站资源由 Hermes helper、下载、缓存、SSRF 和权限边界负责。
-- 出站本地路径、`Path`、`file://localhost` 只读取一次常规、非空且不超过 8 MiB 的文件并生成
-  `base64://`；`http(s)://` 和显式 `base64://` 原样保留。文档使用独立 group/private
-  file upload，不能塞入 message segment。
+- 出站本地路径、`Path`、`file://localhost` 只读取一次常规、非空且不超过启动配置
+  `MILKY_MAX_LOCAL_MEDIA_BYTES`（默认 32 MiB，范围 8–32 MiB）的文件并生成 `base64://`；
+  `http(s)://` 和显式 `base64://` 原样保留。文档使用独立 group/private file upload，不能塞入
+  message segment。
 - 出站目标先解析：`group:` 用 `send_group_message`，`dm:` 用 `send_private_message`；
   非法或 temp 目标在网络前失败，不回退默认目标。每个可能有副作用的 Action 最多调用一次。
 - ToolSpec 只能来自 manifest、`outbound/tools.py` 和对应 OpenSpec 的显式 operationId；
@@ -67,7 +68,8 @@ npx --yes @fission-ai/openspec@1.12.0 validate --changes --strict
 ## 配置和安全
 
 - 必填：`MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN`。可选：`MILKY_ALLOWED_CHATS`、
-  `MILKY_WILL_POLICY`、`MILKY_SESSION_BUFFER_SIZE`、`MILKY_HOME_CHANNEL`。配置只在启动时解析。
+  `MILKY_WILL_POLICY`、`MILKY_SESSION_BUFFER_SIZE`、`MILKY_HOME_CHANNEL`、
+  `MILKY_MAX_LOCAL_MEDIA_BYTES`。配置只在启动时解析。
 - `MILKY_HOME_CHANNEL` 只影响 Hermes 系统/cron 出站默认目标，不加入入站 allowlist；未配置
   时不猜测 origin、默认频道或私聊目标。Will 使用嵌套 `engine`、`routing`、`willingness`、
   `priority` schema，不重新引入旧配置名。

@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from __init__ import register_tools
+from config import MIN_LOCAL_MEDIA_BYTES
 from milky.client import ActionError
 from milky.client import SendResult as MilkySendResult
 from milky.models import (
@@ -610,6 +611,22 @@ def test_local_file_upload_rejects_missing_path_before_action(tmp_path) -> None:
     sender = MilkyOutboundSender(client)
 
     result = asyncio.run(sender.send_document("group:700000001", tmp_path / "missing.txt"))
+
+    assert result.success is False
+    assert result.error_kind == "invalid_input"
+    assert client.upload_calls == []
+
+
+def test_local_file_upload_uses_explicit_size_limit_before_action(tmp_path: Path) -> None:
+    """FileUploader 应使用 sender 传入的上限并在上传前拒绝超限文件。"""
+
+    media_path = tmp_path / "fixture-over-limit.txt"
+    with media_path.open("wb") as stream:
+        stream.truncate(MIN_LOCAL_MEDIA_BYTES + 1)
+    client = FakeOutboundClient()
+    sender = MilkyOutboundSender(client, max_local_media_bytes=MIN_LOCAL_MEDIA_BYTES)
+
+    result = asyncio.run(sender.send_document("dm:800000001", media_path))
 
     assert result.success is False
     assert result.error_kind == "invalid_input"

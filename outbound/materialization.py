@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote, urlsplit
 
+from config import DEFAULT_MAX_LOCAL_MEDIA_BYTES
 from milky.client import ActionError, materialize_media_uri, validate_media_uri
 
 MaterializationKind = Literal["image", "audio", "video", "document"]
@@ -103,6 +104,7 @@ async def prepare_materialization(
     expected_kind: MaterializationKind,
     action: str,
     file_name: str | None = None,
+    max_local_media_bytes: int = DEFAULT_MAX_LOCAL_MEDIA_BYTES,
 ) -> OutboundMaterialization:
     """将远端、内联或本地资源转换为并校验统一出站结果。"""
 
@@ -111,7 +113,11 @@ async def prepare_materialization(
         resolved_file_name = resolve_file_name(value, file_name, action=action)
     elif file_name is not None:
         _validate_file_name(file_name, action)
-    uri = await materialize_media_uri(value, action=action)
+    uri = await materialize_media_uri(
+        value,
+        action=action,
+        max_local_media_bytes=max_local_media_bytes,
+    )
     return OutboundMaterialization(expected_kind, uri, file_name=resolved_file_name)
 
 

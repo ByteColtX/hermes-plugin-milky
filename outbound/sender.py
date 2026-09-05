@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from config import DEFAULT_MAX_LOCAL_MEDIA_BYTES, validate_max_local_media_bytes
 from milky.client import ActionError
 from milky.models import MilkyEnvelope
 from milky.observability import log_event
@@ -71,6 +72,7 @@ class MilkyOutboundSender:
         *,
         mute_tracker: object | None = None,
         max_text_length: int = DEFAULT_TEXT_LENGTH,
+        max_local_media_bytes: int = DEFAULT_MAX_LOCAL_MEDIA_BYTES,
     ) -> None:
         if isinstance(max_text_length, bool) or not isinstance(max_text_length, int):
             raise TypeError("max_text_length must be an integer")
@@ -79,7 +81,11 @@ class MilkyOutboundSender:
         self._client = client
         self._mute_tracker = mute_tracker
         self._max_text_length = max_text_length
-        self._uploader = FileUploader(client)  # type: ignore[arg-type]
+        self._max_local_media_bytes = validate_max_local_media_bytes(max_local_media_bytes)
+        self._uploader = FileUploader(
+            client,  # type: ignore[arg-type]
+            max_local_media_bytes=self._max_local_media_bytes,
+        )
         self._refresh_tasks: set[asyncio.Task[None]] = set()
 
     async def close(self) -> None:
@@ -177,6 +183,7 @@ class MilkyOutboundSender:
             data["uri"],
             expected_kind="image",
             action="send_image",
+            max_local_media_bytes=self._max_local_media_bytes,
         )
         materialized_data = dict(data)
         materialized_data["uri"] = attachment.uri
@@ -200,6 +207,7 @@ class MilkyOutboundSender:
                     image_url,
                     expected_kind="image",
                     action="send_image",
+                    max_local_media_bytes=self._max_local_media_bytes,
                 )
             ).uri
             media = image_segment(uri)
@@ -226,6 +234,7 @@ class MilkyOutboundSender:
                     audio_path,
                     expected_kind="audio",
                     action="send_voice",
+                    max_local_media_bytes=self._max_local_media_bytes,
                 )
             ).uri
             media = record_segment(uri)
@@ -252,6 +261,7 @@ class MilkyOutboundSender:
                     video_path,
                     expected_kind="video",
                     action="send_video",
+                    max_local_media_bytes=self._max_local_media_bytes,
                 )
             ).uri
             media = video_segment(uri)

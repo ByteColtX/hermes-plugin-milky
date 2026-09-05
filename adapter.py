@@ -7,7 +7,7 @@ import inspect
 import logging
 from collections import deque
 
-from config import MilkyConfig, load_config
+from config import DEFAULT_MAX_LOCAL_MEDIA_BYTES, MilkyConfig, load_config
 from gates import GateRegistry
 from inbound.pipeline import InboundPipeline
 from milky.client import MilkyClient
@@ -133,7 +133,11 @@ class MilkyAdapter(BasePlatformAdapter):
         self._outbound = (
             outbound_sender
             if outbound_sender is not None
-            else MilkyOutboundSender(self._client, mute_tracker=self._mute_tracker)
+            else MilkyOutboundSender(
+                self._client,
+                mute_tracker=self._mute_tracker,
+                max_local_media_bytes=self._config.max_local_media_bytes,
+            )
         )
         if slash_command_service is None:
             from slash_commands import SlashCommandService
@@ -534,11 +538,18 @@ class MilkyAdapter(BasePlatformAdapter):
         except OutboundFormatError as error:
             return None, _materialization_failure(error.classification, action=action)
         try:
+            config = getattr(self, "_config", None)
+            max_local_media_bytes = getattr(
+                config,
+                "max_local_media_bytes",
+                DEFAULT_MAX_LOCAL_MEDIA_BYTES,
+            )
             attachment = await prepare_materialization(
                 value,
                 expected_kind=expected_kind,
                 action=action,
                 file_name=file_name if isinstance(file_name, str) else None,
+                max_local_media_bytes=max_local_media_bytes,
             )
         except Exception as error:  # noqa: BLE001 - adapter 边界不得泄漏错误正文
             classification = getattr(error, "classification", None)

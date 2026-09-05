@@ -93,6 +93,7 @@ MILKY_ACCESS_TOKEN=<从安全凭证存储注入>
 MILKY_ALLOWED_CHATS=group:123456789,dm:987654321
 MILKY_SESSION_BUFFER_SIZE=20
 MILKY_HOME_CHANNEL=group:123456789
+# MILKY_MAX_LOCAL_MEDIA_BYTES=33554432
 # MILKY_WILL_POLICY=<JSON 字符串，见下方 Will policy>
 ```
 
@@ -106,6 +107,7 @@ MILKY_HOME_CHANNEL=group:123456789
 | `MILKY_WILL_POLICY` | 否 | 决定消息等待（`wait`）或触发（`trigger`）的嵌套 JSON 配置。 |
 | `MILKY_SESSION_BUFFER_SIZE` | 否 | `wait` 历史消息上限，默认 `20`；设为 `0` 可关闭历史缓冲。 |
 | `MILKY_HOME_CHANNEL` | 否 | 系统消息和 cron 的默认目标；不参与入站白名单。 |
+| `MILKY_MAX_LOCAL_MEDIA_BYTES` | 否 | 出站本地资源原始字节数上限，默认 `33554432`（`32 MiB`），合法范围 `8388608`（`8 MiB`）至 `33554432`（`32 MiB`）。 |
 
 chat key 只接受 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>`；`temp` 会话不会回退到其他目标。
 
@@ -383,8 +385,10 @@ plugin 不单独解析它。
 视频和文档；当前不支持文本段与附件交错，`[SPLIT]` 不改变 `MEDIA:` 的独立交接。
 
 > [!CAUTION]
-> `MEDIA:` 会读取本地文件并上传；当前只限制常规、非空且不超过 8 MiB 的文件，没有固定的
-> 安全目录隔离。请只在受控会话中启用相关能力。
+> `MEDIA:` 会读取本地文件并上传；默认只限制常规、非空且不超过 `33554432` 字节（`32 MiB`）
+> 的文件，可用 `MILKY_MAX_LOCAL_MEDIA_BYTES` 在 `8388608` 至 `33554432` 字节之间调整，
+> 没有固定的安全目录隔离。Base64 编码会带来约 `4/3` 的请求体放大；内网连接不代表
+> Milky、代理或下游平台没有更低的服务端限制。
 
 CQ image 仅用于本地 `file://` URI 的 sticker，例如：
 
@@ -393,6 +397,10 @@ CQ image 仅用于本地 `file://` URI 的 sticker，例如：
 ```
 
 普通图片请使用 `MEDIA:<local_path>`。sticker 会在发送前转换为 `base64://`。
+
+本地路径、`Path` 和 `file://localhost` 只在 plugin 边界读取一次并受上述本地字节上限约束；
+格式合法的 `http(s)://` 和显式 `base64://` 会原样传递，plugin 不下载、读取或解码，也不应用
+本地文件大小检查。
 
 ### Slash command
 

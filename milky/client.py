@@ -21,7 +21,11 @@ from pathlib import Path
 from typing import Any, Protocol, Self
 from urllib.parse import unquote, urlsplit
 
-from config import MilkyConfig
+from config import (
+    DEFAULT_MAX_LOCAL_MEDIA_BYTES,
+    MilkyConfig,
+    validate_max_local_media_bytes,
+)
 
 from .models import (
     GroupEntity,
@@ -39,7 +43,8 @@ _NON_NEGATIVE_INTEGER_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
 _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
 _MAX_SAFE_INTEGER = 9007199254740991
-MAX_LOCAL_MEDIA_BYTES = 8 * 1024 * 1024
+# 保留旧的公开名称，表示未显式传入上限时使用的默认值。
+MAX_LOCAL_MEDIA_BYTES = DEFAULT_MAX_LOCAL_MEDIA_BYTES
 _TRANSPORT_PHASES = frozenset({"connect", "write", "read", "pool", "unknown"})
 _TOOL_ACTIONS = frozenset(
     {
@@ -214,10 +219,20 @@ class ActionError(Exception):
 MilkyActionError = ActionError
 
 
-async def materialize_media_uri(value: object, *, action: str = "media") -> str:
+async def materialize_media_uri(
+    value: object,
+    *,
+    action: str = "media",
+    max_local_media_bytes: int = DEFAULT_MAX_LOCAL_MEDIA_BYTES,
+) -> str:
     """将远端、内联或受限本地资源转换为 Milky URI。"""
 
-    return await asyncio.to_thread(_materialize_media_uri, value, action)
+    return await asyncio.to_thread(
+        _materialize_media_uri,
+        value,
+        action,
+        max_local_media_bytes,
+    )
 
 
 def validate_media_uri(value: object, *, action: str = "media") -> str:
@@ -246,8 +261,10 @@ def validate_media_uri(value: object, *, action: str = "media") -> str:
     raise ActionError("unsupported", action, "Hermes resource entry is unavailable")
 
 
-def _materialize_media_uri(value: object, action: str) -> str:
+def _materialize_media_uri(value: object, action: str, max_local_media_bytes: int) -> str:
     """在工作线程中执行 URI 校验或一次性本地文件读取。"""
+
+    limit = validate_max_local_media_bytes(max_local_media_bytes)
 
     if isinstance(value, Path):
         raw = str(value).strip()
@@ -271,10 +288,10 @@ def _materialize_media_uri(value: object, action: str) -> str:
     elif parsed.scheme:
         raise ActionError("unsupported", action, "media URI scheme is unsupported")
 
-    return _local_file_as_base64_uri(raw, action)
+    return _local_file_as_base64_uri(raw, action, limit)
 
 
-def _local_file_as_base64_uri(file_path: object, action: str) -> str:
+def _local_file_as_base64_uri(file_path: object, action: str, limit: int) -> str:
     """将一个安全的本地常规文件编码为受限 Base64 URI。"""
 
     try:
@@ -284,14 +301,14 @@ def _local_file_as_base64_uri(file_path: object, action: str) -> str:
             file_stat = os.fstat(stream.fileno())
             if not stat.S_ISREG(file_stat.st_mode):
                 raise ActionError("invalid_input", action, "file path is unavailable")
-            if file_stat.st_size > MAX_LOCAL_MEDIA_BYTES:
+            if file_stat.st_size > limit:
                 raise ActionError("invalid_input", action, "media file is too large")
-            data = stream.read(MAX_LOCAL_MEDIA_BYTES + 1)
+            data = stream.read(limit + 1)
     except ActionError:
         raise
     except (OSError, RuntimeError, TypeError, ValueError):
         raise ActionError("invalid_input", action, "file path is unavailable") from None
-    if len(data) > MAX_LOCAL_MEDIA_BYTES:
+    if len(data) > limit:
         raise ActionError("invalid_input", action, "media file is too large")
     if not data:
         raise ActionError("invalid_input", action, "media file is empty")

@@ -7,7 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from config import ConfigError, load_config
+from config import (
+    DEFAULT_MAX_LOCAL_MEDIA_BYTES,
+    MAX_LOCAL_MEDIA_BYTES,
+    MIN_LOCAL_MEDIA_BYTES,
+    ConfigError,
+    load_config,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -62,6 +68,9 @@ def test_load_config_derives_prefixed_urls_and_bearer_header() -> None:
 
     assert config.base_url == "https://localhost:5500/milky"
     assert config.home_channel is None
+    assert config.max_local_media_bytes == DEFAULT_MAX_LOCAL_MEDIA_BYTES
+    summary = repr(config.redacted_summary())
+    assert all(marker not in summary for marker in ("Authorization", "base64://", "/Users/"))
     assert config.action_url("get_group_list") == (
         "https://localhost:5500/milky/api/get_group_list"
     )
@@ -260,6 +269,45 @@ def test_load_config_treats_empty_home_channel_as_unconfigured() -> None:
     assert config.redacted_summary()["has_home_channel"] is False
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (str(MIN_LOCAL_MEDIA_BYTES), MIN_LOCAL_MEDIA_BYTES),
+        (str(16 * 1024 * 1024), 16 * 1024 * 1024),
+        (str(MAX_LOCAL_MEDIA_BYTES), MAX_LOCAL_MEDIA_BYTES),
+    ],
+)
+def test_load_config_parses_local_media_size_limit(value: str, expected: int) -> None:
+    """本地出站资源上限应按十进制字节数保存。"""
+
+    config = load_config(DEFAULT_ENV | {"MILKY_MAX_LOCAL_MEDIA_BYTES": value})
+
+    assert config.max_local_media_bytes == expected
+    assert config.redacted_summary()["max_local_media_bytes"] == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        " ",
+        "not-an-int",
+        "1.5",
+        "-1",
+        str(MIN_LOCAL_MEDIA_BYTES - 1),
+        str(MAX_LOCAL_MEDIA_BYTES + 1),
+    ],
+)
+def test_load_config_rejects_invalid_local_media_size_limit(value: str) -> None:
+    """本地出站资源上限应拒绝空值、非整数和越界值。"""
+
+    with pytest.raises(ConfigError, match="MILKY_MAX_LOCAL_MEDIA_BYTES") as error:
+        load_config(DEFAULT_ENV | {"MILKY_MAX_LOCAL_MEDIA_BYTES": value})
+
+    if value.strip():
+        assert value.strip() not in str(error.value)
+
+
 def test_manifest_declares_only_the_new_environment_contract_and_tools() -> None:
     """manifest 应只暴露新环境变量和明确的 Milky ToolSpec。"""
 
@@ -273,6 +321,8 @@ def test_manifest_declares_only_the_new_environment_contract_and_tools() -> None
     assert "MILKY_WILL_POLICY" in manifest
     assert "MILKY_SESSION_BUFFER_SIZE" in manifest
     assert "MILKY_HOME_CHANNEL" in manifest
+    assert "MILKY_MAX_LOCAL_MEDIA_BYTES" in manifest
+    assert "33554432" in manifest
     assert "provides_tools:" in manifest
     for tool_name in (
         "send_profile_like",

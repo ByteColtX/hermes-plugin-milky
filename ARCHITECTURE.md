@@ -235,7 +235,7 @@ wait 阶段只保存 URL、resource/file ID、文件名、MIME/大小提示和�
 
 Hermes 拥有入站资源的下载、缓存、SSRF、权限和本地路径规则；plugin 不创建第二套 media cache、下载目录或权限规则。只有 Hermes helper 返回且通过本地路径校验的结果才能进入 `MessageEvent.media_urls` / `media_types`。
 
-同一 trigger 的媒体按“历史 context 中成功 materialize 的直接图片，再到当前消息和实际展示的 reply 图片”顺序合并；成功图片先在本批次内以受限流式 SHA-256 按 bytes 选择首次代表，hash 失败时仅按有效本地路径去重，并同步维护等长 `media_types`。正文 occurrence、代表 basename、MIME、`channel_context`、`media_urls` 和 `media_types` 必须来自同一份 batch finalization；不得从 context 文本反解析路径，也不得提升历史音频、视频、文件、未知引用或未展示的嵌套 reply 图片。hash 只读取 Hermes helper 已返回的非空常规本地文件，大小上限为 8 MiB，不建立跨 batch/session 的缓存。
+同一 trigger 的媒体按“历史 context 中成功 materialize 的直接图片，再到当前消息和实际展示的 reply 图片”顺序合并；成功图片先在本批次内以受限流式 SHA-256 按 bytes 选择首次代表，hash 失败时仅按有效本地路径去重，并同步维护等长 `media_types`。正文 occurrence、代表 basename、MIME、`channel_context`、`media_urls` 和 `media_types` 必须来自同一份 batch finalization；不得从 context 文本反解析路径，也不得提升历史音频、视频、文件、未知引用或未展示的嵌套 reply 图片。hash 只读取 Hermes helper 已返回的非空常规本地文件，大小上限仍为 8 MiB；该入站 hash 边界与 `MILKY_MAX_LOCAL_MEDIA_BYTES` 的出站读取边界独立，不建立跨 batch/session 的缓存。
 
 ### Hermes MessageEvent
 
@@ -320,10 +320,13 @@ Hermes 从同一 Agent 回复提取的 `MEDIA:` 附件不属于插件文本分�
 不支持文本段与附件交错，插件不从原始正文中的 `MEDIA:` 位置推断顺序。需要交错投递时必须
 由 Hermes core 提供有序文本/附件交接契约。
 
-出站收到本地路径、`Path` 或 `file://localhost` 时，只读取一次常规、非空且不超过 8 MiB 的文件并
-生成 `base64://`；合法 `http(s)://` 和显式 `base64://` 原样保留，不下载或解码。文件上传携带
-安全文件名，不能假定 Milky 能访问 plugin 的本地路径。每个可能有副作用的 Action 最多提交一次；
-部分失败保留已成功结果和首个失败分类，不发送纯文本 fallback。
+出站收到本地路径、`Path` 或 `file://localhost` 时，只读取一次常规、非空且不超过启动配置
+`MILKY_MAX_LOCAL_MEDIA_BYTES` 的文件并生成 `base64://`；该配置默认 `33554432` 字节（`32 MiB`），
+合法范围为 `8388608` 至 `33554432` 字节（`8–32 MiB`）。合法 `http(s)://` 和显式 `base64://`
+原样保留，不下载、读取或解码，也不应用本地文件大小检查。Base64 编码约放大为原始字节的
+`4/3`，内网连接不消除 Milky、代理或下游平台的服务端限制。文件上传携带安全文件名，不能假定
+Milky 能访问 plugin 的本地路径。每个可能有副作用的 Action 最多提交一次；部分失败保留已成功
+结果和首个失败分类，不发送纯文本 fallback。
 
 ### 受限 CQ-compatible 语法
 
@@ -417,6 +420,7 @@ context buffer、willingness 状态，以及 MuteTracker 群状态和 TTL 任务
 | `MILKY_WILL_POLICY` | 否 | 嵌套 `engine`、`routing`、`willingness`、`priority` 策略 |
 | `MILKY_SESSION_BUFFER_SIZE` | 否 | wait buffer 上限；默认 20，0 表示禁用历史缓冲 |
 | `MILKY_HOME_CHANNEL` | 否 | 系统/cron 默认目标；完整 `group:<id>` 或 `dm:<id>` |
+| `MILKY_MAX_LOCAL_MEDIA_BYTES` | 否 | 出站本地资源原始字节数上限；默认 `33554432`（`32 MiB`），范围 `8388608`–`33554432`（`8–32 MiB`） |
 
 `MILKY_HOME_CHANNEL` 不参与入站 allowlist；未配置时不猜测 origin、默认频道或私聊目标。已
 连接 adapter 的 live 投递复用普通 sender；standalone cron 每次创建并关闭临时 client，

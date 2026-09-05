@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from config import DEFAULT_MAX_LOCAL_MEDIA_BYTES, validate_max_local_media_bytes
 from milky.client import ActionError
 from milky.models import MilkyEnvelope
 
@@ -34,8 +35,14 @@ class FileUploadClient(Protocol):
 class FileUploader:
     """将文档附件 materialize 后交给 Milky 独立文件上传 Action。"""
 
-    def __init__(self, client: FileUploadClient) -> None:
+    def __init__(
+        self,
+        client: FileUploadClient,
+        *,
+        max_local_media_bytes: int = DEFAULT_MAX_LOCAL_MEDIA_BYTES,
+    ) -> None:
         self._client = client
+        self._max_local_media_bytes = validate_max_local_media_bytes(max_local_media_bytes)
 
     async def upload(
         self,
@@ -59,6 +66,7 @@ class FileUploader:
             expected_kind="document",
             action="upload_group_file" if scene == "group" else "upload_private_file",
             file_name=file_name,
+            max_local_media_bytes=self._max_local_media_bytes,
         )
         uri = attachment.uri
         name = attachment.file_name

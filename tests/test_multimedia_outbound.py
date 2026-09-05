@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from adapter import MilkyAdapter
+from config import MIN_LOCAL_MEDIA_BYTES, load_config
 from milky.client import (
     MAX_LOCAL_MEDIA_BYTES,
     ActionError,
@@ -412,7 +413,7 @@ def test_local_media_rejects_unknown_and_remote_file_schemes(
 
 
 def test_local_media_accepts_exact_size_limit(tmp_path: Path) -> None:
-    """恰好达到 8 MiB 上限的常规文件仍可被完整读取。"""
+    """恰好达到默认 32 MiB 上限的常规文件仍可被完整读取。"""
 
     media_path = tmp_path / "fixture-limit.bin"
     media_path.write_bytes(b"x" * MAX_LOCAL_MEDIA_BYTES)
@@ -421,6 +422,153 @@ def test_local_media_accepts_exact_size_limit(tmp_path: Path) -> None:
 
     assert uri.startswith("base64://")
     assert len(uri) == len("base64://") + ((MAX_LOCAL_MEDIA_BYTES + 2) // 3) * 4
+
+
+def test_local_media_uses_explicit_custom_size_limit(tmp_path: Path) -> None:
+    """显式 16 MiB 上限应允许恰好达到边界的文件。"""
+
+    limit = 16 * 1024 * 1024
+    media_path = tmp_path / "fixture-custom-limit.bin"
+    with media_path.open("wb") as stream:
+        stream.truncate(limit)
+
+    uri = asyncio.run(
+        materialize_media_uri(
+            media_path,
+            action="send_video",
+            max_local_media_bytes=limit,
+        )
+    )
+
+    assert uri.startswith("base64://")
+    assert len(uri) == len("base64://") + ((limit + 2) // 3) * 4
+
+
+def test_sender_rejects_file_over_explicit_size_limit_before_action(tmp_path: Path) -> None:
+    """sender 的显式上限应在读取和消息 Action 前拒绝超限文件。"""
+
+    limit = MIN_LOCAL_MEDIA_BYTES
+    media_path = tmp_path / "fixture-over-custom-limit.bin"
+    with media_path.open("wb") as stream:
+        stream.truncate(limit + 1)
+    client = MultimediaClient()
+    sender = MilkyOutboundSender(client, max_local_media_bytes=limit)
+
+    result = asyncio.run(sender.send_video("group:700000001", media_path))
+
+    assert result.success is False
+    assert result.error_kind == "invalid_input"
+    assert client.calls == []
+
+
+def test_cq_sticker_uses_explicit_size_limit_without_text_fallback(tmp_path: Path) -> None:
+    """CQ sticker 超限时应在消息 Action 前失败，不生成部分 Base64 或文本 fallback。"""
+
+    media_path = tmp_path / "fixture-over-limit-sticker.png"
+    with media_path.open("wb") as stream:
+        stream.truncate(MIN_LOCAL_MEDIA_BYTES + 1)
+    client = MultimediaClient()
+    sender = MilkyOutboundSender(client, max_local_media_bytes=MIN_LOCAL_MEDIA_BYTES)
+
+    result = asyncio.run(
+        sender.send(
+            "dm:800000001",
+            f"[CQ:image,file={media_path.as_uri()},type=sticker]",
+        )
+    )
+
+    assert result.success is False
+    assert result.error_kind == "invalid_input"
+    assert client.calls == []
+
+
+def test_adapter_propagates_size_limit_to_all_native_entries(tmp_path: Path) -> None:
+    """adapter、sender 和 uploader 应共享启动配置的本地资源上限。"""
+
+    limit = 16 * 1024 * 1024
+    config = load_config(
+        {
+            "MILKY_BASE_URL": "https://localhost:5500/milky",
+            "MILKY_ACCESS_TOKEN": "fixture-token",
+            "MILKY_MAX_LOCAL_MEDIA_BYTES": str(limit),
+        }
+    )
+    client = MultimediaClient()
+    adapter = MilkyAdapter(
+        SimpleNamespace(),
+        milky_config=config,
+        client=client,
+        event_stream=object(),
+        mute_tracker=object(),
+        resource_resolver=object(),
+        will_engine=object(),
+        pipeline=object(),
+        slash_command_service=object(),
+    )
+    adapter._connected = True
+    sender = adapter.outbound_sender
+    media_path = tmp_path / "fixture-over-configured-limit.bin"
+    with media_path.open("wb") as stream:
+        stream.truncate(limit + 1)
+
+    results = asyncio.run(_send_all_local_entries(adapter, media_path))
+
+    assert all(not result.success for result in results)
+    assert all(result.error_kind == "invalid_input" for result in results)
+    assert sender._max_local_media_bytes == limit
+    assert sender._uploader._max_local_media_bytes == limit
+    assert client.calls == []
+
+
+def test_adapter_does_not_reread_materialized_base64_uri(monkeypatch, tmp_path: Path) -> None:
+    """adapter 预处理后的 Base64 URI 交给 sender 时不得发生第二次文件读取。"""
+
+    import milky.client as client_module
+
+    read_calls = 0
+    original = client_module._local_file_as_base64_uri
+
+    def count_reads(*args: object) -> str:
+        """统计本地 materialization 的实际读取次数。"""
+
+        nonlocal read_calls
+        read_calls += 1
+        return original(*args)
+
+    monkeypatch.setattr(client_module, "_local_file_as_base64_uri", count_reads)
+    config = load_config(
+        {
+            "MILKY_BASE_URL": "https://localhost:5500/milky",
+            "MILKY_ACCESS_TOKEN": "fixture-token",
+        }
+    )
+    client = MultimediaClient()
+    adapter = object.__new__(MilkyAdapter)
+    adapter._config = config
+    adapter._connected = True
+    adapter._closed = False
+    adapter._outbound = MilkyOutboundSender(
+        client,
+        max_local_media_bytes=config.max_local_media_bytes,
+    )
+    media_path = tmp_path / "fixture-single-read.png"
+    media_path.write_bytes(b"single-read")
+
+    result = asyncio.run(adapter.send_image("group:700000001", media_path))
+
+    assert result.success is True
+    assert read_calls == 1
+
+
+async def _send_all_local_entries(adapter: MilkyAdapter, media_path: Path) -> list[object]:
+    """以同一超限文件验证 adapter 的四类本地入口。"""
+
+    return [
+        await adapter.send_image_file("group:700000001", media_path),
+        await adapter.send_voice("group:700000001", media_path),
+        await adapter.send_video("group:700000001", media_path),
+        await adapter.send_document("group:700000001", media_path),
+    ]
 
 
 def test_local_media_rejects_directory(tmp_path: Path) -> None:

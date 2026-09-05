@@ -31,7 +31,10 @@ def load_fixture(name: str) -> object:
     return json.loads((FIXTURE_ROOT / name).read_text(encoding="utf-8"))
 
 
-def make_config(home_channel: str | None = "group:700000001"):
+def make_config(
+    home_channel: str | None = "group:700000001",
+    max_local_media_bytes: int | None = None,
+):
     """创建只包含合成配置的 MilkyConfig。"""
 
     environment = {
@@ -40,6 +43,8 @@ def make_config(home_channel: str | None = "group:700000001"):
     }
     if home_channel is not None:
         environment["MILKY_HOME_CHANNEL"] = home_channel
+    if max_local_media_bytes is not None:
+        environment["MILKY_MAX_LOCAL_MEDIA_BYTES"] = str(max_local_media_bytes)
     return load_config(environment)
 
 
@@ -261,6 +266,7 @@ def test_home_config_does_not_change_inbound_allowlist_or_require_readiness() ->
         "session_buffer_size": 20,
         "has_access_token": True,
         "has_home_channel": True,
+        "max_local_media_bytes": 33554432,
     }
 
 
@@ -336,6 +342,35 @@ def test_standalone_text_send_uses_same_sender_result_and_closes_client() -> Non
     assert result == {"success": True, "message_id": "7201"}
     assert client.calls[0][:2] == ("group", 700000001)
     assert client.close_calls == 1
+
+
+def test_standalone_sender_passes_startup_media_limit_to_sender(monkeypatch) -> None:
+    """standalone sender 应把启动配置的资源上限传给统一 sender。"""
+
+    captured: dict[str, object] = {}
+
+    class CapturingSender:
+        """捕获 standalone 创建统一 sender 时的资源上限。"""
+
+        def __init__(self, _client: object, *, max_local_media_bytes: int) -> None:
+            captured["max_local_media_bytes"] = max_local_media_bytes
+
+        async def send(self, _chat_id: str, _message: object) -> object:
+            """返回可转换为 standalone 成功结果的 fake。"""
+
+            return type("Result", (), {"success": True, "message_id": "7204"})()
+
+        async def close(self) -> None:
+            """提供 sender 清理边界。"""
+
+    monkeypatch.setattr("outbound.standalone.MilkyOutboundSender", CapturingSender)
+    config = make_config(max_local_media_bytes=16 * 1024 * 1024)
+    sender = make_standalone_sender(config, client_factory=lambda _config: FakeMilkyClient())
+
+    result = asyncio.run(sender(object(), "group:700000001", "cron result"))
+
+    assert result == {"success": True, "message_id": "7204"}
+    assert captured["max_local_media_bytes"] == 16 * 1024 * 1024
 
 
 def test_explicit_cron_target_wins_over_configured_home_target() -> None:

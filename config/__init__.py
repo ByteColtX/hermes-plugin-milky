@@ -16,6 +16,10 @@ _CHAT_KEY_PATTERN = re.compile(r"^(group|dm):([0-9]+)$")
 _ACTION_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 _INTEGER_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
 
+MIN_LOCAL_MEDIA_BYTES = 8 * 1024 * 1024
+MAX_LOCAL_MEDIA_BYTES = 32 * 1024 * 1024
+DEFAULT_MAX_LOCAL_MEDIA_BYTES = MAX_LOCAL_MEDIA_BYTES
+
 _ROUTING_DEFAULTS = {
     "direct": "trigger",
     "mention": "trigger",
@@ -71,6 +75,7 @@ class MilkyConfig:
     will_policy: dict[str, Any] = field(default_factory=dict, repr=False)
     session_buffer_size: int = 20
     home_channel: str | None = field(default=None, repr=False)
+    max_local_media_bytes: int = DEFAULT_MAX_LOCAL_MEDIA_BYTES
 
     @property
     def event_url(self) -> str:
@@ -101,6 +106,7 @@ class MilkyConfig:
             "session_buffer_size": self.session_buffer_size,
             "has_access_token": bool(self.access_token),
             "has_home_channel": self.home_channel is not None,
+            "max_local_media_bytes": self.max_local_media_bytes,
         }
 
 
@@ -122,6 +128,9 @@ def load_config(environment: Mapping[str, str] | None = None) -> MilkyConfig:
         "MILKY_SESSION_BUFFER_SIZE",
     )
     home_channel = _parse_home_channel(values.get("MILKY_HOME_CHANNEL"))
+    max_local_media_bytes = _parse_max_local_media_bytes(
+        values.get("MILKY_MAX_LOCAL_MEDIA_BYTES", str(DEFAULT_MAX_LOCAL_MEDIA_BYTES))
+    )
     return MilkyConfig(
         base_url=base_url,
         access_token=access_token,
@@ -129,6 +138,7 @@ def load_config(environment: Mapping[str, str] | None = None) -> MilkyConfig:
         will_policy=will_policy,
         session_buffer_size=session_buffer_size,
         home_channel=home_channel,
+        max_local_media_bytes=max_local_media_bytes,
     )
 
 
@@ -359,4 +369,35 @@ def _parse_non_negative_integer(value: object, name: str) -> int:
     return int(value)
 
 
-__all__ = ["ConfigError", "MilkyConfig", "load_config", "parse_config"]
+def _parse_max_local_media_bytes(value: object) -> int:
+    """解析本地出站资源上限的十进制字节数。"""
+
+    name = "MILKY_MAX_LOCAL_MEDIA_BYTES"
+    if not isinstance(value, str) or not _INTEGER_PATTERN.fullmatch(value.strip()):
+        raise ConfigError(f"{name} must be a decimal integer")
+    parsed = int(value)
+    if not MIN_LOCAL_MEDIA_BYTES <= parsed <= MAX_LOCAL_MEDIA_BYTES:
+        raise ConfigError(f"{name} is out of range")
+    return parsed
+
+
+def validate_max_local_media_bytes(value: object) -> int:
+    """校验已经解析的本地出站资源上限。"""
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("max_local_media_bytes must be an integer")
+    if not MIN_LOCAL_MEDIA_BYTES <= value <= MAX_LOCAL_MEDIA_BYTES:
+        raise ValueError("max_local_media_bytes is out of range")
+    return value
+
+
+__all__ = [
+    "DEFAULT_MAX_LOCAL_MEDIA_BYTES",
+    "MAX_LOCAL_MEDIA_BYTES",
+    "MIN_LOCAL_MEDIA_BYTES",
+    "ConfigError",
+    "MilkyConfig",
+    "load_config",
+    "parse_config",
+    "validate_max_local_media_bytes",
+]

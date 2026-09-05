@@ -100,7 +100,10 @@ async def standalone_send(
     except Exception:  # noqa: BLE001 - 创建连接失败不得暴露底层文本
         return _failure("transport_unknown")
 
-    sender = MilkyOutboundSender(client)
+    sender = MilkyOutboundSender(
+        client,
+        max_local_media_bytes=resolved_config.max_local_media_bytes,
+    )
     try:
         result = await sender.send(chat_id, message)  # type: ignore[arg-type]
         return _result_dict(result)
