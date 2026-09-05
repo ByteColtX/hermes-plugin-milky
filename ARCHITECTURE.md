@@ -450,10 +450,10 @@ ToolSpec schema/显式调用/最小响应校验及日志脱敏。
 
 ### 当前状态与未决边界
 
-当前未归档 change 只有 `map-face-id-to-chinese-name`；其实现与自动化证据已完成，但尚未归档。
+当前没有未归档 change；`openspec/changes/` 仅保留已完成 change 的归档历史。
 已有主规范继续覆盖入站 context/图片合并、出站附件/native media/文件上传、固定 QQ ToolSpec
-和安全日志边界；当前工具清单为 25 项，完成项以各 change 的 `tasks.md` 和 evidence ledger
-为准。未归档 delta 不代表其规划目标已经成为当前能力。
+和安全日志边界；当前工具清单为 25 项，完成项以主规范和归档 change 的 `tasks.md`、evidence
+ledger 为准。
 Hermes 扩展点、Milky Action 支持/错误 envelope，以及 25 个 ToolSpec 的 operationId、参数和
 最小 response 结构，仍需与真实宿主、manifest、OpenSpec 和 Milky OpenAPI 持续对齐。
 
