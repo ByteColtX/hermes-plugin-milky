@@ -10,6 +10,7 @@ import asyncio
 import inspect
 import json
 import logging
+import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -17,11 +18,11 @@ from typing import Any, Protocol, Self
 
 from config import MilkyConfig
 
+from .logging import render_event
 from .models import Event
-from .observability import log_event
 from .parser import ParseError, parse_event
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hermes_plugins.milky.event_stream")
 
 _SAFE_RECONNECT_REASONS = frozenset(
     {
@@ -52,14 +53,15 @@ def _safe_reconnect_reason(classification: str) -> str:
 
 
 def _log_stream_event(
-    event_name: str,
+    operation: str,
     level: int,
     *,
     reason: str | None = None,
     attempt: int | None = None,
     delay_seconds: float | None = None,
+    duration_ms: float | None = None,
 ) -> None:
-    """输出不含敏感内容的事件流生命周期日志。"""
+    """输出事件流生命周期的普通 logger 消息。"""
     fields: dict[str, object] = {}
     if reason is not None:
         fields["reason"] = _safe_reconnect_reason(reason)
@@ -67,7 +69,10 @@ def _log_stream_event(
         fields["attempt"] = attempt
     if delay_seconds is not None:
         fields["delay_seconds"] = delay_seconds
-    log_event(logger, event_name, level, **fields)
+    if duration_ms is not None:
+        fields["duration_ms"] = duration_ms
+    fields["operation"] = operation.removeprefix("milky_event_stream_")
+    logger.log(level, render_event("milky.sse", fields))
 
 
 class EventStreamError(Exception):
@@ -331,6 +336,7 @@ class SseEventStream:
             while not self._stopping:
                 connection_established = False
                 disconnect_reason = "unknown"
+                connection_started = time.perf_counter()
                 if reconnect_pending:
                     _log_stream_event(
                         "milky_event_stream_reconnect_attempt",
@@ -352,6 +358,7 @@ class SseEventStream:
                             logging.INFO,
                             reason=reconnect_reason,
                             attempt=reconnect_attempt,
+                            duration_ms=max(0.0, (time.perf_counter() - connection_started) * 1000),
                         )
                         reconnect_pending = False
                         reconnect_attempt = 0
@@ -382,6 +389,7 @@ class SseEventStream:
                             "milky_event_stream_disconnected",
                             logging.WARNING,
                             reason=disconnect_reason,
+                            duration_ms=max(0.0, (time.perf_counter() - connection_started) * 1000),
                         )
                     await self._close_connection()
 
@@ -498,24 +506,26 @@ class SseEventStream:
             frame = decode_sse_frame(lines)
         except EventStreamError as error:
             self._record(error.classification, error.reason)
-            log_event(
-                logger,
-                "milky_event_stream_frame_ignored",
-                logging.DEBUG,
-                stage="event_stream",
-                classification="malformed",
-                reason="malformed_event",
+            logger.debug(
+                render_event(
+                    "milky.sse",
+                    stage="event_stream",
+                    operation="frame_ignored",
+                    classification="malformed",
+                    reason="malformed_event",
+                )
             )
             return
         if frame.event != "milky_event":
             self._record("unknown", "unsupported SSE event name")
-            log_event(
-                logger,
-                "milky_event_stream_frame_ignored",
-                logging.DEBUG,
-                stage="event_stream",
-                classification="unknown",
-                reason="unsupported_event",
+            logger.debug(
+                render_event(
+                    "milky.sse",
+                    stage="event_stream",
+                    operation="frame_ignored",
+                    classification="unknown",
+                    reason="unsupported_event",
+                )
             )
             return
         try:
@@ -525,13 +535,14 @@ class SseEventStream:
                 raise ParseError("malformed", "event_type is empty")
         except (json.JSONDecodeError, ParseError, TypeError, ValueError):
             self._record("malformed", "event frame payload is malformed")
-            log_event(
-                logger,
-                "milky_event_stream_frame_ignored",
-                logging.DEBUG,
-                stage="event_stream",
-                classification="malformed",
-                reason="malformed_event",
+            logger.debug(
+                render_event(
+                    "milky.sse",
+                    stage="event_stream",
+                    operation="frame_ignored",
+                    classification="malformed",
+                    reason="malformed_event",
+                )
             )
             return
         task = asyncio.create_task(self._invoke_handler(event, handler))
@@ -549,13 +560,14 @@ class SseEventStream:
             raise
         except Exception:  # noqa: BLE001
             self._record("handler_error", "event handler failed")
-            log_event(
-                logger,
-                "milky_event_stream_handler_failed",
-                logging.DEBUG,
-                stage="event_stream",
-                classification="handler_error",
-                reason="handler_failed",
+            logger.warning(
+                render_event(
+                    "milky.sse",
+                    stage="event_stream",
+                    operation="handler_failed",
+                    classification="handler_error",
+                    reason="handler_failed",
+                )
             )
 
     async def _wait_backoff(self, delay: float) -> None:

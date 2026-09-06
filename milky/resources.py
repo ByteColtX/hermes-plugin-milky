@@ -16,15 +16,15 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Protocol
 
 from milky.client import ActionError
+from milky.logging import render_event
 from milky.models import IncomingMessage, Segment
-from milky.observability import log_event
 from milky.parser import ParseError, parse_incoming_message_data
 from session.identity import validate_chat_key
 
 if TYPE_CHECKING:
     from inbound.extractor import ExtractedSegments
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hermes_plugins.milky.resources")
 
 
 class ResourceClient(Protocol):
@@ -281,13 +281,16 @@ class ResourceResolver:
         if not isinstance(chat_key, str) or not isinstance(history, tuple) or current is None:
             raise TypeError("batch must be a detached trigger batch")
         log_fields = _resource_log_fields(chat_key, batch)
-        log_event(
-            logger,
-            "milky_resource_resolution_started",
-            logging.DEBUG,
-            stage="resource",
-            **log_fields,
-            history_count=len(history),
+        logger.debug(
+            render_event(
+                "milky.resource",
+                {
+                    "stage": "resource",
+                    **log_fields,
+                    "operation": "resolution_started",
+                    "history_count": len(history),
+                },
+            )
         )
         resolved_history = tuple([await self.resolve(item) for item in history])
         resolved_current = await self.resolve(current)
@@ -296,28 +299,34 @@ class ResourceResolver:
         )
         materialized_count, degraded_count, reply_count, forward_count = _resource_counts(result)
         completion_fields = _resource_log_fields(chat_key, batch)
-        log_event(
-            logger,
-            "milky_resource_resolution_completed",
-            logging.INFO,
-            stage="resource",
-            **completion_fields,
-            history_count=len(resolved_history),
-            materialized_count=materialized_count,
-            degraded_count=degraded_count,
-            reply_count=reply_count,
-            forward_count=forward_count,
+        logger.info(
+            render_event(
+                "milky.resource",
+                {
+                    "stage": "resource",
+                    **completion_fields,
+                    "operation": "resolution_completed",
+                    "history_count": len(resolved_history),
+                    "materialized_count": materialized_count,
+                    "degraded_count": degraded_count,
+                    "reply_count": reply_count,
+                    "forward_count": forward_count,
+                },
+            )
         )
         if degraded_count:
-            log_event(
-                logger,
-                "milky_resource_resolution_degraded",
-                logging.WARNING,
-                stage="resource",
-                **completion_fields,
-                classification=_resource_classification(result),
-                reason="resource_resolution_failed",
-                degraded_count=degraded_count,
+            logger.warning(
+                render_event(
+                    "milky.resource",
+                    {
+                        "stage": "resource",
+                        **completion_fields,
+                        "operation": "resolution_degraded",
+                        "classification": _resource_classification(result),
+                        "reason": "resource_resolution_failed",
+                        "degraded_count": degraded_count,
+                    },
+                )
             )
         return result
 

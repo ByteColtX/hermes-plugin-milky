@@ -12,14 +12,14 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, Protocol, runtime_checkable
 
+from milky.logging import render_event
 from milky.models import Event, GroupList, GroupMemberInfo, LoginInfo
-from milky.observability import log_event
 from milky.parser import ParseError, parse_event
 from session.identity import normalize_chat_key, validate_chat_rule
 
 MuteState = Literal["muted", "unmuted", "unknown"]
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hermes_plugins.milky.state.mute_tracker")
 
 
 @runtime_checkable
@@ -221,27 +221,27 @@ class MuteTracker:
                 groups = await self._client.get_group_list()
             except asyncio.CancelledError:
                 raise
-            except Exception as error:
+            except Exception:  # noqa: BLE001 - 初始同步只需固定失败分类
                 self._record("initial_state_action_failed")
-                log_event(
-                    logger,
-                    "milky_mute_initial_sync_failed",
-                    logging.WARNING,
-                    stage="mute",
-                    classification="state_sync_failed",
-                    reason="initial_sync_failed",
+                logger.warning(
+                    render_event(
+                        "milky.mute",
+                        stage="initial_sync",
+                        classification="state_sync_failed",
+                        reason="initial_sync_failed",
+                    )
                 )
-                raise MuteSyncError("initial mute sync failed") from error
+                raise MuteSyncError("initial mute sync failed") from None
 
             if not isinstance(login, LoginInfo) or not isinstance(groups, GroupList):
                 self._record("initial_state_shape_invalid")
-                log_event(
-                    logger,
-                    "milky_mute_initial_sync_failed",
-                    logging.WARNING,
-                    stage="mute",
-                    classification="malformed",
-                    reason="initial_sync_failed",
+                logger.warning(
+                    render_event(
+                        "milky.mute",
+                        stage="initial_sync",
+                        classification="malformed",
+                        reason="initial_sync_failed",
+                    )
                 )
                 raise MuteSyncError("initial mute sync failed")
             self._self_id = _validate_id(login.uin, "self_id")
@@ -249,13 +249,12 @@ class MuteTracker:
             group_ids = self._select_group_ids(groups)
             self._retain_current_groups(group_ids)
 
-            log_event(
-                logger,
-                "milky_mute_initial_sync_started",
-                logging.INFO,
-                stage="mute",
-                uid=self._self_id,
-                nickname=self._nickname,
+            logger.info(
+                render_event(
+                    "milky.lifecycle",
+                    stage="identity_confirmed",
+                    uid=self._self_id,
+                )
             )
 
             scan_started_at = time.perf_counter()
@@ -294,15 +293,6 @@ class MuteTracker:
                     state = _effective_mute_state(snapshot)
                     if state == "muted":
                         muted_count += 1
-                        log_event(
-                            logger,
-                            "milky_mute_group_muted",
-                            logging.INFO,
-                            stage="mute",
-                            group_id=group_id,
-                            member_mute=snapshot.member_mute,
-                            whole_mute=snapshot.whole_mute,
-                        )
                     elif state == "unmuted":
                         unmuted_count += 1
                     else:
@@ -314,24 +304,20 @@ class MuteTracker:
                     self._record("initial_member_query_failed")
 
             scan_scope = "allowlist" if self._allowed_chats else "all_groups"
-            scan_event = (
-                "milky_mute_initial_sync_failed"
-                if failures
-                else "milky_mute_initial_sync_succeeded"
-            )
-            log_event(
-                logger,
-                scan_event,
+            logger.log(
                 logging.WARNING if failures else logging.INFO,
-                stage="mute",
-                scope=scan_scope,
-                total=len(group_ids),
-                succeeded=successful_count,
-                failed=len(group_ids) - successful_count,
-                muted=muted_count,
-                unmuted=unmuted_count,
-                unknown=unknown_count,
-                duration_ms=max(0.0, (time.perf_counter() - scan_started_at) * 1000),
+                render_event(
+                    "milky.mute",
+                    scope=scan_scope,
+                    classification="state_sync_failed" if failures else "accepted",
+                    total=len(group_ids),
+                    succeeded=successful_count,
+                    failed=len(group_ids) - successful_count,
+                    muted=muted_count,
+                    unmuted=unmuted_count,
+                    unknown=unknown_count,
+                    duration_ms=max(0.0, (time.perf_counter() - scan_started_at) * 1000),
+                ),
             )
 
             if failures:
@@ -393,24 +379,24 @@ class MuteTracker:
                     raise
                 except Exception:  # noqa: BLE001
                     self._record("member_refresh_failed")
-                    log_event(
-                        logger,
-                        "milky_mute_refresh_failed",
-                        logging.WARNING,
-                        stage="mute",
-                        classification="state_sync_failed",
-                        reason="state_update_failed",
-                        group_id=normalized_id,
+                    logger.warning(
+                        render_event(
+                            "milky.mute",
+                            stage="refresh",
+                            classification="state_sync_failed",
+                            reason="state_update_failed",
+                            group_id=normalized_id,
+                        )
                     )
                     return False
-            log_event(
-                logger,
-                "milky_mute_refresh_succeeded",
-                logging.INFO,
-                stage="mute",
-                classification="accepted",
-                reason="state_updated",
-                group_id=normalized_id,
+            logger.info(
+                render_event(
+                    "milky.mute",
+                    stage="refresh",
+                    classification="accepted",
+                    reason="state_updated",
+                    group_id=normalized_id,
+                )
             )
             return True
 
@@ -479,13 +465,13 @@ class MuteTracker:
             refreshed_at=current.refreshed_at,
         )
         self._wake_expiry_loop()
-        log_event(
-            logger,
-            "milky_mute_event_updated",
-            logging.DEBUG,
-            stage="mute",
-            event_type="group_mute",
-            group_id=group_id,
+        logger.debug(
+            render_event(
+                "milky.mute",
+                stage="event",
+                event_type="group_mute",
+                group_id=group_id,
+            )
         )
         return True
 
@@ -506,13 +492,13 @@ class MuteTracker:
             observed_at=float(event.time),
             refreshed_at=current.refreshed_at,
         )
-        log_event(
-            logger,
-            "milky_mute_event_updated",
-            logging.DEBUG,
-            stage="mute",
-            event_type="group_whole_mute",
-            group_id=group_id,
+        logger.debug(
+            render_event(
+                "milky.mute",
+                stage="event",
+                event_type="group_whole_mute",
+                group_id=group_id,
+            )
         )
         return True
 
@@ -642,15 +628,15 @@ class MuteTracker:
                 observed_at=now,
                 refreshed_at=snapshot.refreshed_at,
             )
-            log_event(
-                logger,
-                "milky_mute_event_updated",
-                logging.DEBUG,
-                stage="mute",
-                event_type="member_mute_expired",
-                group_id=current_group_id,
-                member_mute="unmuted",
-                whole_mute=snapshot.whole_mute,
+            logger.debug(
+                render_event(
+                    "milky.mute",
+                    stage="event",
+                    event_type="member_mute_expired",
+                    group_id=current_group_id,
+                    member_mute="unmuted",
+                    whole_mute=snapshot.whole_mute,
+                )
             )
 
     def _wake_expiry_loop(self) -> None:

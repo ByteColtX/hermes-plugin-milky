@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from inbound.extractor import MediaResourceReference, ReplyReference
 from milky.client import ActionError
 from milky.models import MilkyEnvelope
 from milky.resources import ResourceResolver
+from session import DetachedTriggerBatch
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "protocol"
 
@@ -35,6 +37,37 @@ def test_resource_resolver_is_available_for_trigger_batches() -> None:
 
     assert resolved.body == "朋友消息"
     assert resolved.hermes_attachment_materializations == ()
+
+
+def test_resolve_batch_logs_completion_and_degradation_without_urls(caplog) -> None:
+    """资源批次日志只保留计数和固定降级分类。"""
+
+    result = canonicalize_event(load_fixture("events/message_receive.group.all_segments.json"))
+    assert result.value is not None
+    batch = DetachedTriggerBatch(
+        chat_key="group:700000001",
+        history=(),
+        current=result.value,
+        trigger_ingress_sequence=12,
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="hermes_plugins.milky.resources"):
+        asyncio.run(ResourceResolver(make_client(), SimpleNamespace()).resolve_batch(batch))
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "event=milky.resource" in message
+        and "operation=resolution_completed" in message
+        and "materialized_count=" in message
+        for message in messages
+    )
+    assert any(
+        "event=milky.resource" in message
+        and "operation=resolution_degraded" in message
+        and "classification=" in message
+        for message in messages
+    )
+    assert all("cdn.example.invalid" not in message for message in messages)
 
 
 @dataclass

@@ -5,14 +5,15 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from config import DEFAULT_MAX_LOCAL_MEDIA_BYTES, validate_max_local_media_bytes
 from milky.client import ActionError
+from milky.logging import render_event
 from milky.models import MilkyEnvelope
-from milky.observability import log_event
 from session.identity import CanonicalError, normalize_chat_key
 
 from .chunking import DEFAULT_TEXT_LENGTH, chunk_text
@@ -33,7 +34,7 @@ _MAX_QQ_ID = 4294967295
 _MAX_SAFE_INTEGER = 9007199254740991
 _MISSING = object()
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hermes_plugins.milky.outbound.sender")
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,39 +110,41 @@ class MilkyOutboundSender:
         """按 chat key 发送文本或 Milky outgoing segments。"""
 
         del metadata, reply_to
+        started = time.perf_counter()
         try:
             target = parse_outbound_target(chat_id)
             parts = self._message_parts(content, None)
             parts = await self._materialize_message_parts(parts)
         except (ActionError, OutboundFormatError, ValueError) as error:
             result = _failure(_error_classification(error), _safe_reason(error))
-            log_event(
-                logger,
-                "milky_outbound_failed",
-                logging.WARNING,
-                stage="outbound",
-                classification=_log_classification(result.error_kind),
-                reason=_log_reason(result.error_kind),
+            logger.warning(
+                render_event(
+                    "milky.outbound",
+                    stage="send",
+                    classification=_log_classification(result.error_kind),
+                    reason=_log_reason(result.error_kind),
+                    duration_ms=_duration_ms(started),
+                )
             )
             return result
 
-        log_event(
-            logger,
-            "milky_outbound_route",
-            logging.DEBUG,
-            stage="outbound",
-            route=target.scene,
-            peer_id=target.peer_id,
-        )
-        if len(parts) > 1:
-            log_event(
-                logger,
-                "milky_outbound_chunked",
-                logging.DEBUG,
-                stage="outbound",
+        logger.debug(
+            render_event(
+                "milky.outbound",
+                stage="route",
                 route=target.scene,
                 peer_id=target.peer_id,
-                chunk_count=len(parts),
+            )
+        )
+        if len(parts) > 1:
+            logger.debug(
+                render_event(
+                    "milky.outbound",
+                    stage="chunked",
+                    route=target.scene,
+                    peer_id=target.peer_id,
+                    chunk_count=len(parts),
+                )
             )
 
         sent_ids: list[str] = []
@@ -150,15 +153,15 @@ class MilkyOutboundSender:
             if not result.success:
                 if sent_ids:
                     result = _with_partial(result, sent_ids, index)
-                _log_outbound_result(target, result, chunk_count=len(parts))
+                _log_outbound_result(target, result, chunk_count=len(parts), started=started)
                 return result
             if result.message_id is None:
                 result = _failure("malformed", "send result has no message id")
-                _log_outbound_result(target, result, chunk_count=len(parts))
+                _log_outbound_result(target, result, chunk_count=len(parts), started=started)
                 return result
             sent_ids.append(result.message_id)
         result = _success(sent_ids[-1], continuation_message_ids=tuple(sent_ids[:-1]))
-        _log_outbound_result(target, result, chunk_count=len(parts))
+        _log_outbound_result(target, result, chunk_count=len(parts), started=started)
         return result
 
     async def _materialize_message_parts(
@@ -282,6 +285,7 @@ class MilkyOutboundSender:
         """使用独立 file upload；不把文件放入消息 segments。"""
 
         del caption, reply_to, metadata
+        started = time.perf_counter()
         try:
             target = parse_outbound_target(chat_id)
             parent_folder_id = kwargs.pop("parent_folder_id", _MISSING)
@@ -292,15 +296,17 @@ class MilkyOutboundSender:
             )
             file_id = _file_id(envelope)
             result = _success(file_id)
-            log_event(
-                logger,
-                "milky_outbound_upload_succeeded",
-                logging.INFO,
-                stage="outbound",
-                route=target.scene,
-                peer_id=target.peer_id,
-                file_id=file_id,
-                attachment_count=1,
+            logger.info(
+                render_event(
+                    "milky.outbound",
+                    stage="upload",
+                    operation="upload",
+                    route=target.scene,
+                    peer_id=target.peer_id,
+                    classification="accepted",
+                    attachment_count=1,
+                    duration_ms=_duration_ms(started),
+                )
             )
             return result
         except asyncio.CancelledError:
@@ -309,12 +315,12 @@ class MilkyOutboundSender:
             result = _failure(_error_classification(error), _safe_reason(error))
             if _is_remote_failure(error):
                 self._schedule_group_failure(target if "target" in locals() else None)
-            _log_upload_result(target if "target" in locals() else None, result)
+            _log_upload_result(target if "target" in locals() else None, result, started=started)
             return result
         except Exception:  # noqa: BLE001
             result = _failure("malformed", "file upload failed")
             self._schedule_group_failure(target if "target" in locals() else None)
-            _log_upload_result(target if "target" in locals() else None, result)
+            _log_upload_result(target if "target" in locals() else None, result, started=started)
             return result
 
     async def _call_tool(
@@ -1406,47 +1412,63 @@ def _log_outbound_result(
     result: OutboundSendResult,
     *,
     chunk_count: int,
+    started: float,
 ) -> None:
-    """记录文本或 segment 发送的最终安全结果。"""
+    """记录文本或 segment 发送的最终普通日志结果。"""
 
     if result.success:
-        log_event(
-            logger,
-            "milky_outbound_succeeded",
-            logging.INFO,
-            stage="outbound",
-            route=target.scene,
-            peer_id=target.peer_id,
-            message_id=result.message_id,
-            chunk_count=chunk_count,
-            sent_count=chunk_count,
+        logger.info(
+            render_event(
+                "milky.outbound",
+                stage="send",
+                route=target.scene,
+                peer_id=target.peer_id,
+                classification="accepted",
+                chunk_count=chunk_count,
+                sent_count=chunk_count,
+                duration_ms=_duration_ms(started),
+            )
         )
         return
-    log_event(
-        logger,
-        "milky_outbound_failed",
-        logging.WARNING,
-        stage="outbound",
-        route=target.scene,
-        peer_id=target.peer_id,
-        classification=_log_classification(result.error_kind),
-        reason=_log_reason(result.error_kind),
-        chunk_count=chunk_count,
+    logger.warning(
+        render_event(
+            "milky.outbound",
+            stage="send",
+            route=target.scene,
+            peer_id=target.peer_id,
+            classification=_log_classification(result.error_kind),
+            reason=_log_reason(result.error_kind),
+            chunk_count=chunk_count,
+            duration_ms=_duration_ms(started),
+        )
     )
 
 
-def _log_upload_result(target: OutboundTarget | None, result: OutboundSendResult) -> None:
+def _log_upload_result(
+    target: OutboundTarget | None,
+    result: OutboundSendResult,
+    *,
+    started: float,
+) -> None:
     """记录文件上传失败且不回显路径、文件名或远端正文。"""
 
     fields: dict[str, object] = {
-        "stage": "outbound",
+        "stage": "upload",
+        "operation": "upload",
         "classification": _log_classification(result.error_kind),
         "reason": _log_reason(result.error_kind),
+        "duration_ms": _duration_ms(started),
     }
     if target is not None:
         fields["route"] = target.scene
         fields["peer_id"] = target.peer_id
-    log_event(logger, "milky_outbound_upload_failed", logging.WARNING, **fields)
+    logger.warning(render_event("milky.outbound", fields))
+
+
+def _duration_ms(started: float) -> float:
+    """计算非负的普通日志耗时。"""
+
+    return max(0.0, (time.perf_counter() - started) * 1000)
 
 
 def _log_classification(value: str | None) -> str:

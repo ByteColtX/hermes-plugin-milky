@@ -1291,8 +1291,8 @@ def test_group_management_unknown_result_is_not_retried(
     assert client.calls == [(tool_name, args)]
 
 
-def test_tool_audit_log_projects_sensitive_result_but_returns_raw_envelope(caplog) -> None:
-    """Tool 调用方拿到 raw envelope，审计日志只保留安全结构投影。"""
+def test_tool_log_does_not_copy_sensitive_result_but_returns_raw_envelope(caplog) -> None:
+    """Tool 调用方拿到 raw envelope，日志不复制结果内容。"""
 
     context = ToolContext()
     register_tools(context)
@@ -1304,7 +1304,7 @@ def test_tool_audit_log_projects_sensitive_result_but_returns_raw_envelope(caplo
     client = FakeToolClient()
     bind_sender(MilkyOutboundSender(client))
     try:
-        with caplog.at_level("INFO", logger="outbound.tools"):
+        with caplog.at_level("INFO", logger="hermes_plugins.milky.outbound.tools"):
             result = json.loads(
                 asyncio.run(
                     handler(
@@ -1319,21 +1319,19 @@ def test_tool_audit_log_projects_sensitive_result_but_returns_raw_envelope(caplo
     finally:
         unbind_sender()
 
-    records = [record for record in caplog.records if record.event_name == "milky_tool_call"]
+    records = [record for record in caplog.records if "event=milky.tool" in record.getMessage()]
     assert result["data"]["download_url"] == "fixture-download-url"
     assert len(records) == 1
-    assert records[0].tool == "get_private_file_download_url"
-    assert records[0].tool_args == {
-        "user_id": 800000001,
-        "file_id": "fixture-file",
-        "file_hash": "fixture-hash",
-    }
-    assert records[0].tool_result["has_download_url"] is True
-    assert "fixture-download-url" not in repr(records[0].tool_result)
+    message = records[0].getMessage()
+    assert "tool=get_private_file_download_url" in message
+    assert "classification=accepted" in message
+    assert "duration_ms=" in message
+    assert "fixture-download-url" not in message
+    assert "fixture-file" not in message
 
 
-def test_added_tool_audit_logs_exclude_friend_data_and_special_title(caplog) -> None:
-    """新增工具日志只保留结构和安全 ID，不记录资料值或完整头衔。"""
+def test_added_tool_logs_exclude_friend_data_and_special_title(caplog) -> None:
+    """新增工具日志不记录资料值或完整头衔。"""
 
     context = ToolContext()
     register_tools(context)
@@ -1341,7 +1339,7 @@ def test_added_tool_audit_logs_exclude_friend_data_and_special_title(caplog) -> 
     client = FakeToolClient()
     bind_sender(MilkyOutboundSender(client))
     try:
-        with caplog.at_level("INFO", logger="outbound.tools"):
+        with caplog.at_level("INFO", logger="hermes_plugins.milky.outbound.tools"):
             friend_result = json.loads(
                 asyncio.run(handlers["get_friend_info"]({"user_id": 800000001}))
             )
@@ -1359,19 +1357,18 @@ def test_added_tool_audit_logs_exclude_friend_data_and_special_title(caplog) -> 
     finally:
         unbind_sender()
 
-    records = [record for record in caplog.records if record.event_name == "milky_tool_call"]
+    records = [record for record in caplog.records if "event=milky.tool" in record.getMessage()]
     assert friend_result["data"]["nickname"] == "合成好友"
     assert title_result["data"] == {}
     assert len(records) == 2
-    assert records[0].tool_args == {"user_id": 800000001}
-    assert records[1].tool_args == {"group_id": 700000001, "user_id": 800000001}
     rendered_records = repr(records)
     assert "合成好友" not in rendered_records
     assert "synthetic-sensitive-title" not in rendered_records
+    assert "duration_ms=" in rendered_records
 
 
-def test_group_tool_audit_log_keeps_safe_ids_but_excludes_url_and_reason(caplog) -> None:
-    """群工具日志保留安全关联字段，不记录 URL 或完整拒绝理由。"""
+def test_group_tool_log_excludes_url_and_reason(caplog) -> None:
+    """群工具日志不记录 URL 或完整拒绝理由。"""
 
     context = ToolContext()
     register_tools(context)
@@ -1381,7 +1378,7 @@ def test_group_tool_audit_log_keeps_safe_ids_but_excludes_url_and_reason(caplog)
     client = FakeToolClient()
     bind_sender(MilkyOutboundSender(client))
     try:
-        with caplog.at_level("INFO", logger="outbound.tools"):
+        with caplog.at_level("INFO", logger="hermes_plugins.milky.outbound.tools"):
             result = json.loads(
                 asyncio.run(
                     handler(
@@ -1398,16 +1395,11 @@ def test_group_tool_audit_log_keeps_safe_ids_but_excludes_url_and_reason(caplog)
     finally:
         unbind_sender()
 
-    record = next(record for record in caplog.records if record.event_name == "milky_tool_call")
+    record = next(record for record in caplog.records if "event=milky.tool" in record.getMessage())
     assert result["status"] == "ok"
-    assert record.tool_args == {
-        "notification_seq": 7,
-        "notification_type": "join_request",
-        "group_id": 700000001,
-        "is_filtered": False,
-    }
-    assert "reason" not in record.tool_args
-    assert "synthetic-sensitive-reason" not in repr(record)
+    assert "reason" not in record.getMessage()
+    assert "synthetic-sensitive-reason" not in record.getMessage()
+    assert "duration_ms=" in record.getMessage()
 
 
 def test_reject_reason_is_not_logged_and_full_reason_is_not_required_for_result(caplog) -> None:
@@ -1421,7 +1413,7 @@ def test_reject_reason_is_not_logged_and_full_reason_is_not_required_for_result(
     client = FakeToolClient()
     bind_sender(MilkyOutboundSender(client))
     try:
-        with caplog.at_level("INFO", logger="outbound.tools"):
+        with caplog.at_level("INFO", logger="hermes_plugins.milky.outbound.tools"):
             result = json.loads(
                 asyncio.run(
                     handler(
@@ -1435,7 +1427,7 @@ def test_reject_reason_is_not_logged_and_full_reason_is_not_required_for_result(
     finally:
         unbind_sender()
 
-    record = next(record for record in caplog.records if record.event_name == "milky_tool_call")
+    record = next(record for record in caplog.records if "event=milky.tool" in record.getMessage())
     assert result["status"] == "ok"
     assert client.calls == [
         (
@@ -1443,8 +1435,9 @@ def test_reject_reason_is_not_logged_and_full_reason_is_not_required_for_result(
             {"initiator_uid": "fixture-uid", "reason": "synthetic-sensitive-reason"},
         )
     ]
-    assert "reason" not in record.tool_args
-    assert "synthetic-sensitive-reason" not in repr(record.tool_result)
+    assert "reason" not in record.getMessage()
+    assert "synthetic-sensitive-reason" not in record.getMessage()
+    assert "duration_ms=" in record.getMessage()
 
 
 def test_unbound_sender_returns_unsupported_without_network() -> None:

@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import fields, is_dataclass
 from typing import Any
 
 from milky.client import ActionError
+from milky.logging import render_event
 from milky.models import MilkyEnvelope
-from milky.observability import log_event
 
 from .sender import (
     MilkyOutboundSender,
@@ -21,8 +21,7 @@ from .sender import (
 
 _ACTIVE_SENDER: MilkyOutboundSender | None = None
 _MISSING = object()
-logger = logging.getLogger(__name__)
-_SAFE_TOOL_OPAQUE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+logger = logging.getLogger("hermes_plugins.milky.outbound.tools")
 
 SEND_PROFILE_LIKE_SCHEMA = {
     "name": "send_profile_like",
@@ -1431,22 +1430,24 @@ def _tool_optional_bool(value: object) -> bool:
 async def _execute_action(
     tool_name: str, arguments: Mapping[str, object], action: Callable[[], Any]
 ) -> str:
-    """执行固定 Tool，并记录原始业务入参与远端结果。"""
+    """执行固定 Tool，并只记录结果分类和耗时。"""
 
+    del arguments
+    started = time.perf_counter()
     try:
         result = await action()
         serialized = _serialize_result(result)
-        _log_tool_call(tool_name, arguments, result)
+        _log_tool_call(tool_name, _tool_result_classification(result), started)
         return serialized
     except asyncio.CancelledError:
         raise
     except (ActionError, TypeError, ValueError) as error:
         serialized = _tool_error(_action_classification(error))
-        _log_tool_call(tool_name, arguments, serialized)
+        _log_tool_call(tool_name, _action_classification(error), started)
         return serialized
     except Exception:  # noqa: BLE001 - 工具边界不回显底层异常
         serialized = _tool_error("malformed")
-        _log_tool_call(tool_name, arguments, serialized)
+        _log_tool_call(tool_name, "malformed", started)
         return serialized
 
 
@@ -1477,117 +1478,47 @@ def _serialize_result(result: object) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-def _log_tool_call(tool_name: str, arguments: Mapping[str, object], result: object) -> None:
-    """记录 Tool 的安全投影，不记录原始结果、理由或认证上下文。"""
+def _log_tool_call(tool_name: str, classification: str, started: float) -> None:
+    """记录 Tool 的低基数结果，不复制参数或结果对象。"""
 
-    log_event(
-        logger,
-        "milky_tool_call",
-        logging.INFO,
-        stage="action",
-        tool=tool_name,
-        tool_args=_safe_tool_arguments(arguments),
-        tool_result=_safe_tool_result(result),
+    level = logging.INFO if classification == "accepted" else logging.WARNING
+    logger.log(
+        level,
+        render_event(
+            "milky.tool",
+            tool=tool_name,
+            action=tool_name,
+            classification=classification,
+            duration_ms=_duration_ms(started),
+        ),
     )
 
 
-def _safe_tool_arguments(arguments: Mapping[str, object]) -> dict[str, object]:
-    """保留 Tool 入参中的可关联 ID、布尔值和数量，不记录自由文本。"""
-
-    safe: dict[str, object] = {}
-    id_fields = {
-        "user_id",
-        "group_id",
-        "forward_id",
-        "file_id",
-        "file_hash",
-        "initiator_uid",
-        "parent_folder_id",
-    }
-    boolean_fields = {"is_self", "is_self_send", "reject_add_request", "is_filtered"}
-    quantity_fields = {
-        "count",
-        "limit",
-        "duration",
-        "message_seq",
-        "notification_seq",
-        "invitation_seq",
-    }
-    enum_fields = {"notification_type"}
-    for name, value in arguments.items():
-        if (
-            name in id_fields
-            and (
-                (isinstance(value, int) and not isinstance(value, bool))
-                or (isinstance(value, str) and _SAFE_TOOL_OPAQUE.fullmatch(value))
-            )
-            or (
-                name in boolean_fields
-                and (value is None or isinstance(value, bool))
-                or name in quantity_fields
-                and isinstance(value, int)
-                and not isinstance(value, bool)
-                or name in enum_fields
-                and value in ("join_request", "invited_join_request")
-            )
-        ):
-            safe[name] = value
-    return safe
-
-
-def _safe_tool_result(result: object) -> dict[str, object]:
-    """将 Tool 结果投影为只包含结构和数量的安全诊断。"""
+def _tool_result_classification(result: object) -> str:
+    """把已确认的 Tool 返回对象转换为固定结果分类。"""
 
     if isinstance(result, MilkyEnvelope):
-        projection: dict[str, object] = {
-            "status": result.status,
-            "retcode": result.retcode,
-        }
-        data = result.data
-        if isinstance(data, Mapping):
-            safe_fields = tuple(
-                sorted(
-                    str(key)
-                    for key in data
-                    if isinstance(key, str) and re.fullmatch(r"[A-Za-z0-9_]+", key)
-                )
-            )
-            projection["data_fields"] = safe_fields
-            if isinstance(data.get("messages"), (list, tuple)):
-                projection["message_count"] = len(data["messages"])
-            if isinstance(data.get("requests"), (list, tuple)):
-                projection["request_count"] = len(data["requests"])
-            if "download_url" in data:
-                projection["has_download_url"] = True
-        projection["envelope_field_count"] = len(result.extras)
-        return projection
+        return "accepted" if result.status == "ok" and result.retcode == 0 else "rejected"
     if isinstance(result, OutboundSendResult):
-        return {
-            "ok": result.success,
-            "classification": result.error_kind or ("accepted" if result.success else "malformed"),
+        allowed = {
+            "accepted",
+            "invalid_input",
+            "rejected",
+            "http_error",
+            "malformed",
+            "transport_unknown",
+            "unsupported",
         }
-    if isinstance(result, str):
-        try:
-            value = json.loads(result)
-        except json.JSONDecodeError:
-            return {"classification": "malformed"}
-        if isinstance(value, Mapping):
-            classification = value.get("classification")
-            allowed_classifications = {
-                "invalid_input",
-                "unsupported",
-                "rejected",
-                "http_error",
-                "malformed",
-                "transport_unknown",
-            }
-            return {
-                "ok": value.get("ok") is True,
-                "classification": classification
-                if classification in allowed_classifications
-                else "accepted",
-            }
-    return {"classification": "malformed"}
+        if result.error_kind in allowed:
+            return result.error_kind
+        return "accepted" if result.success else "malformed"
+    return "malformed"
+
+
+def _duration_ms(started: float) -> float:
+    """计算非负的普通日志耗时。"""
+
+    return max(0.0, (time.perf_counter() - started) * 1000)
 
 
 def _json_value(value: object) -> object:

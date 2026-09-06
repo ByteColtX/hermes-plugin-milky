@@ -49,7 +49,7 @@
 日志消息使用单条普通文本表达必要字段，例如：
 
 ```text
-event=milky.action.completed action=send_group_message classification=accepted status_code=200 duration_ms=83 chat_key=group:123
+event=milky.action action=send_group_message classification=accepted status_code=200 duration_ms=83 chat_key=group:123
 ```
 
 不依赖 `extra` 作为查看契约，因为 Hermes core 的默认文件格式主要展示 `record.message`。不重复渲染同一字段，不同时维护第二套人类消息和结构化安全投影。

@@ -12,7 +12,7 @@ from gates import GateRegistry
 from inbound.pipeline import InboundPipeline
 from milky.client import MilkyClient
 from milky.event_stream import SseEventStream
-from milky.observability import log_event
+from milky.logging import render_event
 from milky.resources import HermesMediaHelpers, ResourceResolver
 from outbound.formatter import OutboundFormatError
 from outbound.materialization import (
@@ -57,7 +57,7 @@ except ImportError:  # pragma: no cover - Hermes 未安装时的测试兼容分�
     Platform = _FallbackPlatform
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hermes_plugins.milky.adapter")
 
 _MAX_DIAGNOSTICS = 128
 
@@ -239,18 +239,18 @@ class MilkyAdapter(BasePlatformAdapter):
         async with self._lifecycle_lock:
             if self._closed:
                 self._record("connect_after_stop")
-                log_event(
-                    logger,
-                    "milky_adapter_connect_failed",
-                    logging.WARNING,
-                    stage="lifecycle",
-                    classification="unsupported",
-                    reason="stopped",
+                logger.warning(
+                    render_event(
+                        "milky.lifecycle",
+                        stage="connect",
+                        classification="unsupported",
+                        reason="stopped",
+                    )
                 )
                 return False
             if self._connected and self._event_task is not None and not self._event_task.done():
                 return True
-            log_event(logger, "milky_adapter_connecting", logging.INFO, stage="lifecycle")
+            logger.info(render_event("milky.lifecycle", stage="connect", operation="connecting"))
             try:
                 if not self._initial_sync_complete:
                     await self._initialize_state()
@@ -273,12 +273,14 @@ class MilkyAdapter(BasePlatformAdapter):
                     self._identity_published = self._identity_snapshot.publish(
                         self._self_id, self._nickname
                     )
-                log_event(
-                    logger,
-                    "milky_adapter_ready",
-                    logging.INFO,
-                    stage="lifecycle",
-                    self_id=self._self_id,
+                logger.info(
+                    render_event(
+                        "milky.lifecycle",
+                        stage="connect",
+                        operation="ready",
+                        classification="accepted",
+                        uid=self._self_id,
+                    )
                 )
                 return True
             except asyncio.CancelledError:
@@ -289,13 +291,14 @@ class MilkyAdapter(BasePlatformAdapter):
                 self._unbind_command_service()
                 self._unbind_sender()
                 self._record(f"connect_failed:{_safe_error_category(error)}")
-                log_event(
-                    logger,
-                    "milky_adapter_connect_failed",
-                    logging.WARNING,
-                    stage="lifecycle",
-                    classification=_error_classification(error),
-                    reason="initial_sync_failed",
+                logger.warning(
+                    render_event(
+                        "milky.lifecycle",
+                        stage="connect",
+                        operation="failed",
+                        classification=_error_classification(error),
+                        reason="initial_sync_failed",
+                    )
                 )
                 self._set_fatal_error_safely()
                 return False
@@ -308,7 +311,7 @@ class MilkyAdapter(BasePlatformAdapter):
                 return
             self._closed = True
             self._connected = False
-            log_event(logger, "milky_adapter_stopping", logging.INFO, stage="lifecycle")
+            logger.info(render_event("milky.lifecycle", stage="disconnect", operation="stopping"))
             event_task = self._event_task
             self._event_task = None
 
@@ -325,7 +328,14 @@ class MilkyAdapter(BasePlatformAdapter):
             await self._close_component(self._client, "client_close_failed")
             self._unbind_sender()
             self._mark_disconnected()
-            log_event(logger, "milky_adapter_stopped", logging.INFO, stage="lifecycle")
+            logger.info(
+                render_event(
+                    "milky.lifecycle",
+                    stage="disconnect",
+                    operation="stopped",
+                    classification="accepted",
+                )
+            )
 
     async def send(
         self,
@@ -688,14 +698,14 @@ class MilkyAdapter(BasePlatformAdapter):
             raise
         except Exception:  # noqa: BLE001 - 关闭流程必须继续释放其余资源
             self._record(reason)
-            log_event(
-                logger,
-                "milky_adapter_component_close_failed",
-                logging.WARNING,
-                stage="lifecycle",
-                classification="malformed",
-                reason="component_close_failed",
-                component=reason.removesuffix("_close_failed"),
+            logger.warning(
+                render_event(
+                    "milky.lifecycle",
+                    stage="component_close",
+                    classification="malformed",
+                    reason="component_close_failed",
+                    component=reason.removesuffix("_close_failed"),
+                )
             )
 
     def _set_fatal_error_safely(self) -> None:
@@ -712,13 +722,13 @@ class MilkyAdapter(BasePlatformAdapter):
             )
         except Exception:  # noqa: BLE001 - 诊断失败不得覆盖原始失败结果
             self._record("fatal_error_report_failed")
-            log_event(
-                logger,
-                "milky_adapter_fatal_error_report_failed",
-                logging.WARNING,
-                stage="lifecycle",
-                classification="internal_error",
-                reason="fatal_error_report_failed",
+            logger.warning(
+                render_event(
+                    "milky.lifecycle",
+                    stage="fatal_report",
+                    classification="internal_error",
+                    reason="fatal_error_report_failed",
+                )
             )
 
     def _record(self, reason: str) -> None:
@@ -787,20 +797,21 @@ def _materialization_failure(
         error_kind=safe_classification,
     )
     if action is not None:
-        log_event(
-            logger,
-            "milky_outbound_materialization_failed",
-            logging.WARNING,
-            stage="outbound",
-            action=action,
-            classification=safe_classification,
-            reason=(
-                "invalid_input"
-                if safe_classification == "invalid_input"
-                else "operation_unsupported"
-                if safe_classification == "unsupported"
-                else "send_failed"
-            ),
+        logger.warning(
+            render_event(
+                "milky.outbound",
+                stage="materialization",
+                action=action,
+                classification=safe_classification,
+                reason=(
+                    "invalid_input"
+                    if safe_classification == "invalid_input"
+                    else "operation_unsupported"
+                    if safe_classification == "unsupported"
+                    else "send_failed"
+                ),
+                duration_ms=0,
+            )
         )
     return result
 

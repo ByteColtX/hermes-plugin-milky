@@ -47,6 +47,7 @@ change 的测试证据见 [openspec/](openspec/)。
 - [核心能力](#%E6%A0%B8%E5%BF%83%E8%83%BD%E5%8A%9B)
 - [安装](#%E5%AE%89%E8%A3%85)
 - [配置](#%E9%85%8D%E7%BD%AE)
+- [日志](#%E6%97%A5%E5%BF%97)
 - [功能与使用](#%E5%8A%9F%E8%83%BD%E4%B8%8E%E4%BD%BF%E7%94%A8)
 - [API 与开发](#api-%E4%B8%8E%E5%BC%80%E5%8F%91)
 - [贡献](#%E8%B4%A1%E7%8C%AE)
@@ -366,6 +367,26 @@ observe-only，不会直接创建 Agent turn。通过 Gate 且得到 `trigger` �
 未配置 home channel 时不会回退到 origin、默认频道、群聊或私聊，也不会猜测目标。standalone
 cron 每次创建并关闭临时 Milky client，目前只支持无附件文本；媒体和文件输入返回
 `unsupported`。
+
+## 日志
+
+运行时日志使用 `hermes_plugins.milky.*` 标准 logger，并传播到 Hermes root。关键消息使用
+`event=milky.lifecycle`、`milky.action`、`milky.sse`、`milky.inbound`、`milky.resource`、
+`milky.outbound`、`milky.mute` 或 `milky.tool` 标签；插件不创建独立日志文件、handler、异步队列
+或脱敏后端。
+
+常用查看命令：
+
+```bash
+hermes logs -f
+hermes logs --level DEBUG -f
+hermes logs gateway -f
+```
+
+Action、Tool 和出站日志保留结果分类、已知状态码和 `duration_ms`，不记录 token、Authorization、
+完整 URL、请求/响应 body、消息正文、媒体引用、路径、文件内容、Tool 原始参数或结果。Tool 调用方
+仍会收到既有 raw envelope。日志不可用或 handler 失败不改变连接、重连、Gate/Will、扣费、发送和
+未知结果语义。
 
 ## 功能与使用
 

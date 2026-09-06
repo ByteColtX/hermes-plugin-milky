@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -231,6 +232,29 @@ class FakeMuteTracker:
     async def refresh_after_send_failure(self, target: str) -> bool:
         self.failures.append(target)
         return True
+
+
+def test_outbound_logs_accepted_result_metadata(caplog) -> None:
+    """出站成功日志只保留路由、分类、计数和耗时。"""
+
+    sender = MilkyOutboundSender(FakeOutboundClient())
+    with caplog.at_level(logging.INFO, logger="hermes_plugins.milky.outbound.sender"):
+        result = asyncio.run(sender.send("group:700000001", "合成出站消息"))
+
+    assert result.success is True
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "hermes_plugins.milky.outbound.sender"
+        and "event=milky.outbound" in record.getMessage()
+    ]
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert "classification=accepted" in message
+    assert "route=group" in message
+    assert "peer_id=700000001" in message
+    assert "duration_ms=" in message
+    assert "合成出站消息" not in message
 
 
 def test_formatter_emits_confirmed_milky_outgoing_segments() -> None:
@@ -826,8 +850,8 @@ def test_profile_like_tool_omits_optional_count_when_not_provided() -> None:
     assert client.calls == [("send_profile_like", {"user_id": 800000001})]
 
 
-def test_tool_logs_arguments_and_returns_complete_raw_envelope(caplog) -> None:
-    """已注册 Tool 应记录原始入参/结果并原样保留未知 envelope 字段。"""
+def test_tool_logs_only_result_metadata_and_returns_complete_raw_envelope(caplog) -> None:
+    """Tool 日志只保留结果元数据，调用方仍收到完整 raw envelope。"""
 
     context = ToolContext()
     register_tools(context)
@@ -837,7 +861,7 @@ def test_tool_logs_arguments_and_returns_complete_raw_envelope(caplog) -> None:
     client = FakeOutboundClient()
     bind_sender(MilkyOutboundSender(client))
     try:
-        with caplog.at_level("INFO", logger="outbound.tools"):
+        with caplog.at_level("INFO", logger="hermes_plugins.milky.outbound.tools"):
             result = json.loads(asyncio.run(handler({"group_id": 700000001})))
     finally:
         unbind_sender()
@@ -849,13 +873,17 @@ def test_tool_logs_arguments_and_returns_complete_raw_envelope(caplog) -> None:
     records = [
         record
         for record in caplog.records
-        if record.name == "outbound.tools" and record.event_name == "milky_tool_call"
+        if record.name == "hermes_plugins.milky.outbound.tools"
+        and "event=milky.tool" in record.getMessage()
     ]
     assert len(records) == 1
-    assert records[0].tool == "get_group_info"
-    assert records[0].tool_args == {"group_id": 700000001}
-    assert records[0].tool_result["data_fields"] == ("data_extension", "group")
-    assert records[0].tool_result["envelope_field_count"] == 1
+    message = records[0].getMessage()
+    assert "tool=get_group_info" in message
+    assert "action=get_group_info" in message
+    assert "classification=accepted" in message
+    assert "duration_ms=" in message
+    assert "data_extension" not in message
+    assert "fixture-envelope-extension" not in message
 
 
 def test_tool_parameter_error_does_not_call_action_or_log_remote_result(caplog) -> None:
@@ -869,7 +897,7 @@ def test_tool_parameter_error_does_not_call_action_or_log_remote_result(caplog) 
     client = FakeOutboundClient()
     bind_sender(MilkyOutboundSender(client))
     try:
-        with caplog.at_level("INFO", logger="outbound.tools"):
+        with caplog.at_level("INFO", logger="hermes_plugins.milky.outbound.tools"):
             result = json.loads(asyncio.run(handler({"group_id": "700000001"})))
     finally:
         unbind_sender()
@@ -880,7 +908,9 @@ def test_tool_parameter_error_does_not_call_action_or_log_remote_result(caplog) 
         "error": "tool input is invalid",
     }
     assert client.calls == []
-    assert not [record for record in caplog.records if record.name == "outbound.tools"]
+    assert not [
+        record for record in caplog.records if record.name == "hermes_plugins.milky.outbound.tools"
+    ]
 
 
 def test_outbound_fixture_directory_contains_sanitized_action_envelopes() -> None:

@@ -38,6 +38,17 @@ def member(
     )
 
 
+def log_fields(record: logging.LogRecord) -> dict[str, str]:
+    """解析普通日志消息中的测试字段。"""
+
+    return {
+        name: value
+        for token in record.getMessage().split()
+        for name, separator, value in (token.partition("="),)
+        if separator
+    }
+
+
 @dataclass
 class FakeMuteClient:
     """记录状态同步请求并提供可控的 fake 结果。"""
@@ -171,7 +182,7 @@ def test_tracker_initial_failure_waits_for_all_results_and_summarizes_fail_close
     tracker = MuteTracker(client, clock=lambda: 100)
 
     with (
-        caplog.at_level(logging.INFO, logger="state.mute_tracker"),
+        caplog.at_level(logging.INFO, logger="hermes_plugins.milky.state.mute_tracker"),
         pytest.raises(MuteSyncError, match="initial mute sync failed"),
     ):
         asyncio.run(tracker.initialize())
@@ -186,14 +197,14 @@ def test_tracker_initial_failure_waits_for_all_results_and_summarizes_fail_close
     records = [
         record
         for record in caplog.records
-        if record.name == "state.mute_tracker" and hasattr(record, "event_name")
+        if record.name == "hermes_plugins.milky.state.mute_tracker"
+        and "event=milky.mute" in record.getMessage()
     ]
-    summary = next(
-        record for record in records if record.event_name == "milky_mute_initial_sync_failed"
-    )
-    assert (summary.total, summary.succeeded, summary.failed) == (3, 2, 1)
-    assert (summary.muted, summary.unmuted, summary.unknown) == (0, 0, 2)
-    assert summary.duration_ms >= 0
+    summary = records[-1]
+    fields = log_fields(summary)
+    assert (fields["total"], fields["succeeded"], fields["failed"]) == ("3", "2", "1")
+    assert (fields["muted"], fields["unmuted"], fields["unknown"]) == ("0", "0", "2")
+    assert float(fields["duration_ms"]) >= 0
 
 
 def test_tracker_cancels_and_awaits_all_initial_member_queries() -> None:
@@ -305,14 +316,14 @@ def test_tracker_scans_only_group_allowlist_and_logs_raw_identity_and_results(
         clock=lambda: 100,
     )
 
-    with caplog.at_level(logging.INFO, logger="state.mute_tracker"):
+    with caplog.at_level(logging.INFO, logger="hermes_plugins.milky.state.mute_tracker"):
         asyncio.run(tracker.initialize())
 
     member_calls = [call for call in client.calls if call[0] == "member"]
     assert member_calls == [("member", 700000001, 900000001)]
     assert client.member_no_cache == [True]
     assert tracker.group_ids == (700000001,)
-    assert "[Milky] Cold-start identity" in caplog.text
+    assert "event=milky.lifecycle stage=identity_confirmed" in caplog.text
     assert "冷启动" not in caplog.text
     assert "群禁言" not in caplog.text
     assert "Milky muted group" not in caplog.text
@@ -321,21 +332,25 @@ def test_tracker_scans_only_group_allowlist_and_logs_raw_identity_and_results(
     records = [
         record
         for record in caplog.records
-        if record.name == "state.mute_tracker" and hasattr(record, "event_name")
+        if record.name == "hermes_plugins.milky.state.mute_tracker"
     ]
-    identity = next(
-        record for record in records if record.event_name == "milky_mute_initial_sync_started"
+    identity = next(record for record in records if "event=milky.lifecycle" in record.getMessage())
+    summary = next(record for record in records if "event=milky.mute" in record.getMessage())
+    identity_fields = log_fields(identity)
+    summary_fields = log_fields(summary)
+    assert identity_fields["uid"] == "900000001"
+    assert "nickname=" not in identity.getMessage()
+    assert summary_fields["scope"] == "allowlist"
+    assert (summary_fields["total"], summary_fields["succeeded"], summary_fields["failed"]) == (
+        "1",
+        "1",
+        "0",
     )
-    summary = next(
-        record for record in records if record.event_name == "milky_mute_initial_sync_succeeded"
+    assert (summary_fields["muted"], summary_fields["unmuted"], summary_fields["unknown"]) == (
+        "0",
+        "0",
+        "1",
     )
-    assert identity.uid == 900000001
-    assert identity.nickname == "合成机器人"
-    assert identity.getMessage().count("uid=900000001") == 1
-    assert identity.getMessage().count("nickname=合成机器人") == 1
-    assert summary.scope == "allowlist"
-    assert (summary.total, summary.succeeded, summary.failed) == (1, 1, 0)
-    assert (summary.muted, summary.unmuted, summary.unknown) == (0, 0, 1)
     assert summary.getMessage().count("scope=allowlist") == 1
     assert summary.getMessage().count("total=1") == 1
 
@@ -373,28 +388,22 @@ def test_tracker_logs_only_muted_groups_and_summarizes_all_states(
     )
     tracker = MuteTracker(client, clock=lambda: 100)
 
-    with caplog.at_level(logging.INFO, logger="state.mute_tracker"):
+    with caplog.at_level(logging.INFO, logger="hermes_plugins.milky.state.mute_tracker"):
         asyncio.run(tracker.initialize())
 
     records = [
         record
         for record in caplog.records
-        if record.name == "state.mute_tracker" and hasattr(record, "event_name")
+        if record.name == "hermes_plugins.milky.state.mute_tracker"
+        and "event=milky.mute" in record.getMessage()
     ]
-    muted_records = [record for record in records if record.event_name == "milky_mute_group_muted"]
-    assert len(muted_records) == 1
-    assert muted_records[0].group_id == 700000001
-    assert muted_records[0].member_mute == "muted"
-    assert muted_records[0].whole_mute == "unknown"
-    assert muted_records[0].getMessage().count("group_id=700000001") == 1
-    assert muted_records[0].getMessage().count("member_mute=muted") == 1
-    assert muted_records[0].getMessage().count("whole_mute=unknown") == 1
-    summary = next(
-        record for record in records if record.event_name == "milky_mute_initial_sync_succeeded"
-    )
-    assert summary.scope == "all_groups"
-    assert (summary.total, summary.succeeded, summary.failed) == (3, 3, 0)
-    assert (summary.muted, summary.unmuted, summary.unknown) == (1, 0, 2)
+    assert not any("group_id=" in record.getMessage() for record in records)
+    assert len(records) == 1
+    summary = records[0]
+    fields = log_fields(summary)
+    assert fields["scope"] == "all_groups"
+    assert (fields["total"], fields["succeeded"], fields["failed"]) == ("3", "3", "0")
+    assert (fields["muted"], fields["unmuted"], fields["unknown"]) == ("1", "0", "2")
     assert summary.getMessage().count("scope=all_groups") == 1
     assert summary.getMessage().count("total=3") == 1
 

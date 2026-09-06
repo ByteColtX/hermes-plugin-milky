@@ -27,12 +27,12 @@ CONFIG = load_config(
     }
 )
 
-RECONNECT_LOG_EVENTS = {
-    "milky_event_stream_disconnected",
-    "milky_event_stream_reconnect_scheduled",
-    "milky_event_stream_reconnect_attempt",
-    "milky_event_stream_reconnected",
-    "milky_event_stream_cancelled",
+RECONNECT_LOG_OPERATIONS = {
+    "disconnected",
+    "reconnect_scheduled",
+    "reconnect_attempt",
+    "reconnected",
+    "cancelled",
 }
 SAFE_RECONNECT_REASONS = {
     "eof",
@@ -133,9 +133,21 @@ def lifecycle_log_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogR
     return [
         record
         for record in caplog.records
-        if record.name == "milky.event_stream"
-        and getattr(record, "event_name", None) in RECONNECT_LOG_EVENTS
+        if record.name == "hermes_plugins.milky.event_stream"
+        and _log_fields(record).get("event") == "milky.sse"
+        and _log_fields(record).get("operation") in RECONNECT_LOG_OPERATIONS
     ]
+
+
+def _log_fields(record: logging.LogRecord) -> dict[str, str]:
+    """解析普通 key=value 日志消息供测试断言。"""
+
+    fields: dict[str, str] = {}
+    for token in record.getMessage().split():
+        name, separator, value = token.partition("=")
+        if separator:
+            fields[name] = value
+    return fields
 
 
 def test_reconnect_log_contract_is_ordered_structured_and_safe(caplog) -> None:
@@ -160,7 +172,7 @@ def test_reconnect_log_contract_is_ordered_structured_and_safe(caplog) -> None:
     received = []
 
     async def scenario() -> None:
-        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+        with caplog.at_level(logging.INFO, logger="hermes_plugins.milky.event_stream"):
             task = asyncio.create_task(stream.run(received.append))
             await asyncio.wait_for(second_response.read_started.wait(), 1)
             await stream.close()
@@ -169,24 +181,26 @@ def test_reconnect_log_contract_is_ordered_structured_and_safe(caplog) -> None:
     asyncio.run(scenario())
 
     records = lifecycle_log_records(caplog)
-    assert [record.event_name for record in records] == [
-        "milky_event_stream_disconnected",
-        "milky_event_stream_reconnect_scheduled",
-        "milky_event_stream_reconnect_attempt",
-        "milky_event_stream_reconnected",
-        "milky_event_stream_cancelled",
+    assert [_log_fields(record)["operation"] for record in records] == [
+        "disconnected",
+        "reconnect_scheduled",
+        "reconnect_attempt",
+        "reconnected",
+        "cancelled",
     ]
-    assert records[0].reason == "eof"
-    assert records[1].attempt == 1
-    assert records[1].delay_seconds == 0.25
-    assert records[1].reason == "eof"
-    assert records[2].attempt == 1
-    assert records[2].reason == "eof"
-    assert records[3].attempt == 1
-    assert records[3].reason == "eof"
-    assert not hasattr(records[4], "reason")
+    assert _log_fields(records[0])["reason"] == "eof"
+    assert int(_log_fields(records[1])["attempt"]) == 1
+    assert float(_log_fields(records[1])["delay_seconds"]) == 0.25
+    assert _log_fields(records[1])["reason"] == "eof"
+    assert int(_log_fields(records[2])["attempt"]) == 1
+    assert _log_fields(records[2])["reason"] == "eof"
+    assert int(_log_fields(records[3])["attempt"]) == 1
+    assert _log_fields(records[3])["reason"] == "eof"
+    assert "reason" not in _log_fields(records[4])
     assert delays == [0.25]
-    assert all(getattr(record, "reason", None) in SAFE_RECONNECT_REASONS for record in records[:-1])
+    assert all(
+        _log_fields(record).get("reason") in SAFE_RECONNECT_REASONS for record in records[:-1]
+    )
     rendered = " ".join(record.getMessage() for record in records)
     assert "stream-test-secret" not in rendered
     assert "Authorization" not in rendered
@@ -203,7 +217,7 @@ def test_reconnect_attempt_resets_after_successful_recovery(caplog) -> None:
     stream = SseEventStream(CONFIG, transport=transport, initial_backoff=0, max_backoff=1)
 
     async def scenario() -> None:
-        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+        with caplog.at_level(logging.INFO, logger="hermes_plugins.milky.event_stream"):
             task = asyncio.create_task(stream.run(lambda event: None))
             await asyncio.wait_for(third_response.read_started.wait(), 1)
             await stream.close()
@@ -213,19 +227,15 @@ def test_reconnect_attempt_resets_after_successful_recovery(caplog) -> None:
 
     records = lifecycle_log_records(caplog)
     attempts = [
-        record for record in records if record.event_name == "milky_event_stream_reconnect_attempt"
+        record for record in records if _log_fields(record)["operation"] == "reconnect_attempt"
     ]
     scheduled = [
-        record
-        for record in records
-        if record.event_name == "milky_event_stream_reconnect_scheduled"
+        record for record in records if _log_fields(record)["operation"] == "reconnect_scheduled"
     ]
-    recovered = [
-        record for record in records if record.event_name == "milky_event_stream_reconnected"
-    ]
-    assert [record.attempt for record in attempts] == [1, 1]
-    assert [record.attempt for record in scheduled] == [1, 1]
-    assert [record.attempt for record in recovered] == [1, 1]
+    recovered = [record for record in records if _log_fields(record)["operation"] == "reconnected"]
+    assert [int(_log_fields(record)["attempt"]) for record in attempts] == [1, 1]
+    assert [int(_log_fields(record)["attempt"]) for record in scheduled] == [1, 1]
+    assert [int(_log_fields(record)["attempt"]) for record in recovered] == [1, 1]
 
 
 def test_failed_reconnects_log_safe_reason_and_max_backoff(caplog) -> None:
@@ -257,7 +267,7 @@ def test_failed_reconnects_log_safe_reason_and_max_backoff(caplog) -> None:
     )
 
     async def scenario() -> None:
-        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+        with caplog.at_level(logging.INFO, logger="hermes_plugins.milky.event_stream"):
             task = asyncio.create_task(stream.run(lambda event: None))
             await asyncio.wait_for(final_response.read_started.wait(), 1)
             await stream.close()
@@ -266,40 +276,46 @@ def test_failed_reconnects_log_safe_reason_and_max_backoff(caplog) -> None:
     asyncio.run(scenario())
 
     records = lifecycle_log_records(caplog)
-    assert [record.event_name for record in records] == [
-        "milky_event_stream_reconnect_scheduled",
-        "milky_event_stream_reconnect_attempt",
-        "milky_event_stream_reconnect_scheduled",
-        "milky_event_stream_reconnect_attempt",
-        "milky_event_stream_reconnect_scheduled",
-        "milky_event_stream_reconnect_attempt",
-        "milky_event_stream_reconnect_scheduled",
-        "milky_event_stream_reconnect_attempt",
-        "milky_event_stream_reconnect_scheduled",
-        "milky_event_stream_reconnect_attempt",
-        "milky_event_stream_reconnected",
-        "milky_event_stream_cancelled",
+    assert [_log_fields(record)["operation"] for record in records] == [
+        "reconnect_scheduled",
+        "reconnect_attempt",
+        "reconnect_scheduled",
+        "reconnect_attempt",
+        "reconnect_scheduled",
+        "reconnect_attempt",
+        "reconnect_scheduled",
+        "reconnect_attempt",
+        "reconnect_scheduled",
+        "reconnect_attempt",
+        "reconnected",
+        "cancelled",
     ]
     scheduled = [
-        record
-        for record in records
-        if record.event_name == "milky_event_stream_reconnect_scheduled"
+        record for record in records if _log_fields(record)["operation"] == "reconnect_scheduled"
     ]
     attempts = [
-        record for record in records if record.event_name == "milky_event_stream_reconnect_attempt"
+        record for record in records if _log_fields(record)["operation"] == "reconnect_attempt"
     ]
-    assert [record.attempt for record in scheduled] == [1, 2, 3, 4, 5]
-    assert [record.delay_seconds for record in scheduled] == [0.25, 0.5, 0.5, 0.5, 0.5]
-    assert [record.reason for record in scheduled] == [
+    assert [int(_log_fields(record)["attempt"]) for record in scheduled] == [1, 2, 3, 4, 5]
+    assert [float(_log_fields(record)["delay_seconds"]) for record in scheduled] == [
+        0.25,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+    ]
+    assert [_log_fields(record)["reason"] for record in scheduled] == [
         "connection_error",
         "timeout",
         "stream_error",
         "http_error",
         "protocol_error",
     ]
-    assert [record.attempt for record in attempts] == [1, 2, 3, 4, 5]
-    assert all(record.reason in SAFE_RECONNECT_REASONS for record in records[:-1])
-    assert not any(record.event_name == "milky_event_stream_disconnected" for record in records)
+    assert [int(_log_fields(record)["attempt"]) for record in attempts] == [1, 2, 3, 4, 5]
+    assert all(
+        _log_fields(record).get("reason") in SAFE_RECONNECT_REASONS for record in records[:-1]
+    )
+    assert not any(_log_fields(record)["operation"] == "disconnected" for record in records)
     rendered = repr([(record.getMessage(), record.__dict__) for record in records])
     assert "secret socket detail" not in rendered
     assert "secret timeout detail" not in rendered
@@ -391,7 +407,7 @@ def test_handler_exception_isolated_and_receive_loop_continues(caplog) -> None:
             raise RuntimeError("不应进入诊断正文")
 
     async def scenario() -> None:
-        with caplog.at_level(logging.DEBUG, logger="milky.event_stream"):
+        with caplog.at_level(logging.DEBUG, logger="hermes_plugins.milky.event_stream"):
             task = asyncio.create_task(stream.run(handler))
             while len(received) < 2 or not any(
                 item.classification == "handler_error" for item in stream.diagnostics
@@ -409,14 +425,16 @@ def test_handler_exception_isolated_and_receive_loop_continues(caplog) -> None:
     handler_logs = [
         record
         for record in caplog.records
-        if record.name == "milky.event_stream"
-        and getattr(record, "event_name", None) == "milky_event_stream_handler_failed"
+        if record.name == "hermes_plugins.milky.event_stream"
+        and _log_fields(record).get("event") == "milky.sse"
+        and _log_fields(record).get("operation") == "handler_failed"
     ]
     assert len(handler_logs) == 1
-    assert handler_logs[0].reason == "handler_failed"
+    assert _log_fields(handler_logs[0])["reason"] == "handler_failed"
     assert not any(
-        record.name == "milky.event_stream"
-        and getattr(record, "event_name", None) == "milky_event_stream_frame_ignored"
+        record.name == "hermes_plugins.milky.event_stream"
+        and _log_fields(record).get("event") == "milky.sse"
+        and _log_fields(record).get("operation") == "frame_ignored"
         for record in caplog.records
     )
 
@@ -496,7 +514,7 @@ def test_disconnect_cancels_handlers_releases_response_and_transport(caplog) -> 
             raise
 
     async def scenario() -> None:
-        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+        with caplog.at_level(logging.INFO, logger="hermes_plugins.milky.event_stream"):
             task = asyncio.create_task(stream.run(handler))
             await asyncio.wait_for(started.wait(), 1)
             await stream.close()
@@ -508,7 +526,7 @@ def test_disconnect_cancels_handlers_releases_response_and_transport(caplog) -> 
     assert response.close_calls == 1
     assert transport.close_calls == 1
     records = lifecycle_log_records(caplog)
-    assert [record.event_name for record in records] == ["milky_event_stream_cancelled"]
+    assert [_log_fields(record)["operation"] for record in records] == ["cancelled"]
 
 
 def test_reconnect_applies_backoff_after_connection_failure() -> None:
@@ -652,7 +670,7 @@ def test_close_interrupts_backoff_and_is_idempotent(caplog) -> None:
     )
 
     async def scenario() -> None:
-        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+        with caplog.at_level(logging.INFO, logger="hermes_plugins.milky.event_stream"):
             task = asyncio.create_task(stream.run(lambda event: None))
             await asyncio.wait_for(sleep_started.wait(), 1)
             await stream.close()
@@ -664,14 +682,14 @@ def test_close_interrupts_backoff_and_is_idempotent(caplog) -> None:
     assert response.close_calls == 1
     assert transport.close_calls == 1
     records = lifecycle_log_records(caplog)
-    assert [record.event_name for record in records] == [
-        "milky_event_stream_disconnected",
-        "milky_event_stream_reconnect_scheduled",
-        "milky_event_stream_cancelled",
+    assert [_log_fields(record)["operation"] for record in records] == [
+        "disconnected",
+        "reconnect_scheduled",
+        "cancelled",
     ]
-    assert records[0].reason == "eof"
-    assert records[1].attempt == 1
-    assert records[1].delay_seconds == 60.0
+    assert _log_fields(records[0])["reason"] == "eof"
+    assert int(_log_fields(records[1])["attempt"]) == 1
+    assert float(_log_fields(records[1])["delay_seconds"]) == 60.0
 
 
 def test_close_cancels_connection_attempt_without_reconnecting(caplog) -> None:
@@ -697,7 +715,7 @@ def test_close_cancels_connection_attempt_without_reconnecting(caplog) -> None:
     stream = SseEventStream(CONFIG, transport=transport)
 
     async def scenario() -> None:
-        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+        with caplog.at_level(logging.INFO, logger="hermes_plugins.milky.event_stream"):
             task = asyncio.create_task(stream.run(lambda event: None))
             await asyncio.wait_for(transport.started.wait(), 1)
             await stream.close()
@@ -709,7 +727,7 @@ def test_close_cancels_connection_attempt_without_reconnecting(caplog) -> None:
     assert len(transport.connections) == 1
     assert transport.close_calls == 1
     records = lifecycle_log_records(caplog)
-    assert [record.event_name for record in records] == ["milky_event_stream_cancelled"]
+    assert [_log_fields(record)["operation"] for record in records] == ["cancelled"]
 
 
 def test_direct_run_task_cancellation_releases_resources(caplog) -> None:
@@ -737,7 +755,7 @@ def test_direct_run_task_cancellation_releases_resources(caplog) -> None:
         await asyncio.Event().wait()
 
     async def scenario() -> None:
-        with caplog.at_level(logging.INFO, logger="milky.event_stream"):
+        with caplog.at_level(logging.INFO, logger="hermes_plugins.milky.event_stream"):
             task = asyncio.create_task(stream.run(handler))
             await asyncio.wait_for(started.wait(), 1)
             task.cancel()
@@ -749,7 +767,7 @@ def test_direct_run_task_cancellation_releases_resources(caplog) -> None:
     assert response.close_calls == 1
     assert transport.close_calls == 1
     records = lifecycle_log_records(caplog)
-    assert [record.event_name for record in records] == ["milky_event_stream_cancelled"]
+    assert [_log_fields(record)["operation"] for record in records] == ["cancelled"]
 
 
 def test_httpx_transport_opens_sse_with_get_and_unlimited_read_timeout() -> None:

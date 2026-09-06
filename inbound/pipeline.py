@@ -11,8 +11,8 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from gates import GateContext, GateRegistry
+from milky.logging import render_event
 from milky.models import Event
-from milky.observability import log_event
 from milky.parser import ParseError, parse_event
 from milky.resources import (
     HermesAttachmentMaterialization,
@@ -36,7 +36,7 @@ from .system_events import parse_context_event
 
 Observer = Callable[[Event], Awaitable[object] | object]
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hermes_plugins.milky.inbound.pipeline")
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,13 +139,13 @@ class InboundPipeline:
             parsed_event = event if isinstance(event, Event) else parse_event(event)
         except ParseError as error:
             self._record(f"{error.classification}:event")
-            log_event(
-                logger,
-                "milky_inbound_canonical_rejected",
-                logging.DEBUG,
-                stage="canonical",
-                classification=_safe_classification(error.classification),
-                reason="invalid_message",
+            logger.debug(
+                render_event(
+                    "milky.inbound",
+                    stage="canonical",
+                    classification=_safe_classification(error.classification),
+                    reason="invalid_message",
+                )
             )
             return PipelineResult(error.classification, reason=error.reason)
 
@@ -155,12 +155,13 @@ class InboundPipeline:
                 await self._store_context_event(context_result.value)
             elif context_result.classification in {"malformed", "unsupported"}:
                 self._record(f"system_context:{context_result.classification}")
-            log_event(
-                logger,
-                "milky_inbound_observe_only",
-                logging.DEBUG,
-                stage="canonical",
-                reason="unsupported_event",
+            logger.debug(
+                render_event(
+                    "milky.inbound",
+                    stage="canonical",
+                    operation="observe_only",
+                    reason="unsupported_event",
+                )
             )
             await self._observe(parsed_event)
             return PipelineResult("observe_only", reason="event is not message_receive")
@@ -170,27 +171,20 @@ class InboundPipeline:
             expected_self_id=self._self_id,
         )
         if canonical_result.classification != "accepted" or canonical_result.value is None:
-            event_name = (
-                "milky_inbound_temp_ignored"
-                if canonical_result.classification == "ignored_temp"
-                else "milky_inbound_canonical_rejected"
-            )
-            log_event(
-                logger,
-                event_name,
-                logging.DEBUG,
-                stage="canonical",
-                scene="temp" if event_name == "milky_inbound_temp_ignored" else "friend",
-                classification=(
-                    "unsupported"
-                    if event_name == "milky_inbound_temp_ignored"
-                    else _safe_classification(canonical_result.classification)
-                ),
-                reason=(
-                    "temporary_message"
-                    if event_name == "milky_inbound_temp_ignored"
-                    else "canonical_rejected"
-                ),
+            is_temp = canonical_result.classification == "ignored_temp"
+            logger.debug(
+                render_event(
+                    "milky.inbound",
+                    stage="canonical",
+                    scene="temp" if is_temp else "friend",
+                    operation="temp_ignored" if is_temp else "canonical_rejected",
+                    classification=(
+                        "unsupported"
+                        if is_temp
+                        else _safe_classification(canonical_result.classification)
+                    ),
+                    reason="temporary_message" if is_temp else "canonical_rejected",
+                )
             )
             return PipelineResult(
                 canonical_result.classification,
@@ -199,15 +193,15 @@ class InboundPipeline:
         canonical = canonical_result.value
         if self._deduplicator.check_and_mark(canonical.dedup_key):
             self._record("duplicate")
-            log_event(
-                logger,
-                "milky_inbound_duplicate",
-                logging.DEBUG,
-                stage="dedup",
-                scene=canonical.scene,
-                chat_key=canonical.chat_key,
-                message_id=canonical.message_id,
-                reason="duplicate_message",
+            logger.debug(
+                render_event(
+                    "milky.inbound",
+                    stage="dedup",
+                    scene=canonical.scene,
+                    chat_key=canonical.chat_key,
+                    message_id=canonical.message_id,
+                    reason="duplicate_message",
+                )
             )
             return PipelineResult("duplicate", canonical=canonical, reason="duplicate_message")
 
@@ -215,16 +209,16 @@ class InboundPipeline:
             gate_result = self._gates.check(self._gate_context(canonical))
             if not gate_result.allow:
                 self._record(f"gate:{gate_result.reason}")
-                log_event(
-                    logger,
-                    "milky_inbound_gate_denied",
-                    logging.DEBUG,
-                    stage="gate",
-                    scene=canonical.scene,
-                    chat_key=canonical.chat_key,
-                    message_id=canonical.message_id,
-                    gate=_gate_name(gate_result.reason),
-                    reason=_safe_gate_reason(gate_result.reason),
+                logger.debug(
+                    render_event(
+                        "milky.inbound",
+                        stage="gate",
+                        scene=canonical.scene,
+                        chat_key=canonical.chat_key,
+                        message_id=canonical.message_id,
+                        gate=_gate_name(gate_result.reason),
+                        reason=_safe_gate_reason(gate_result.reason),
+                    )
                 )
                 return PipelineResult("denied", canonical=canonical, reason=gate_result.reason)
             command = recognize_slash_command(canonical)
@@ -233,32 +227,32 @@ class InboundPipeline:
                 return PipelineResult("command", canonical=canonical)
             if canonical.will_input is None:
                 self._record("malformed:missing_will_input")
-                log_event(
-                    logger,
-                    "milky_inbound_canonical_rejected",
-                    logging.DEBUG,
-                    stage="canonical",
-                    scene=canonical.scene,
-                    chat_key=canonical.chat_key,
-                    message_id=canonical.message_id,
-                    classification="malformed",
-                    reason="invalid_message",
+                logger.debug(
+                    render_event(
+                        "milky.inbound",
+                        stage="canonical",
+                        scene=canonical.scene,
+                        chat_key=canonical.chat_key,
+                        message_id=canonical.message_id,
+                        classification="malformed",
+                        reason="invalid_message",
+                    )
                 )
                 return PipelineResult(
                     "malformed", canonical=canonical, reason="normalized Will input is missing"
                 )
             decision = self._will_decide(canonical.will_input)
             if decision in {"wait", "trigger"}:
-                log_event(
-                    logger,
-                    "milky_will_decision",
-                    logging.DEBUG,
-                    stage="will",
-                    scene=canonical.scene,
-                    chat_key=canonical.chat_key,
-                    message_id=canonical.message_id,
-                    decision=decision,
-                    ingress_sequence=ticket.ingress_sequence,
+                logger.debug(
+                    render_event(
+                        "milky.inbound",
+                        stage="will",
+                        scene=canonical.scene,
+                        chat_key=canonical.chat_key,
+                        message_id=canonical.message_id,
+                        decision=decision,
+                        ingress_sequence=ticket.ingress_sequence,
+                    )
                 )
             if decision == "wait":
                 append_result = self._buffer.append(
@@ -276,20 +270,20 @@ class InboundPipeline:
                 }
                 if not append_result.accepted:
                     wait_fields["reason"] = "buffer_overflow"
-                log_event(logger, "milky_inbound_wait", logging.INFO, **wait_fields)
+                logger.info(render_event("milky.inbound", wait_fields))
                 return PipelineResult("wait", canonical=canonical)
             if decision != "trigger":
                 self._record("will:invalid_decision")
-                log_event(
-                    logger,
-                    "milky_inbound_canonical_rejected",
-                    logging.WARNING,
-                    stage="will",
-                    scene=canonical.scene,
-                    chat_key=canonical.chat_key,
-                    message_id=canonical.message_id,
-                    classification="malformed",
-                    reason="invalid_decision",
+                logger.warning(
+                    render_event(
+                        "milky.inbound",
+                        stage="will",
+                        scene=canonical.scene,
+                        chat_key=canonical.chat_key,
+                        message_id=canonical.message_id,
+                        classification="malformed",
+                        reason="invalid_decision",
+                    )
                 )
                 return PipelineResult(
                     "malformed", canonical=canonical, reason="invalid Will decision"
@@ -304,27 +298,28 @@ class InboundPipeline:
                 batch,
                 system_context=self._system_context.drain(canonical.chat_key),
             )
-            log_event(
-                logger,
-                "milky_inbound_trigger",
-                logging.INFO,
-                stage="will",
-                scene=canonical.scene,
-                chat_key=canonical.chat_key,
-                message_id=canonical.message_id,
-                decision="trigger",
-                ingress_sequence=ticket.ingress_sequence,
-                history_count=len(batch.history),
+            logger.info(
+                render_event(
+                    "milky.inbound",
+                    stage="will",
+                    scene=canonical.scene,
+                    chat_key=canonical.chat_key,
+                    message_id=canonical.message_id,
+                    decision="trigger",
+                    ingress_sequence=ticket.ingress_sequence,
+                    history_count=len(batch.history),
+                )
             )
-            log_event(
-                logger,
-                "milky_inbound_drain",
-                logging.DEBUG,
-                stage="buffer",
-                scene=canonical.scene,
-                chat_key=canonical.chat_key,
-                ingress_sequence=batch.trigger_ingress_sequence,
-                history_count=len(batch.history),
+            logger.debug(
+                render_event(
+                    "milky.inbound",
+                    stage="buffer",
+                    scene=canonical.scene,
+                    chat_key=canonical.chat_key,
+                    ingress_sequence=batch.trigger_ingress_sequence,
+                    history_count=len(batch.history),
+                    operation="drain",
+                )
             )
             self._start_detached(batch)
             return PipelineResult("trigger", canonical=canonical, batch=batch)
@@ -361,12 +356,16 @@ class InboundPipeline:
             result = handle_message(event)
             if inspect.isawaitable(result):
                 await result
-            log_event(
-                logger,
-                "milky_inbound_handoff_succeeded",
-                logging.INFO,
-                stage="handoff",
-                **_batch_log_fields(chat_key, ingress_sequence, current),
+            logger.info(
+                render_event(
+                    "milky.inbound",
+                    {
+                        "stage": "handoff",
+                        "classification": "accepted",
+                        "operation": "handoff",
+                        **_batch_log_fields(chat_key, ingress_sequence, current),
+                    },
+                )
             )
         except asyncio.CancelledError:
             raise
@@ -374,14 +373,16 @@ class InboundPipeline:
             self._buffer.record_handoff_failure(batch, recoverable=False)
             self._record(f"trigger_failed:{_error_category(error)}")
             failure_fields = _batch_log_fields(chat_key, ingress_sequence, current)
-            log_event(
-                logger,
-                "milky_inbound_handoff_failed",
-                logging.WARNING,
-                stage="handoff",
-                **failure_fields,
-                classification=_error_classification(error),
-                reason="handoff_failed",
+            logger.warning(
+                render_event(
+                    "milky.inbound",
+                    {
+                        "stage": "handoff",
+                        **failure_fields,
+                        "classification": _error_classification(error),
+                        "reason": "handoff_failed",
+                    },
+                )
             )
 
     def _start_detached(self, batch: object) -> None:
@@ -420,16 +421,16 @@ class InboundPipeline:
             raise
         except Exception as error:  # noqa: BLE001 - 命令边界只记录安全分类
             self._record(f"command_failed:{_error_category(error)}")
-            log_event(
-                logger,
-                "milky_inbound_handoff_failed",
-                logging.WARNING,
-                stage="handoff",
-                chat_key=message.chat_key,
-                message_id=message.message_id,
-                scene=message.scene,
-                classification=_error_classification(error),
-                reason="handoff_failed",
+            logger.warning(
+                render_event(
+                    "milky.inbound",
+                    stage="handoff",
+                    chat_key=message.chat_key,
+                    message_id=message.message_id,
+                    scene=message.scene,
+                    classification=_error_classification(error),
+                    reason="handoff_failed",
+                )
             )
 
     def _gate_context(self, message: CanonicalMessage) -> GateContext:
@@ -466,24 +467,26 @@ class InboundPipeline:
                 callback(chat_key)
             except Exception:  # noqa: BLE001 - feedback cannot undo a submitted turn
                 self._record("will_feedback_error")
-                log_event(
-                    logger,
-                    "milky_will_reply_cost",
-                    logging.WARNING,
-                    stage="will",
-                    chat_key=chat_key,
-                    classification="malformed",
-                    reason="reply_cost_failed",
+                logger.warning(
+                    render_event(
+                        "milky.inbound",
+                        stage="will",
+                        operation="reply_cost",
+                        chat_key=chat_key,
+                        classification="malformed",
+                        reason="reply_cost_failed",
+                    )
                 )
             else:
-                log_event(
-                    logger,
-                    "milky_will_reply_cost",
-                    logging.DEBUG,
-                    stage="will",
-                    chat_key=chat_key,
-                    classification="accepted",
-                    reason="state_updated",
+                logger.debug(
+                    render_event(
+                        "milky.inbound",
+                        stage="will",
+                        operation="reply_cost",
+                        chat_key=chat_key,
+                        classification="accepted",
+                        reason="state_updated",
+                    )
                 )
         self._reply_costs += 1
 
@@ -495,13 +498,14 @@ class InboundPipeline:
                     apply_event(event)
                 except Exception:  # noqa: BLE001 - observe-only state cannot trigger Agent
                     self._record("observe_state_error")
-                    log_event(
-                        logger,
-                        "milky_inbound_observer_failed",
-                        logging.DEBUG,
-                        stage="mute",
-                        classification="malformed",
-                        reason="observer_failed",
+                    logger.debug(
+                        render_event(
+                            "milky.inbound",
+                            stage="mute",
+                            operation="observer",
+                            classification="malformed",
+                            reason="observer_failed",
+                        )
                     )
         if self._observer is None:
             return
@@ -511,13 +515,14 @@ class InboundPipeline:
                 await result
         except Exception:  # noqa: BLE001 - observer must not break event processing
             self._record("observer_error")
-            log_event(
-                logger,
-                "milky_inbound_observer_failed",
-                logging.DEBUG,
-                stage="canonical",
-                classification="handler_error",
-                reason="observer_failed",
+            logger.debug(
+                render_event(
+                    "milky.inbound",
+                    stage="canonical",
+                    operation="observer",
+                    classification="handler_error",
+                    reason="observer_failed",
+                )
             )
 
     async def _store_context_event(self, event: ContextOnlyEvent) -> None:
@@ -530,16 +535,17 @@ class InboundPipeline:
                 reason = "buffer_overflow"
             else:
                 reason = "context_only"
-            log_event(
-                logger,
-                "milky_inbound_context_only",
-                logging.INFO,
-                stage="buffer",
-                scene="group" if event.chat_key.startswith("group:") else "friend",
-                chat_key=event.chat_key,
-                event_type=event.event_type,
-                ingress_sequence=ticket.ingress_sequence,
-                reason=reason,
+            logger.info(
+                render_event(
+                    "milky.inbound",
+                    stage="buffer",
+                    operation="context_only",
+                    scene="group" if event.chat_key.startswith("group:") else "friend",
+                    chat_key=event.chat_key,
+                    event_type=event.event_type,
+                    ingress_sequence=ticket.ingress_sequence,
+                    reason=reason,
+                )
             )
 
     def _record(self, reason: str) -> None:

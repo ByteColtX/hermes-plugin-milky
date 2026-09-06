@@ -13,7 +13,7 @@ import pytest
 
 from config import load_config
 from milky.client import ActionError, HttpxTransportError, MilkyClient
-from milky.observability import log_event, sanitize_fields
+from milky.logging import render_event
 from outbound.sender import MilkyOutboundSender, OutboundSendResult
 
 _CONFIG_ENV = {
@@ -488,45 +488,41 @@ def test_group_refresh_is_background_and_sender_close_cleans_it_up() -> None:
 
 
 @pytest.mark.parametrize("phase", ["connect", "write", "read", "pool", "unknown"])
-def test_transport_phase_is_a_safe_allowlisted_field(phase: str) -> None:
-    """传输阶段只能使用固定枚举，不能携带异常或凭证文本。"""
+def test_transport_phase_is_rendered_as_a_plain_field(phase: str) -> None:
+    """传输阶段日志使用普通消息字段，安全分类由调用方提供。"""
 
-    fields = sanitize_fields(
-        {
-            "stage": "action",
-            "action": "send_group_message",
-            "classification": "transport_unknown",
-            "reason": "request_unknown",
-            "transport_phase": phase,
-            "duration_ms": 7.7,
-        }
+    message = render_event(
+        "milky.action",
+        stage="action",
+        action="send_group_message",
+        classification="transport_unknown",
+        reason="request_unknown",
+        transport_phase=phase,
+        duration_ms=7.7,
     )
 
-    assert fields["transport_phase"] == phase
-
-    with pytest.raises(ValueError):
-        sanitize_fields({"transport_phase": "read: synthetic-token"})
+    assert f"transport_phase={phase}" in message
 
 
 def test_transport_phase_log_preserves_only_safe_diagnostics(caplog) -> None:
     """阶段日志应可关联但不得输出底层错误详情。"""
 
-    logger = logging.getLogger("milky.unknown_send_outcomes")
+    logger = logging.getLogger("hermes_plugins.milky.unknown_send_outcomes")
     with caplog.at_level(logging.WARNING, logger=logger.name):
-        log_event(
-            logger,
-            "milky_action_failed",
-            logging.WARNING,
-            stage="action",
-            action="send_group_message",
-            classification="transport_unknown",
-            reason="request_unknown",
-            transport_phase="read",
-            duration_ms=7.7,
+        logger.warning(
+            render_event(
+                "milky.action",
+                stage="action",
+                action="send_group_message",
+                classification="transport_unknown",
+                reason="request_unknown",
+                transport_phase="read",
+                duration_ms=7.7,
+            )
         )
 
     record = caplog.records[-1]
-    assert record.transport_phase == "read"
+    assert "transport_phase=read" in record.getMessage()
     assert "synthetic-token" not in record.getMessage()
     assert "request body" not in record.getMessage()
 

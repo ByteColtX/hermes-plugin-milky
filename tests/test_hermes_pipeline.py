@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -333,6 +334,48 @@ def test_wait_history_is_context_only_and_current_message_is_not_repeated() -> N
     assert "历史消息" not in event.text
 
 
+def test_pipeline_logs_wait_trigger_gate_and_handoff(caplog) -> None:
+    """入站关键边界使用普通低敏日志消息表达。"""
+
+    async def scenario() -> None:
+        hermes = FakeHermes()
+        pipeline = make_pipeline(
+            hermes,
+            FakeResolver(),
+            routing=RoutingConfig(direct="trigger", mention="trigger", all_message="wait"),
+        )
+        first = load_fixture("events/message_receive.group.all_segments.json")
+        first["data"]["message_seq"] = 2101
+        first["data"]["segments"] = [{"type": "text", "data": {"text": "合成历史"}}]
+        second = load_fixture("events/message_receive.group.all_segments.json")
+        second["data"]["message_seq"] = 2102
+        second["data"]["segments"] = [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "text", "data": {"text": "合成触发"}},
+        ]
+        with caplog.at_level(logging.DEBUG, logger="hermes_plugins.milky.inbound.pipeline"):
+            assert (await pipeline.handle_event(first)).classification == "wait"
+            assert (await pipeline.handle_event(second)).classification == "trigger"
+            await pipeline.wait_idle()
+
+    asyncio.run(scenario())
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "event=milky.inbound" in message and "decision=wait" in message for message in messages
+    )
+    assert any(
+        "event=milky.inbound" in message and "decision=trigger" in message for message in messages
+    )
+    assert any(
+        "event=milky.inbound" in message
+        and "stage=handoff" in message
+        and "classification=accepted" in message
+        for message in messages
+    )
+    assert all("合成历史" not in message and "合成触发" not in message for message in messages)
+
+
 def test_context_images_precede_current_images_and_deduplicate_media_paths() -> None:
     """历史图片应先于当前附件进入 media_urls，并按路径去重。"""
 
@@ -471,7 +514,7 @@ def test_failed_context_image_keeps_placeholder_without_media_url() -> None:
     assert "[img:file_name=NOT SUPPORTED]" in event.channel_context
 
 
-def test_duplicate_gate_deny_temp_and_system_event_stop_before_resolver_or_hermes() -> None:
+def test_duplicate_gate_deny_temp_and_system_event_stop_before_resolver_or_hermes(caplog) -> None:
     """重复、门禁拒绝、temp 和系统事件都不得进入资源或 Hermes。"""
 
     async def scenario() -> tuple[list[str], list[FakeMessageEvent], list[str]]:
@@ -498,11 +541,18 @@ def test_duplicate_gate_deny_temp_and_system_event_stop_before_resolver_or_herme
         await pipeline.wait_idle()
         return [call[1] for call in resolver.calls], hermes.events, observed
 
+    caplog.set_level(logging.DEBUG, logger="hermes_plugins.milky.inbound.pipeline")
     calls, events, observed = asyncio.run(scenario())
 
     assert calls == ["1001"]
     assert [event.message_id for event in events] == ["1001"]
     assert observed == ["message_recall"]
+    assert any(
+        "event=milky.inbound" in record.getMessage()
+        and "stage=gate" in record.getMessage()
+        and "reason=self_message" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_message_recall_stays_observe_only_without_normal_pipeline_side_effects() -> None:

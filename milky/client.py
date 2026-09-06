@@ -27,6 +27,7 @@ from config import (
     validate_max_local_media_bytes,
 )
 
+from .logging import render_event
 from .models import (
     GroupEntity,
     GroupList,
@@ -35,7 +36,6 @@ from .models import (
     LoginInfo,
     MilkyEnvelope,
 )
-from .observability import log_event
 from .parser import ParseError, parse_action_response, parse_envelope
 
 _ACTION_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
@@ -77,7 +77,7 @@ _TOOL_ACTIONS = frozenset(
 )
 _MISSING = object()
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("hermes_plugins.milky.client")
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,14 +416,15 @@ class MilkyClient:
                 raise ActionError("malformed", action, "response data is malformed")
             if action == "get_impl_info":
                 _validate_impl_info_data(envelope.data, action)
-            log_event(
-                logger,
-                "milky_action_succeeded",
-                logging.INFO,
-                stage="action",
-                action=action,
-                status_code=status_code,
-                duration_ms=_duration_ms(started),
+            logger.info(
+                render_event(
+                    "milky.action",
+                    stage="action",
+                    action=action,
+                    classification="accepted",
+                    status_code=status_code,
+                    duration_ms=_duration_ms(started),
+                )
             )
             return envelope, _response_body_bytes(response.body, action)
         except asyncio.CancelledError:
@@ -440,12 +441,7 @@ class MilkyClient:
                 failure_fields["status_code"] = status_code
             if error.phase is not None:
                 failure_fields["transport_phase"] = error.phase
-            log_event(
-                logger,
-                "milky_action_failed",
-                logging.WARNING,
-                **failure_fields,
-            )
+            logger.warning(render_event("milky.action", failure_fields))
             raise
 
     async def action(

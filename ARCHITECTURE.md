@@ -376,7 +376,8 @@ get_friend_info, set_group_member_special_title
 ```
 
 名称与 Milky operationId 一一对应；参数、最小响应结构和错误分类由 `__init__.py`、`outbound/tools.py`、
-`milky/client.py` 和相关 OpenSpec 约束。成功可返回协议要求的 raw envelope，但日志只用安全投影；
+`milky/client.py` 和相关 OpenSpec 约束。成功可返回协议要求的 raw envelope，但日志只用工具名、
+Action、分类、状态码（已知时）和耗时；
 结果未知返回 `transport_unknown`，不自动重试。新增工具必须先有独立 OpenSpec、参数边界和安全回归。
 
 群文件工具使用 `get_group_file_download_url(group_id, file_id)` 查询下载链接，或使用
@@ -393,6 +394,31 @@ Milky v1.3 文档未声明该 operation，因此不把好友资料字段写入 `
 读写失败返回 `transport_unknown`，只提交一次且不更新本地群成员状态。
 
 ## 11. 所有权、安全与配置
+
+### 日志职责与边界
+
+Milky 运行时只使用标准 Python logger，并统一放在 `hermes_plugins.milky.*` 命名空间下；logger
+默认传播到 Hermes root，不添加插件 handler、文件、异步队列、脱敏器或 fallback 后端。普通日志
+消息由一个 `event=milky.*` 标签和必要的低敏 `key=value` 字段组成，事件类别固定为
+`milky.lifecycle`、`milky.action`、`milky.sse`、`milky.inbound`、`milky.resource`、
+`milky.outbound`、`milky.mute` 和 `milky.tool`。
+
+`INFO` 记录生命周期终态、Action/Tool/出站结果、资源汇总、Mute 汇总和入站 wait/trigger/handoff；
+`WARNING` 记录拒绝、超时、传输未知、重连、降级和状态同步失败；`ERROR` 仅用于插件拥有的不可
+恢复本地边界；`DEBUG` 记录普通 frame、dedup/Gate 细节和高频成功细节。Action、Tool 和出站
+结果在已知时记录 `status_code`，并记录 `classification` 与 `duration_ms`；SSE 重连记录安全
+`reason`、`attempt` 和 `delay_seconds`。
+
+日志值只允许固定分类、计数、耗时、状态码和已经确认的 `uid`、QQ/群 ID、`chat_key`、
+`message_id` 或 `ingress_sequence`。插件不得把 token、Authorization header、完整 URL、请求或
+响应 body、消息正文、关键词、raw segment、媒体 URL、文件名、本地路径、文件内容、Tool 原始
+入参/结果、自由文本异常或 traceback 交给 logger。Tool 调用方仍获得既有 raw envelope；日志不会
+为此复制、摘要或改写业务对象。日志被禁用、丢弃或 handler 失败时，连接、SSE、Gate/Will、buffer、
+Action、Tool、出站和 MuteTracker 的业务结果保持不变。
+
+运维查看路径为 `hermes logs -f`（默认 `agent.log`）、`hermes logs --level DEBUG -f`（高频诊断）
+和 gateway 进程的 `hermes logs gateway -f`。这些命令由 Hermes core 负责最终脱敏、异步落盘和文件
+路由；插件不把日志格式当作 Tool 或业务 API。
 
 ### 状态与所有权
 
@@ -452,7 +478,7 @@ npx --yes @fission-ai/openspec@1.12.0 validate --changes --strict
 测试优先使用 fake Hermes、fake Milky transport、SSE fixture 和脱敏合成数据，覆盖协议与错误分类、
 SSE 边界/重连/取消、friend/group/temp、canonical/dedup、Admission/Gate/Will/buffer、全部
 segment 与 reply/forward、Hermes media helper、group/dm 出站与文件上传、MuteTracker 生命周期、
-ToolSpec schema/显式调用/最小响应校验及日志脱敏。
+ToolSpec schema/显式调用/最小响应校验及日志输入边界。
 
 真实 Milky 写入、上传、踢人、退群、删好友及好友请求操作必须获得用户明确授权。
 
@@ -460,7 +486,7 @@ ToolSpec schema/显式调用/最小响应校验及日志脱敏。
 
 当前存在未归档 change 时，`openspec/changes/` 同时包含进行中的规划与已完成 change 的归档历史。
 已有主规范继续覆盖入站 context/图片合并、出站附件/native media/文件上传、固定 QQ ToolSpec
-和安全日志边界；当前工具清单为 25 项，完成项以主规范和归档 change 的 `tasks.md`、evidence
+和标准 logger 日志边界；当前工具清单为 25 项，完成项以主规范和归档 change 的 `tasks.md`、evidence
 ledger 为准。
 Hermes 扩展点、Milky Action 支持/错误 envelope，以及 25 个 ToolSpec 的 operationId、参数和
 最小 response 结构，仍需与真实宿主、manifest、OpenSpec 和 Milky OpenAPI 持续对齐。
