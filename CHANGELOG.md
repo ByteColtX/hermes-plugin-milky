@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.3.0] - 2026-09-06
+
+### 新增
+
+- willingness 支持 `forceKeywords` 强制触发关键词；`MILKY_ALLOWED_CHATS` 支持按命名空间匹配
+  `group:*` 和 `dm:*`。
+- 初始群禁言同步对所有选中群同时发起成员查询，仍在全部结果收集完成后才开放适配器。
+- 出站文本支持普通正文行中的未转义 `[SPLIT]`、`[[SPLIT]]` 字面量，以及完整 CQ-compatible
+  候选和 malformed CQ-like 内容的明确解析边界。
+
+### 变更与修复
+
+- willingness 的 `replyCost` 改为在 `trigger` 决策完成后立即扣除；资源解析、映射、Hermes
+  交接或后续任务失败不回滚该次扣费，且每个 trigger 最多扣除一次。
+- 初始群禁言同步保留 fail-closed、`no_cache=true`、取消清理和稳态刷新有界并发语义。
+- 收窄 CQ 保护范围：只保护语法完整的 CQ-compatible 候选，malformed 或未闭合 CQ-like 内容按
+  普通文本处理；补充平台提示、架构文档和 README 的行为说明。
+
+### 验证与边界
+
+- 聚焦回归 42 passed；完整测试 813 passed、2 skipped。Ruff、格式检查、构建和 OpenSpec strict
+  validate 均通过。
+- 未执行真实 Milky/Hermes 连接、消息发送或文件上传；真实部署环境仍需单独验证。
+
 ## [1.2.0] - 2026-09-05
 
 ### 新增

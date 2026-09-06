@@ -81,6 +81,7 @@ force 判断 MUST 保持 `directForce`、`mentionForce`、`quoteForce` 的既有
 - **WHEN** direct 消息且 `directForce` 为 true
 - **THEN** Will SHALL 直接返回 trigger
 - **AND** SHALL 不依赖随机抽样
+- **AND** SHALL 立即扣除一次 `replyCost`
 
 #### Scenario: 强制关键词命中
 
@@ -103,7 +104,7 @@ force 判断 MUST 保持 `directForce`、`mentionForce`、`quoteForce` 的既有
 
 #### Scenario: Hermes trigger 交接失败
 
-- **WHEN** 消息通过 Gate、Will 返回 trigger，且资源解析、映射或 Hermes 交接失败
+- **WHEN** 消息通过 Gate、Will 返回 trigger，且后续资源解析、映射或 Hermes 交接失败
 - **THEN** 系统 SHALL 保留该次已经执行的 reply cost 扣除
 - **AND** SHALL NOT 因失败恢复该次扣分
 
