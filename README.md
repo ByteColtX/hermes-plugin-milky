@@ -120,6 +120,9 @@ chat key 只接受 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>`；`temp
 # 群友共享同一个 group:<群号> 会话
 group_sessions_per_user: false
 
+# 显式指定时区
+timezone: Asia/Shanghai
+
 # 长任务跟进
 agent:
   gateway_timeout: 1800
