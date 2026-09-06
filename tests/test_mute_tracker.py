@@ -244,6 +244,28 @@ def test_tracker_scans_only_group_allowlist_and_logs_raw_identity_and_results(
     assert summary.getMessage().count("total=1") == 1
 
 
+@pytest.mark.parametrize(
+    ("allowed_chats", "expected_group_ids"),
+    [
+        ({"group:*", "dm:*"}, (700000001, 700000002)),
+        ({"dm:*"}, ()),
+    ],
+)
+def test_tracker_applies_namespace_wildcards_to_group_scanning(
+    allowed_chats: set[str], expected_group_ids: tuple[int, ...]
+) -> None:
+    """群禁言扫描应正确处理命名空间通配符。"""
+
+    client = FakeMuteClient([700000001, 700000002])
+    tracker = MuteTracker(client, allowed_chats=allowed_chats, clock=lambda: 100)
+
+    asyncio.run(tracker.initialize())
+
+    member_calls = [call for call in client.calls if call[0] == "member"]
+    assert tracker.group_ids == expected_group_ids
+    assert [call[1] for call in member_calls] == list(expected_group_ids)
+
+
 def test_tracker_logs_only_muted_groups_and_summarizes_all_states(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

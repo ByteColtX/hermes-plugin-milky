@@ -15,7 +15,7 @@ from typing import Literal, Protocol, runtime_checkable
 from milky.models import Event, GroupList, GroupMemberInfo, LoginInfo
 from milky.observability import log_event
 from milky.parser import ParseError, parse_event
-from session.identity import normalize_chat_key
+from session.identity import normalize_chat_key, validate_chat_rule
 
 MuteState = Literal["muted", "unmuted", "unknown"]
 
@@ -510,10 +510,12 @@ class MuteTracker:
         group_ids = tuple(_validate_id(group.group_id, "group_id") for group in groups.groups)
         if not self._allowed_chats:
             return group_ids
+        if "group:*" in self._allowed_chats:
+            return group_ids
         allowed_group_ids = {
             int(chat_key.split(":", 1)[1])
             for chat_key in self._allowed_chats
-            if chat_key.startswith("group:")
+            if chat_key.startswith("group:") and chat_key != "group:*"
         }
         return tuple(group_id for group_id in group_ids if group_id in allowed_group_ids)
 
@@ -644,16 +646,16 @@ def _effective_mute_state(snapshot: MuteSnapshot) -> MuteState:
 
 
 def _normalize_allowed_chats(allowed_chats: Collection[str] | None) -> frozenset[str]:
-    """校验并保存群禁言扫描使用的完整 chat key 白名单。"""
+    """校验并保存群禁言扫描使用的 chat key 或命名空间白名单。"""
 
     if allowed_chats is None:
         return frozenset()
     if isinstance(allowed_chats, (str, bytes)):
         raise TypeError("allowed_chats must be a collection of chat keys")
     try:
-        return frozenset(normalize_chat_key(chat_key) for chat_key in allowed_chats)
+        return frozenset(validate_chat_rule(chat_key) for chat_key in allowed_chats)
     except (TypeError, ValueError) as error:
-        raise ValueError("allowed_chats contains an invalid chat key") from error
+        raise ValueError("allowed_chats contains an invalid chat rule") from error
 
 
 __all__ = ["MuteSnapshot", "MuteState", "MuteSyncClient", "MuteSyncError", "MuteTracker"]
