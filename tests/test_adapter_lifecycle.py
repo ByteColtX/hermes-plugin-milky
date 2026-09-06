@@ -34,19 +34,24 @@ class FakeClient:
 class FakeMuteTracker:
     """模拟登录和禁言状态初始同步。"""
 
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, block: bool = False) -> None:
         self.fail = fail
+        self.block = block
         self.initialized = False
         self.self_id: int | None = None
         self.nickname: str | None = None
         self.initialize_calls = 0
         self.start_calls = 0
         self.close_calls = 0
+        self.initialize_started = asyncio.Event()
 
     async def initialize(self) -> bool:
         """完成或拒绝初始状态同步。"""
 
         self.initialize_calls += 1
+        self.initialize_started.set()
+        if self.block:
+            await asyncio.Event().wait()
         if self.fail:
             raise RuntimeError("fake state sync failed")
         self.initialized = True
@@ -279,6 +284,29 @@ def test_initial_sync_failure_keeps_message_entry_not_ready() -> None:
         assert adapter.identity_snapshot.read() is None
 
         await adapter.disconnect()
+
+    asyncio.run(scenario())
+
+
+def test_connect_cancellation_keeps_adapter_unready_until_client_cleanup() -> None:
+    """连接取消时不得启动 SSE 或入口，后续停止仍应关闭 client。"""
+
+    async def scenario() -> None:
+        tracker = FakeMuteTracker(block=True)
+        adapter, _, stream, pipeline, _, client = make_adapter(tracker=tracker)
+        connect_task = asyncio.create_task(adapter.connect())
+        await tracker.initialize_started.wait()
+
+        connect_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await connect_task
+
+        assert adapter.ready is False
+        assert stream.run_calls == 0
+        assert pipeline.start_calls == 0
+        await adapter.disconnect()
+        assert tracker.close_calls == 1
+        assert client.close_calls == 1
 
     asyncio.run(scenario())
 

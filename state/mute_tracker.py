@@ -68,6 +68,14 @@ class MuteSyncError(RuntimeError):
     classification = "state_sync_failed"
 
 
+@dataclass(frozen=True, slots=True)
+class _InitialMemberQueryResult:
+    """保存一个初始成员查询的安全结果。"""
+
+    group_id: int
+    member_info: GroupMemberInfo | None
+
+
 Clock = Callable[[], float]
 
 
@@ -203,7 +211,7 @@ class MuteTracker:
         await self._stop_expiry_task()
 
     async def initialize(self) -> bool:
-        """按登录、群列表、逐群成员查询顺序建立初始快照。"""
+        """按登录、群列表、并发成员查询顺序建立初始快照。"""
 
         async with self._initialize_lock:
             await self._stop_expiry_task()
@@ -250,17 +258,37 @@ class MuteTracker:
                 nickname=self._nickname,
             )
 
+            scan_started_at = time.perf_counter()
+            member_tasks = tuple(
+                asyncio.create_task(
+                    self._query_initial_member(group_id, self._self_id),
+                    name=f"milky-mute-initial-{group_id}",
+                )
+                for group_id in group_ids
+            )
+            try:
+                query_results = await asyncio.gather(*member_tasks)
+            except BaseException:
+                for task in member_tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*member_tasks, return_exceptions=True)
+                raise
+
+            results_by_group_id = {result.group_id: result for result in query_results}
             failures = False
             successful_count = 0
             muted_count = 0
             unmuted_count = 0
             unknown_count = 0
             for group_id in group_ids:
+                result = results_by_group_id.get(group_id)
+                if result is None or result.member_info is None:
+                    failures = True
+                    self._record("initial_member_query_failed")
+                    continue
                 try:
-                    member_info = await self._client.get_group_member_info(
-                        group_id, self._self_id, no_cache=True
-                    )
-                    self._apply_member_info(group_id, member_info, self._read_clock())
+                    self._apply_member_info(group_id, result.member_info, self._read_clock())
                     successful_count += 1
                     snapshot = self._snapshots[group_id]
                     state = _effective_mute_state(snapshot)
@@ -303,12 +331,26 @@ class MuteTracker:
                 muted=muted_count,
                 unmuted=unmuted_count,
                 unknown=unknown_count,
+                duration_ms=max(0.0, (time.perf_counter() - scan_started_at) * 1000),
             )
 
             if failures:
                 raise MuteSyncError("initial mute sync failed")
             self._initialized = True
             return True
+
+    async def _query_initial_member(self, group_id: int, self_id: int) -> _InitialMemberQueryResult:
+        """读取一个群的成员状态；异常转换为不成功结果并由汇总阶段处理。"""
+
+        try:
+            member_info = await self._client.get_group_member_info(group_id, self_id, no_cache=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - 汇总阶段只需安全失败分类
+            return _InitialMemberQueryResult(group_id, None)
+        if not isinstance(member_info, GroupMemberInfo):
+            return _InitialMemberQueryResult(group_id, None)
+        return _InitialMemberQueryResult(group_id, member_info)
 
     async def initial_sync(self) -> bool:
         """提供初始状态同步的语义化别名。"""

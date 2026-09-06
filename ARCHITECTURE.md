@@ -132,12 +132,15 @@ Gate 不做网络 I/O，Will 不做授权，session 不复制 Hermes 队列；�
 connect
   -> get_login_info
   -> get_group_list
-  -> 对每个群 get_group_member_info(..., user_id=self_id, no_cache=true)
+  -> 确定白名单允许的群集合
+  -> 对选中群一次性无界并发 get_group_member_info(..., user_id=self_id, no_cache=true)
+  -> 等待并收集所有成员查询结果
   -> MuteTracker 初始同步完成
   -> 启动 SSE /event
   -> 开放 message_receive pipeline
 ```
 
+初始成员查询不使用插件侧 semaphore、worker 数或分批等待；所有结果收集完成且没有失败后才算同步完成。
 身份和禁言初始状态同步完成前，普通消息不得进入 pipeline。重连不假定服务端补发断线期间丢失的消息，也不恢复 wait buffer、system context 或 Will 分数。
 
 ### 停止与命令
@@ -266,14 +269,17 @@ Will 只在 Gate allow 后运行，输出 `wait` 或 `trigger`。`WillInput` 至
 
 ### MuteTracker
 
-`MuteTracker` 是 Bot 群禁言状态的唯一拥有者。初始同步依次调用：
+`MuteTracker` 是 Bot 群禁言状态的唯一拥有者。初始同步依次完成登录和群列表阶段，再对最终选中的群一次性无界并发调用：
 
 ```text
 get_login_info
 -> get_group_list
--> get_group_member_info(group_id, user_id=self_id, no_cache=true)
+-> 对所有选中群并发 get_group_member_info(group_id, user_id=self_id, no_cache=true)
+-> 收集全部结果后提交快照
 ```
 
+初始成员查询全部完成前保持未就绪；任一查询失败仍 fail-closed 并使本轮初始同步失败。运行期
+`refresh_group()` 继续使用每群锁、冷却和全局并发上限，初始扫描的无界并发不扩散到稳态维护。
 member 禁言只读取 `member.shut_up_end_time`；member 和 whole 分开维护。初始化或维护失败时 fail-closed，刷新失败保留上次二态状态。Milky v1.3 没有可读取 whole mute 的 Action 或群实体字段时，whole 为 `unknown`；只有明确的 `group_whole_mute` 事件才能改为 `muted`/`unmuted`。
 
 `group_mute` 的 `duration=0` 表示取消，`group_whole_mute` 按 `is_mute` 更新。群消息出站失败可触发有锁、冷却和并发上限的刷新；私聊失败不得查询群状态。成员禁言可由本地 TTL 任务转为 `unmuted`，停止时取消任务。

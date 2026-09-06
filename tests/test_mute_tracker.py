@@ -17,7 +17,7 @@ from milky.models import (
     LoginInfo,
 )
 from outbound.sender import MilkyOutboundSender
-from state import MuteTracker
+from state import MuteSyncError, MuteTracker
 
 
 def member(
@@ -47,12 +47,17 @@ class FakeMuteClient:
     calls: list[tuple[str, int | None, int | None]] = field(default_factory=list)
     member_no_cache: list[bool] = field(default_factory=list)
     delay: float = 0
+    block_members: bool = False
 
     def __post_init__(self) -> None:
         self.login = LoginInfo(900000001, "合成机器人")
         self.inflight = 0
         self.max_inflight = 0
         self.send_calls: list[tuple[str, int]] = []
+        self.started_member_groups: set[int] = set()
+        self.all_members_started = asyncio.Event()
+        self.cancelled_member_calls = 0
+        self.completed_member_calls = 0
 
     async def get_login_info(self) -> LoginInfo:
         """返回合成登录身份。"""
@@ -73,15 +78,24 @@ class FakeMuteClient:
 
         self.calls.append(("member", group_id, user_id))
         self.member_no_cache.append(no_cache)
+        self.started_member_groups.add(group_id)
+        if len(self.started_member_groups) == len(self.group_ids):
+            self.all_members_started.set()
         self.inflight += 1
         self.max_inflight = max(self.max_inflight, self.inflight)
         try:
-            if self.delay:
+            if self.block_members:
+                await asyncio.Event().wait()
+            elif self.delay:
                 await asyncio.sleep(self.delay)
             result = self.member_results.get(group_id, member(group_id))
             if isinstance(result, BaseException):
                 raise result
+            self.completed_member_calls += 1
             return result
+        except asyncio.CancelledError:
+            self.cancelled_member_calls += 1
+            raise
         finally:
             self.inflight -= 1
 
@@ -123,6 +137,88 @@ def test_tracker_fails_closed_before_ordered_initial_sync() -> None:
     assert tracker.get_snapshot(700000002).member_mute == "unmuted"
     assert tracker.get_snapshot(700000001).whole_mute == "unknown"
     assert tracker.is_muted(700000001) is False
+
+
+def test_tracker_fan_outs_large_initial_scan_without_refresh_limit() -> None:
+    """大规模初始扫描应同时启动所有群查询而不使用运行期刷新槽。"""
+
+    group_ids = [700000000 + index for index in range(240)]
+    client = FakeMuteClient(group_ids, delay=0.001)
+    tracker = MuteTracker(client, clock=lambda: 100, max_concurrent_refreshes=1)
+
+    asyncio.run(tracker.initialize())
+
+    member_calls = [call for call in client.calls if call[0] == "member"]
+    assert tracker.initialized is True
+    assert [call[1] for call in member_calls] == group_ids
+    assert len(member_calls) == len(group_ids)
+    assert client.member_no_cache == [True] * len(group_ids)
+    assert client.max_inflight >= 200
+    assert client.inflight == 0
+
+
+def test_tracker_initial_failure_waits_for_all_results_and_summarizes_fail_closed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """初始成员查询失败时仍等待全量结果并保持失败群的 fail-closed 状态。"""
+
+    group_ids = [700000001, 700000002, 700000003]
+    client = FakeMuteClient(
+        group_ids,
+        member_results={700000002: ActionError("rejected", "member", "denied")},
+        delay=0.001,
+    )
+    tracker = MuteTracker(client, clock=lambda: 100)
+
+    with (
+        caplog.at_level(logging.INFO, logger="state.mute_tracker"),
+        pytest.raises(MuteSyncError, match="initial mute sync failed"),
+    ):
+        asyncio.run(tracker.initialize())
+
+    member_calls = [call for call in client.calls if call[0] == "member"]
+    assert [call[1] for call in member_calls] == group_ids
+    assert client.completed_member_calls == len(group_ids) - 1
+    assert tracker.initialized is False
+    assert tracker.get_snapshot(700000002).member_mute == "muted"
+    assert tracker.diagnostics.count("initial_member_query_failed") == 1
+
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "state.mute_tracker" and hasattr(record, "event_name")
+    ]
+    summary = next(
+        record for record in records if record.event_name == "milky_mute_initial_sync_failed"
+    )
+    assert (summary.total, summary.succeeded, summary.failed) == (3, 2, 1)
+    assert (summary.muted, summary.unmuted, summary.unknown) == (0, 0, 2)
+    assert summary.duration_ms >= 0
+
+
+def test_tracker_cancels_and_awaits_all_initial_member_queries() -> None:
+    """取消初始同步时必须回收所有成员查询且不伪装成普通失败。"""
+
+    group_ids = [700000001 + index for index in range(8)]
+    client = FakeMuteClient(group_ids, block_members=True)
+    tracker = MuteTracker(client, clock=lambda: 100)
+
+    async def scenario() -> None:
+        task = asyncio.create_task(tracker.initialize())
+        await asyncio.wait_for(client.all_members_started.wait(), timeout=1)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert client.cancelled_member_calls == len(group_ids)
+        assert client.completed_member_calls == 0
+        assert client.inflight == 0
+        assert tracker.initialized is False
+        assert "initial_member_query_failed" not in tracker.diagnostics
+        await tracker.close()
+
+    asyncio.run(scenario())
 
 
 def test_tracker_treats_null_and_omitted_mute_end_as_unmuted() -> None:
@@ -510,6 +606,7 @@ def test_tracker_refreshes_different_groups_with_global_limit() -> None:
         max_concurrent_refreshes=2,
     )
     asyncio.run(tracker.initialize())
+    client.max_inflight = 0
     now = 200
 
     async def refreshes() -> list[bool]:
