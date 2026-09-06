@@ -7,6 +7,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
 from gates import GateRegistry
 from inbound.pipeline import InboundPipeline, PipelineResult
 from milky.resources import (
@@ -16,7 +18,12 @@ from milky.resources import (
     ResourceResolver,
 )
 from session import ChatAdmissionCoordinator, TtlDeduplicator, WaitBuffer
-from will import RoutingConfig, RoutingWillEngine
+from will import (
+    RoutingConfig,
+    RoutingWillEngine,
+    WillingnessConfig,
+    WillingnessWillEngine,
+)
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "protocol"
 
@@ -135,6 +142,16 @@ class FakeResolver:
         return ResolvedTriggerBatch(batch.chat_key, history, current)
 
 
+class FailingResolver(FakeResolver):
+    """模拟资源解析失败，验证 trigger 成本不会回滚。"""
+
+    async def resolve_batch(self, _batch: object) -> ResolvedTriggerBatch:
+        """在 detached 交接开始后抛出安全的本地异常。"""
+
+        self.started.set()
+        raise RuntimeError("fake resource resolution failed")
+
+
 class ContextImageResolver(FakeResolver):
     """返回含历史 context 图片和当前附件的脱敏 resolved batch。"""
 
@@ -217,6 +234,7 @@ class RecordingWill:
 
     def __init__(self) -> None:
         self.inputs: list[object] = []
+        self.reply_costs: list[str] = []
 
     def decide(self, input_value: object) -> str:
         """记录输入并返回 trigger 供普通消息测试使用。"""
@@ -224,12 +242,18 @@ class RecordingWill:
         self.inputs.append(input_value)
         return "trigger"
 
+    def on_reply_submitted(self, chat_key: str) -> None:
+        """记录 trigger 参与成本反馈。"""
+
+        self.reply_costs.append(chat_key)
+
 
 def make_pipeline(
     hermes: FakeHermes,
     resolver: FakeResolver,
     *,
     routing: RoutingConfig | None = None,
+    will_engine: object | None = None,
     buffer_size: int = 20,
 ) -> InboundPipeline:
     """创建只包含本地 fake 依赖的入站 pipeline。"""
@@ -239,7 +263,7 @@ def make_pipeline(
         hermes=hermes,
         resource_resolver=resolver,
         gate_registry=GateRegistry(),
-        will_engine=RoutingWillEngine(routing or RoutingConfig()),
+        will_engine=will_engine or RoutingWillEngine(routing or RoutingConfig()),
         wait_buffer=WaitBuffer(buffer_size),
         admission=ChatAdmissionCoordinator(),
         deduplicator=TtlDeduplicator(),
@@ -629,32 +653,121 @@ def test_image_segment_waits_without_image_route_and_triggers_by_keyword() -> No
     assert event.media_types == ["image/png"]
 
 
-def test_reply_cost_runs_once_only_after_successful_handle_submission() -> None:
-    """只有提交成功才扣费，mapper 或 Hermes 异常不扣费。"""
+def test_reply_cost_runs_once_for_each_trigger_before_detached_handoff() -> None:
+    """每次 trigger 都在 detached 交接前扣费，资源或 Hermes 失败也保留。"""
 
-    async def scenario() -> tuple[int, int]:
+    async def scenario() -> tuple[int, int, int, int, int, int, int, int]:
         hermes = FakeHermes()
         resolver = FakeResolver()
-        will = RoutingWillEngine()
-        pipeline = make_pipeline(hermes, resolver)
-        pipeline = pipeline.with_will_engine(will)
+        will = RecordingWill()
+        pipeline = make_pipeline(hermes, resolver, will_engine=will)
         await pipeline.handle_event(load_fixture("events/message_receive.friend.json"))
+        before_handoff = (
+            pipeline.reply_costs,
+            len(will.reply_costs),
+            len(resolver.calls),
+        )
         await pipeline.wait_idle()
         successful_cost = pipeline.reply_costs
 
         failing_hermes = FakeHermes()
         failing_hermes.handle_message = _raise_submission  # type: ignore[method-assign]
-        failing = make_pipeline(failing_hermes, FakeResolver())
+        failing_will = RecordingWill()
+        failing = make_pipeline(failing_hermes, FakeResolver(), will_engine=failing_will)
         await failing.handle_event(
             load_fixture("events/message_receive.friend.no_message_seq.json")
         )
         await failing.wait_idle()
-        return successful_cost, failing.reply_costs
+        failing_resolver = FailingResolver()
+        resolver_failure_will = RecordingWill()
+        resolver_failure = make_pipeline(
+            FakeHermes(),
+            failing_resolver,
+            will_engine=resolver_failure_will,
+        )
+        await resolver_failure.handle_event(
+            load_fixture("events/message_receive.friend.no_message_seq.json")
+        )
+        await resolver_failure.wait_idle()
+        return (
+            before_handoff[0],
+            before_handoff[1],
+            before_handoff[2],
+            successful_cost,
+            failing.reply_costs,
+            len(failing_will.reply_costs),
+            resolver_failure.reply_costs,
+            len(resolver_failure_will.reply_costs),
+        )
 
-    successful_cost, failed_cost = asyncio.run(scenario())
+    (
+        before_cost,
+        before_feedback,
+        before_resolver,
+        successful_cost,
+        failing_cost,
+        failing_feedback,
+        resolver_failure_cost,
+        resolver_failure_feedback,
+    ) = asyncio.run(scenario())
 
+    assert before_cost == 1
+    assert before_feedback == 1
+    assert before_resolver == 0
     assert successful_cost == 1
-    assert failed_cost == 0
+    assert failing_cost == 1
+    assert failing_feedback == 1
+    assert resolver_failure_cost == 1
+    assert resolver_failure_feedback == 1
+
+
+def test_same_chat_next_willingness_decision_observes_trigger_cost() -> None:
+    """同 chat 的后续 Will 决策必须读取 admission 内已扣除的成本。"""
+
+    async def scenario() -> tuple[str, str, float, int, int]:
+        random_values = iter((0.0, 0.6))
+        will = WillingnessWillEngine(
+            WillingnessConfig(
+                initial_score=60,
+                text_gain=20,
+                mention_gain=0,
+                quote_gain=0,
+                direct_gain=0,
+                image_gain=0,
+                probability_threshold=70,
+                probability_amplifier=0.05,
+                reply_cost=35,
+            ),
+            clock=lambda: 0.0,
+            random_fn=lambda: next(random_values),
+        )
+        hermes = FakeHermes()
+        resolver = FakeResolver()
+        pipeline = make_pipeline(hermes, resolver, will_engine=will)
+        first = load_fixture("events/message_receive.friend.json")
+        first["data"]["message_seq"] = 6101
+        second = load_fixture("events/message_receive.friend.json")
+        second["data"]["message_seq"] = 6102
+
+        first_result = await pipeline.handle_event(first)
+        score_after_first = will.get_current_willingness("dm:800000001")
+        second_result = await pipeline.handle_event(second)
+        await pipeline.wait_idle()
+        return (
+            first_result.classification,
+            second_result.classification,
+            score_after_first,
+            pipeline.reply_costs,
+            len(hermes.events),
+        )
+
+    first, second, score_after_first, costs, submitted = asyncio.run(scenario())
+
+    assert first == "trigger"
+    assert second == "wait"
+    assert score_after_first == pytest.approx(50.088)
+    assert costs == 1
+    assert submitted == 1
 
 
 async def _raise_submission(_event: FakeMessageEvent) -> None:

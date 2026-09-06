@@ -66,7 +66,7 @@ Hermes handoff、outbound 和 mute 状态。固定事件名至少 SHALL 包括�
 
 - **WHEN** resource resolver、mapper 或 `handle_message()` 提交失败
 - **THEN** 日志 SHALL 记录 `milky_inbound_handoff_failed` 和安全错误分类
-- **AND** SHALL 不记录已成功提交或 reply cost 已扣除
+- **AND** SHALL 与已在 trigger 决策阶段记录的 reply cost 保持边界分离
 
 ### Requirement: 人类消息和结构化字段必须由单一来源渲染
 

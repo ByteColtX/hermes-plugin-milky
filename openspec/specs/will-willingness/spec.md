@@ -3,7 +3,7 @@
 ## Purpose
 
 借鉴 YesImBot 设计的状态和数值语义决定每个聊天何时愿意回复，保留完整嵌套配置、
-可注入时钟与随机源，以及只有 Hermes trigger 提交成功才扣除回复成本的策略边界。
+可注入时钟与随机源，以及 trigger 决策完成后扣除回复参与成本的策略边界。
 
 ## Requirements
 
@@ -57,9 +57,9 @@ willingness MUST 按 hot/warm 窗口权重计算 weighted silence，并在阈值
 - **WHEN** amplifier 计算出的概率小于 0 或大于 1
 - **THEN** 对外抽样概率 SHALL 分别 clamp 为 0 或 1
 
-### Requirement: force 顺序和提交 reply cost 不得改变
+### Requirement: force 顺序和 trigger reply cost 不得改变
 
-force 判断 MUST 按 directForce、mentionForce、quoteForce 顺序语义处理；任一满足即 trigger，否则才使用 `random < probability` 抽样。只有 Hermes `handle_message()` 正常返回、表明 trigger 已提交后，系统 SHALL 扣除一次 `replyCost`。
+force 判断 MUST 按 directForce、mentionForce、quoteForce 顺序语义处理；任一满足即 trigger，否则才使用 `random < probability` 抽样。对于通过 Gate 且得到 `trigger` 的普通消息，系统 SHALL 在该次 trigger 决策完成后立即扣除一次 `replyCost`，不等待资源解析、Hermes `handle_message()` 或最终 QQ 发送；该扣分不因后续处理失败回滚。
 
 #### Scenario: direct force
 
@@ -70,13 +70,13 @@ force 判断 MUST 按 directForce、mentionForce、quoteForce 顺序语义处理
 #### Scenario: Gate deny 或 wait
 
 - **WHEN** 消息被 Gate 拒绝或 Will 返回 wait
-- **THEN** score SHALL 不执行成功 reply cost 扣除
+- **THEN** score SHALL 不执行 reply cost 扣除
 
-#### Scenario: Hermes trigger 提交失败
+#### Scenario: Hermes trigger 交接失败
 
-- **WHEN** mapper 或 `handle_message()` 抛出异常
-- **THEN** 系统 SHALL 保留未扣费状态
-- **AND** SHALL 不伪装成已提交
+- **WHEN** 消息通过 Gate、Will 返回 trigger，且资源解析、映射或 Hermes 交接失败
+- **THEN** 系统 SHALL 保留该次已经执行的 reply cost 扣除
+- **AND** SHALL NOT 因失败恢复该次扣分
 
 ### Requirement: poke 增益不混入普通消息属性
 

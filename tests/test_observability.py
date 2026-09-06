@@ -495,6 +495,52 @@ def test_inbound_wait_trigger_and_handoff_logs_are_correlatable(caplog) -> None:
     assert "触发敏感正文" not in rendered
 
 
+def test_trigger_cost_log_precedes_detached_handoff_and_is_not_duplicated(caplog) -> None:
+    """trigger 成本日志应先于资源交接，且一次 trigger 只记录一次。"""
+
+    from tests.test_hermes_pipeline import (
+        FakeHermes,
+        FakeResolver,
+        RecordingWill,
+        load_fixture,
+        make_pipeline,
+    )
+
+    async def scenario() -> None:
+        will = RecordingWill()
+        pipeline = make_pipeline(FakeHermes(), FakeResolver(), will_engine=will)
+        result = await pipeline.handle_event(load_fixture("events/message_receive.friend.json"))
+        assert result.classification == "trigger"
+        assert pipeline.reply_costs == 1
+        assert will.reply_costs == ["dm:800000001"]
+        await pipeline.wait_idle()
+
+    with caplog.at_level(logging.DEBUG, logger="inbound.pipeline"):
+        asyncio.run(scenario())
+
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "inbound.pipeline"
+        and getattr(record, "event_name", None)
+        in {
+            "milky_will_decision",
+            "milky_will_reply_cost",
+            "milky_inbound_trigger",
+            "milky_inbound_drain",
+            "milky_inbound_handoff_succeeded",
+        }
+    ]
+    assert [record.event_name for record in records] == [
+        "milky_will_decision",
+        "milky_will_reply_cost",
+        "milky_inbound_trigger",
+        "milky_inbound_drain",
+        "milky_inbound_handoff_succeeded",
+    ]
+    assert sum(record.event_name == "milky_will_reply_cost" for record in records) == 1
+
+
 def test_outbound_logs_route_chunks_and_safe_final_result(caplog, tmp_path) -> None:
     """出站日志应记录路由和计数，不记录正文、路径或文件名。"""
 

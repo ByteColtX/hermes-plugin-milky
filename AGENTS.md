@@ -46,8 +46,8 @@ npx --yes @fission-ai/openspec@1.12.0 validate --changes --strict
   `milky:<self_id>:<chat_key>:<message_id>`。缺少 message ID 时不得伪造稳定 ID。
 - 同一 chat 按 ingress sequence 串行，不复制 Hermes 的 busy/follow-up/interrupt/Agent
   队列。Gate 顺序固定为 `SelfMessageGate`、`ChatAllowlistGate`、`MutedGroupGate`；deny 不
-  增长 buffer 或修改 Will。wait 不调用 Hermes，trigger 先 drain 再交接，提交成功后才扣
-  一次 reply cost。
+  增长 buffer 或修改 Will。wait 不调用 Hermes，trigger 在决策完成后先扣一次 reply cost，
+  再 drain 和交接；后续失败不回滚。
 - MuteTracker 独占群禁言状态；初始或维护失败时 fail-closed，whole mute 的 `unknown` 不
   得伪装成 `muted`/`unmuted`。私聊发送失败不得查询群状态。
 - Action 统一使用带 path prefix 的 `POST` JSON：`<base>/api/<action>`；SSE 为

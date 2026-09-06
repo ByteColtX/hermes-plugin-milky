@@ -258,7 +258,7 @@ class WillingnessWillEngine:
         return self._sample(probability)
 
     def on_reply_submitted(self, chat_key: str | WillInput) -> None:
-        """在 Hermes 正常接受 trigger 后扣除一次 reply cost。"""
+        """在 trigger 决策完成后扣除一次 trigger 参与成本。"""
 
         normalized_key = _chat_key_from_value(chat_key)
         state = self.get_state(normalized_key)
@@ -269,7 +269,7 @@ class WillingnessWillEngine:
         )
 
     def on_reply(self, chat_key: str | WillInput | None = None) -> None:
-        """提供兼容名称，表示一次已提交的成功回复。"""
+        """提供兼容名称，表示一次 trigger 参与成本。"""
 
         if chat_key is None:
             if len(self._states) != 1:
@@ -278,7 +278,7 @@ class WillingnessWillEngine:
         self.on_reply_submitted(chat_key)
 
     def reply_submitted(self, chat_key: str | WillInput) -> None:
-        """提供语义化的成功回复反馈入口。"""
+        """提供语义化的 trigger 参与成本反馈入口。"""
 
         self.on_reply_submitted(chat_key)
 

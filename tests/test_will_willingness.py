@@ -152,8 +152,8 @@ def test_willingness_probability_is_thresholded_and_clamped() -> None:
     assert calculate_probability(2, high_amplifier) == 1
 
 
-def test_willingness_state_isolated_by_chat_and_reply_cost_is_explicit() -> None:
-    """每个 chat 独立维护状态，只有显式提交反馈才扣费。"""
+def test_willingness_state_isolated_by_chat_and_trigger_cost_is_explicit() -> None:
+    """每个 chat 独立维护状态，只有显式 trigger 成本反馈才扣费。"""
 
     clock_values = iter((0.0, 0.0))
     engine = WillingnessWillEngine(

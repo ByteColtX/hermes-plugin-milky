@@ -3,7 +3,7 @@
 ## Purpose
 
 把已通过身份、去重、Gate 和 Will 的 friend/group 消息交接为 Hermes 可消费的一次
-MessageEvent，同时严格区分历史上下文、当前正文、系统观察和 trigger 提交后的策略反馈。
+MessageEvent，同时严格区分历史上下文、当前正文、系统观察和 trigger 决策后的策略反馈。
 
 ## Requirements
 
@@ -114,20 +114,21 @@ trigger 的当前消息 MUST 只作为本次正文；已经 drain 的历史 wait
 - **AND** `text` SHALL 仍使用当前消息的紧凑 header 和规范化正文
 - **AND** 适配器 SHALL 不伪造历史标题或空的上下文 block
 
-### Requirement: trigger 提交后反馈 Will
+### Requirement: trigger 决策后反馈 Will
 
-只有 Hermes `handle_message()` 正常返回、表明 trigger 已提交后，系统 SHALL 通知 Will 执行一次 reply cost；mapping 失败、提交异常、Gate deny 或 wait SHALL NOT 扣费。v0.1 不等待 Agent 最终 turn 完成。
+对于通过 Gate 且被 Will 判定为 `trigger` 的普通消息，系统 SHALL 在 trigger 决策完成后立即通知 Will 执行一次 reply cost；该通知 SHALL 发生在资源解析、mapper、Hermes `handle_message()` 和最终 QQ 发送之前。每次 trigger SHALL 最多通知一次；后续处理失败或任务取消 SHALL NOT 撤销已经执行的扣分。Gate deny、wait、命令、temp 和系统事件 SHALL NOT 扣费。v0.1 不等待 Agent 最终 turn 完成。
 
-#### Scenario: Hermes 接受提交
+#### Scenario: trigger 决策完成
 
-- **WHEN** `handle_message()` 正常返回
-- **THEN** Will SHALL 执行一次成功回复反馈
+- **WHEN** 合法 friend 或 group 消息通过 Gate 且 Will 返回 trigger
+- **THEN** Will SHALL 立即执行一次 reply cost 扣除
+- **AND** 资源解析和 Hermes 交接不影响该次扣分
 
-#### Scenario: Hermes 提交失败
+#### Scenario: Hermes 交接失败
 
-- **WHEN** mapper 或 `handle_message()` 抛出异常
-- **THEN** 系统 SHALL 保留未扣费状态
-- **AND** SHALL 不把该次 trigger 伪装成已提交
+- **WHEN** trigger 决策已经完成，但资源解析、mapper 或 `handle_message()` 抛出异常
+- **THEN** 系统 SHALL 保留已经执行的 reply cost 扣除
+- **AND** SHALL NOT 再次扣费或回滚该次扣费
 
 ### Requirement: temp 和系统事件不进入普通 mapper
 

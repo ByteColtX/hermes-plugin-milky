@@ -84,10 +84,10 @@ SSE /event
   -> /milky 命令分流，或写入 wait buffer
   -> Will.decide
   -> wait；或 trigger 时原子 drain 当前 chat
+  -> trigger 决策完成后扣一次 reply cost
   -> trigger 阶段补全资源和 reply
   -> 映射 Hermes MessageEvent
   -> adapter.handle_message()
-  -> 提交成功后扣一次 reply cost
 ```
 
 同一 chat 按 ingress sequence 串行，不复制 Hermes 的 busy、follow-up、interrupt 或 Agent 队列；不同 chat 可以并行。系统消息和 cron 可复用已连接 sender，或使用一次性 client 投递。
@@ -166,7 +166,7 @@ TTL map 的检查和插入必须原子完成，且早于资源补全、Will 和 
 
 ### Admission、buffer 与 Hermes 交接
 
-同一 chat 的 canonical、Gate、buffer、Will 和 trigger drain 在 admission 边界内按 ingress sequence 串行；Gate deny 不增长 buffer 或修改 Will。`wait` 不调用 Hermes、不写 transcript；`trigger` 先原子 drain 当前 chat，再按序完成资源解析、mapper 和 `handle_message()` 提交。历史 wait 只进 `channel_context`，当前消息只进本次正文；handoff 失败只能重试同一批次或记录不可恢复失败，不得无条件回填。提交正常返回后才扣一次 reply cost，不等待 Agent 完成。
+同一 chat 的 canonical、Gate、buffer、Will 和 trigger drain 在 admission 边界内按 ingress sequence 串行；Gate deny 不增长 buffer 或修改 Will。`wait` 不调用 Hermes、不写 transcript；`trigger` 在决策完成后先扣一次 reply cost，再原子 drain 当前 chat，并按序完成资源解析、mapper 和 `handle_message()` 提交。历史 wait 只进 `channel_context`，当前消息只进本次正文；handoff 失败只能重试同一批次或记录不可恢复失败，不得无条件回填，且不回滚已经执行的扣费。系统不等待 Agent 完成。
 
 ### 系统事件
 
@@ -259,7 +259,7 @@ Will 只在 Gate allow 后运行，输出 `wait` 或 `trigger`。`WillInput` 至
 
 配置使用嵌套 `engine`、`routing`、`willingness`、`priority` schema。routing 按 direct、mention、mentionAll、quote、poke、allMessage、keywords 顺序处理；willingness 按 chat 隔离维护 `score`、`lastMessageAt`、`lastDecayAt`。公式、半衰期、ratio、概率 clamp、force、关键词、direct/image/reply/poke 和时钟回拨以 OpenSpec 为准，clock/random 依赖注入。
 
-只有 Hermes 提交成功后才扣一次 reply cost；wait、Gate deny、system context 和命令不扣费。
+通过 Gate 且得到 `trigger` 的普通消息在 Will 决策完成后立即扣一次 reply cost；资源解析、映射、Hermes 交接和最终 QQ 发送不影响该次扣费。wait、Gate deny、system context、命令和 temp 不扣费。
 旧的扁平 dm policy、allowed groups/users、muted groups、require mention 及旧 routing 字段
 不得静默迁移。
 

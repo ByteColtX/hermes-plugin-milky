@@ -116,7 +116,7 @@ class InboundPipeline:
 
     @property
     def reply_costs(self) -> int:
-        """返回本 pipeline 成功提交后的反馈次数。"""
+        """返回本 pipeline 已执行的 trigger 参与成本次数。"""
 
         return self._reply_costs
 
@@ -294,6 +294,7 @@ class InboundPipeline:
                 return PipelineResult(
                     "malformed", canonical=canonical, reason="invalid Will decision"
                 )
+            self._notify_reply_cost(canonical.chat_key)
             batch = self._buffer.drain(
                 canonical.chat_key,
                 canonical,
@@ -367,7 +368,6 @@ class InboundPipeline:
                 stage="handoff",
                 **_batch_log_fields(chat_key, ingress_sequence, current),
             )
-            self._notify_reply_cost(current.chat_key)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - detached boundary records safe failure
@@ -458,6 +458,8 @@ class InboundPipeline:
         return decide(value)
 
     def _notify_reply_cost(self, chat_key: str) -> None:
+        """同步执行一次 trigger 参与成本反馈。"""
+
         callback = getattr(self._will, "on_reply_submitted", None)
         if callable(callback):
             try:

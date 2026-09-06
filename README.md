@@ -262,8 +262,9 @@ Will 决定一条消息是先等待，还是交给 Hermes：
 `directForce`、`mentionForce`、`quoteForce` 可让对应信号跳过随机抽样，直接 `trigger`。
 这里的 `quoteGain`/`quoteForce` 只看是否存在 reply，不要求 reply 指向 Bot；这与 routing 的
 `quote` 规则不同。显式 self-poke 使用 `pokeGain`，`friend_nudge` 和 `group_nudge` 仍是
-observe-only，不会直接创建 Agent turn。只有 Hermes 接受该次 trigger 后才扣除 `replyCost`；
-等待、Gate 拒绝和命令不会扣费。
+observe-only，不会直接创建 Agent turn。通过 Gate 且得到 `trigger` 后立即扣除一次
+`replyCost` 参与成本，不等待 Hermes 接受、资源解析或最终发送；后续失败不回滚。等待、Gate
+拒绝、命令、temp 和系统事件不会扣费。
 
 示例：默认按概率参与，但命中“提醒”时提高增益；私聊和 @Bot 仍不强制触发：
 

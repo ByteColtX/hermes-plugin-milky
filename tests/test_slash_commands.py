@@ -153,7 +153,7 @@ class RecordingWill:
         return "trigger"
 
     def on_reply_submitted(self, _chat_key: str) -> None:
-        """记录 Hermes 提交后的 reply cost。"""
+        """记录普通 trigger 的参与成本。"""
 
         self.reply_costs += 1
 
