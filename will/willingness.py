@@ -35,7 +35,8 @@ class WillingnessConfig:
     direct_gain: float = 40
     image_gain: float = 8
     poke_gain: float = 80
-    keywords: tuple[str, ...] = field(default_factory=tuple)
+    interest_keywords: tuple[str, ...] = field(default_factory=tuple)
+    force_keywords: tuple[str, ...] = field(default_factory=tuple)
     keyword_multiplier: float = 1.2
     default_multiplier: float = 1
     hot_window_seconds: float = 15
@@ -85,10 +86,12 @@ class WillingnessConfig:
             raise ValueError("willingness.probability_amplifier must be at most 1")
         if self.initial_score > self.max_score:
             raise ValueError("willingness.initial_score exceeds max_score")
-        if not isinstance(self.keywords, tuple) or any(
-            not isinstance(keyword, str) or not keyword.strip() for keyword in self.keywords
-        ):
-            raise TypeError("willingness.keywords must contain non-empty strings")
+        for name in ("interest_keywords", "force_keywords"):
+            keywords = getattr(self, name)
+            if not isinstance(keywords, tuple) or any(
+                not isinstance(keyword, str) or not keyword.strip() for keyword in keywords
+            ):
+                raise TypeError(f"willingness.{name} must contain non-empty strings")
         for name in ("mention_force", "quote_force", "direct_force"):
             if not isinstance(getattr(self, name), bool):
                 raise TypeError(f"willingness.{name} must be boolean")
@@ -114,7 +117,8 @@ class WillingnessConfig:
             "directGain": "direct_gain",
             "imageGain": "image_gain",
             "pokeGain": "poke_gain",
-            "keywords": "keywords",
+            "interestKeywords": "interest_keywords",
+            "forceKeywords": "force_keywords",
             "keywordMultiplier": "keyword_multiplier",
             "defaultMultiplier": "default_multiplier",
             "hotWindowSeconds": "hot_window_seconds",
@@ -132,9 +136,9 @@ class WillingnessConfig:
         for key, internal_name in aliases.items():
             if key in value:
                 item = value[key]
-                if internal_name == "keywords":
+                if internal_name in {"interest_keywords", "force_keywords"}:
                     if not isinstance(item, Sequence) or isinstance(item, (str, bytes)):
-                        raise TypeError("willingness.keywords must be an array")
+                        raise TypeError(f"willingness.{key} must be an array")
                     item = tuple(item)
                 values[internal_name] = item
         return cls(**values)  # type: ignore[arg-type]
@@ -413,7 +417,7 @@ def calculate_score(current: float, input_value: WillInput, config: WillingnessC
     attributes += config.direct_gain if input_value.is_direct else 0
     multiplier = (
         config.keyword_multiplier
-        if has_keyword(input_value.text, config.keywords)
+        if has_keyword(input_value.text, config.interest_keywords)
         else config.default_multiplier
     )
     ratio = current / config.max_score
@@ -468,13 +472,15 @@ def has_keyword(text: str, keywords: Sequence[str]) -> bool:
 
 
 def should_force(input_value: WillInput, config: WillingnessConfig) -> bool:
-    """按 direct、mention、quote 顺序判断是否绕过随机抽样。"""
+    """按 direct、mention、quote 和 force keyword 判断是否绕过随机抽样。"""
 
     if config.direct_force and input_value.is_direct:
         return True
     if config.mention_force and _has_mention(input_value):
         return True
-    return config.quote_force and input_value.has_reply
+    if config.quote_force and input_value.has_reply:
+        return True
+    return has_keyword(input_value.text, config.force_keywords)
 
 
 def _has_mention(input_value: WillInput) -> bool:

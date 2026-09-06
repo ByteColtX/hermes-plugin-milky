@@ -46,7 +46,8 @@ FULL_WILL_POLICY = {
         "directGain": 40,
         "imageGain": 8,
         "pokeGain": 80,
-        "keywords": [],
+        "interestKeywords": [],
+        "forceKeywords": [],
         "keywordMultiplier": 1.2,
         "defaultMultiplier": 1,
         "hotWindowSeconds": 15,
@@ -196,6 +197,23 @@ def test_load_config_accepts_routing_keywords_and_preserves_nested_schema() -> N
     assert config.will_policy["routing"]["keywords"] == ["项目", "提醒"]
 
 
+def test_load_config_accepts_separate_willingness_keyword_roles() -> None:
+    """willingness 应分别保留兴趣关键词和强制关键词。"""
+
+    policy = {
+        "engine": "willingness",
+        "willingness": {
+            "interestKeywords": ["提醒"],
+            "forceKeywords": ["紧急"],
+        },
+    }
+
+    config = load_config(DEFAULT_ENV | {"MILKY_WILL_POLICY": json.dumps(policy)})
+
+    assert config.will_policy["willingness"]["interestKeywords"] == ["提醒"]
+    assert config.will_policy["willingness"]["forceKeywords"] == ["紧急"]
+
+
 @pytest.mark.parametrize(
     "policy",
     [
@@ -208,6 +226,13 @@ def test_load_config_accepts_routing_keywords_and_preserves_nested_schema() -> N
         {"engine": "routing", "routing": {"keywords": [""]}},
         {"engine": "routing", "willingness": {"maxScore": True}},
         {"engine": "routing", "willingness": {"keywords": [1]}},
+        {"engine": "willingness", "willingness": {"keywords": []}},
+        {"engine": "willingness", "willingness": {"interestKeywords": "提醒"}},
+        {"engine": "willingness", "willingness": {"interestKeywords": [""]}},
+        {"engine": "willingness", "willingness": {"interestKeywords": [1]}},
+        {"engine": "willingness", "willingness": {"forceKeywords": "紧急"}},
+        {"engine": "willingness", "willingness": {"forceKeywords": [""]}},
+        {"engine": "willingness", "willingness": {"forceKeywords": [1]}},
         {"direct": "trigger"},
     ],
 )

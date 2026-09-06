@@ -258,9 +258,9 @@ Gate 不包含概率、关键词、回复发送、网络查询或 Will 分数修
 
 Will 只在 Gate allow 后运行，输出 `wait` 或 `trigger`。`WillInput` 至少包含 self/chat/channel、segments、正文、独立的 self mention/self quote/self-poke 特征、reply 存在性与目标序号、image、event type 和时间。routing 的 `mention`、`quote`、`poke` 分别只匹配明确涉及 Bot 自身的目标；nudge 即使形成 self-poke routing 信号仍保持 observe-only。
 
-配置使用嵌套 `engine`、`routing`、`willingness`、`priority` schema。routing 按 direct、mention、mentionAll、quote、poke、allMessage、keywords 顺序处理；willingness 按 chat 隔离维护 `score`、`lastMessageAt`、`lastDecayAt`。公式、半衰期、ratio、概率 clamp、force、关键词、direct/image/reply/poke 和时钟回拨以 OpenSpec 为准，clock/random 依赖注入。
+配置使用嵌套 `engine`、`routing`、`willingness`、`priority` schema。routing 按 direct、mention、mentionAll、quote、poke、allMessage、keywords 顺序处理；willingness 按 chat 隔离维护 `score`、`lastMessageAt`、`lastDecayAt`。`interestKeywords` 命中后只选择 `keywordMultiplier`，`forceKeywords` 命中后跳过概率抽样并触发；两者都只匹配规范化正文。公式、半衰期、ratio、概率 clamp、force、关键词、direct/image/reply/poke 和时钟回拨以 OpenSpec 为准，clock/random 依赖注入。
 
-通过 Gate 且得到 `trigger` 的普通消息在 Will 决策完成后立即扣一次 reply cost；资源解析、映射、Hermes 交接和最终 QQ 发送不影响该次扣费。wait、Gate deny、system context、命令和 temp 不扣费。
+`forceKeywords` 只增加 willingness 的 force 决策条件，不绕过 `SelfMessageGate`、`ChatAllowlistGate` 或 `MutedGroupGate`，不额外增加 score。通过 Gate 且得到 `trigger` 的普通消息在 Will 决策完成后立即扣一次 reply cost；资源解析、映射、Hermes 交接和最终 QQ 发送不影响该次扣费。wait、Gate deny、system context、命令和 temp 不扣费。
 旧的扁平 dm policy、allowed groups/users、muted groups、require mention 及旧 routing 字段
 不得静默迁移。
 

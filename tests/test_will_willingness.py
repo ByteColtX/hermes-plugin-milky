@@ -60,14 +60,14 @@ def test_willingness_uses_nested_defaults_and_explicit_strategy_text() -> None:
             "maxScore": 100,
             "initialScore": 0,
             "textGain": 10,
-            "keywords": ["Hermes"],
+            "interestKeywords": ["Hermes"],
             "keywordMultiplier": 2,
             "defaultMultiplier": 1,
         }
     )
     input_value = make_input(text="Hermes", scene="friend")
 
-    assert has_keyword(input_value.text, config.keywords) is True
+    assert has_keyword(input_value.text, config.interest_keywords) is True
     assert calculate_score(0, input_value, config) == 100
 
 
@@ -208,6 +208,53 @@ def test_willingness_force_bypasses_random_in_declared_order() -> None:
     assert direct.decide(make_input(scene="friend")) == "trigger"
     assert mention.decide(make_input(mention_kinds=("self",))) == "trigger"
     assert quote.decide(make_input(has_reply=True)) == "trigger"
+
+
+def test_force_keywords_bypass_random_without_becoming_interest_keywords() -> None:
+    """强制关键词应直接触发，但不能隐式启用兴趣增益倍率。"""
+
+    def fail_random() -> float:
+        raise AssertionError("force keyword path sampled random")
+
+    config = WillingnessConfig(
+        text_gain=10,
+        keyword_multiplier=2,
+        default_multiplier=1,
+        force_keywords=("紧急",),
+    )
+    engine = WillingnessWillEngine(config, random_fn=fail_random)
+
+    assert engine.decide(make_input(text="请紧急处理")) == "trigger"
+    assert engine.get_current_willingness("group:700000001") == 10
+
+
+def test_interest_and_force_keywords_have_independent_effects() -> None:
+    """同一消息命中两类关键词时应分别计算增益并强制触发。"""
+
+    def fail_random() -> float:
+        raise AssertionError("force keyword path sampled random")
+
+    config = WillingnessConfig(
+        text_gain=10,
+        keyword_multiplier=2,
+        default_multiplier=1,
+        interest_keywords=("提醒",),
+        force_keywords=("紧急",),
+    )
+    input_value = make_input(text="紧急提醒")
+    engine = WillingnessWillEngine(config, random_fn=fail_random)
+
+    assert calculate_score(0, make_input(text="紧急"), config) == 10
+    assert calculate_score(0, input_value, config) == 20
+    assert engine.decide(input_value) == "trigger"
+    assert engine.get_current_willingness(input_value.chat_key) == 20
+
+
+def test_willingness_rejects_legacy_keyword_field() -> None:
+    """willingness 不应继续接受含义不明确的旧 keywords 字段。"""
+
+    with pytest.raises(ValueError, match="unsupported"):
+        WillingnessConfig.from_mapping({"keywords": ["提醒"]})
 
 
 def test_poke_uses_only_poke_gain_and_nudge_stays_observe_only() -> None:

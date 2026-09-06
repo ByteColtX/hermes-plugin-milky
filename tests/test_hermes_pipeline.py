@@ -770,6 +770,67 @@ def test_same_chat_next_willingness_decision_observes_trigger_cost() -> None:
     assert submitted == 1
 
 
+def test_force_keyword_uses_normal_pipeline_boundaries_and_reply_cost() -> None:
+    """强制关键词只在普通消息边界内触发，并复用一次 reply cost。"""
+
+    async def scenario() -> tuple[str, str, str, str, int, int]:
+        def fail_random() -> float:
+            raise AssertionError("force keyword path sampled random")
+
+        will = WillingnessWillEngine(
+            WillingnessConfig(force_keywords=("紧急",)),
+            random_fn=fail_random,
+        )
+        hermes = FakeHermes()
+        pipeline = make_pipeline(hermes, FakeResolver(), will_engine=will)
+
+        denied = load_fixture("events/message_receive.group.all_segments.json")
+        denied["data"]["message_seq"] = 6201
+        denied["data"]["sender_id"] = 900000001
+        denied["data"]["segments"] = [{"type": "text", "data": {"text": "紧急"}}]
+        denied["data"]["group"]["group_id"] = 700000001
+        denied["data"]["group_member"]["user_id"] = 900000001
+        denied["data"]["peer_id"] = 700000001
+        denied_result = await pipeline.handle_event(denied)
+
+        command = load_fixture("events/message_receive.group.all_segments.json")
+        command["data"]["message_seq"] = 6202
+        command["data"]["segments"] = [{"type": "text", "data": {"text": "/milky 紧急"}}]
+        command_result = await pipeline.handle_event(command)
+
+        temp = load_fixture("events/message_receive.temp.json")
+        temp["data"]["segments"] = [{"type": "text", "data": {"text": "紧急"}}]
+        temp_result = await pipeline.handle_event(temp)
+
+        system_result = await pipeline.handle_event(
+            load_fixture("events/system.message_recall.json")
+        )
+
+        valid = load_fixture("events/message_receive.group.all_segments.json")
+        valid["data"]["message_seq"] = 6203
+        valid["data"]["segments"] = [{"type": "text", "data": {"text": "请紧急处理"}}]
+        await pipeline.handle_event(valid)
+        await pipeline.wait_idle()
+
+        return (
+            denied_result.classification,
+            command_result.classification,
+            temp_result.classification,
+            system_result.classification,
+            pipeline.reply_costs,
+            len(hermes.events),
+        )
+
+    denied, command, temp, system, costs, submitted = asyncio.run(scenario())
+
+    assert denied == "denied"
+    assert command == "command"
+    assert temp == "ignored_temp"
+    assert system == "observe_only"
+    assert costs == 1
+    assert submitted == 2
+
+
 async def _raise_submission(_event: FakeMessageEvent) -> None:
     """模拟 Hermes handle_message 提交异常。"""
 

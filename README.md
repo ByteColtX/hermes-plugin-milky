@@ -257,26 +257,31 @@ Will 决定一条消息是先等待，还是交给 Hermes：
 
 1. 先让分数按静默时间衰减；
 2. 根据文本、提及、reply、图片、私聊等特征增加分数；
-3. 命中 `willingness.keywords` 时提高本次增益倍率；
-4. 分数超过 `probabilityThreshold` 后换算成概率并抽样，得到 `wait` 或 `trigger`。
+3. 命中 `willingness.interestKeywords` 时提高本次增益倍率；
+4. 命中 `willingness.forceKeywords` 时直接得到 `trigger`，否则在分数超过
+   `probabilityThreshold` 后换算成概率并抽样，得到 `wait` 或 `trigger`。
 
-因此，同一条消息可能因为当前分数或随机抽样不同而得到不同结果。`willingness.keywords` 是
-**加分倍率，不是确定性触发器**。
+因此，同一条消息可能因为当前分数或随机抽样不同而得到不同结果。`willingness.interestKeywords`
+只控制**加分倍率**，不是确定性触发器；`willingness.forceKeywords` 才是**包含即触发**的
+确定性规则。
 
 `directForce`、`mentionForce`、`quoteForce` 可让对应信号跳过随机抽样，直接 `trigger`。
+`forceKeywords` 与这些 force 字段等价地跳过随机抽样，但不额外增加 score；两类关键词同时
+命中时，`interestKeywords` 仍控制增益倍率，`forceKeywords` 决定最终触发。
 这里的 `quoteGain`/`quoteForce` 只看是否存在 reply，不要求 reply 指向 Bot；这与 routing 的
 `quote` 规则不同。显式 self-poke 使用 `pokeGain`，`friend_nudge` 和 `group_nudge` 仍是
 observe-only，不会直接创建 Agent turn。通过 Gate 且得到 `trigger` 后立即扣除一次
 `replyCost` 参与成本，不等待 Hermes 接受、资源解析或最终发送；后续失败不回滚。等待、Gate
 拒绝、命令、temp 和系统事件不会扣费。
 
-示例：默认按概率参与，但命中“提醒”时提高增益；私聊和 @Bot 仍不强制触发：
+示例：默认按概率参与，命中“提醒”时提高增益，命中“紧急”时直接触发：
 
 ```json
 {
   "engine": "willingness",
   "willingness": {
-    "keywords": ["提醒"],
+    "interestKeywords": ["提醒"],
+    "forceKeywords": ["紧急"],
     "keywordMultiplier": 1.2,
     "directForce": false,
     "mentionForce": false,
@@ -284,6 +289,10 @@ observe-only，不会直接创建 Agent turn。通过 Gate 且得到 `trigger` �
   }
 }
 ```
+
+迁移时将旧的 `willingness.keywords` 改为 `willingness.interestKeywords`；旧字段不会被静默
+兼容。需要包含即触发时再配置 `willingness.forceKeywords`，省略或配置为空数组表示关闭。
+两者都只匹配规范化正文的直接子串，不支持正则、分词或隐式大小写转换。
 
 #### 配置提示
 
@@ -324,7 +333,8 @@ observe-only，不会直接创建 Agent turn。通过 Gate 且得到 `trigger` �
     "directGain": 40,
     "imageGain": 8,
     "pokeGain": 80,
-    "keywords": [],
+    "interestKeywords": [],
+    "forceKeywords": [],
     "keywordMultiplier": 1.2,
     "defaultMultiplier": 1,
     "hotWindowSeconds": 15,

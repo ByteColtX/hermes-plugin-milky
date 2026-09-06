@@ -44,7 +44,8 @@ _WILLINGNESS_DEFAULTS = {
     "directGain": 40,
     "imageGain": 8,
     "pokeGain": 80,
-    "keywords": [],
+    "interestKeywords": [],
+    "forceKeywords": [],
     "keywordMultiplier": 1.2,
     "defaultMultiplier": 1,
     "hotWindowSeconds": 15,
@@ -320,12 +321,15 @@ def _validate_willingness(values: Mapping[str, Any]) -> None:
         )
         if amplifier > 1:
             raise ConfigError("MILKY_WILL_POLICY.willingness.probabilityAmplifier out of range")
-    if "keywords" in values:
-        keywords = values["keywords"]
-        if not isinstance(keywords, list) or any(
-            not isinstance(keyword, str) or not keyword.strip() for keyword in keywords
-        ):
-            raise ConfigError("MILKY_WILL_POLICY.willingness.keywords must be non-empty strings")
+    for name in ("interestKeywords", "forceKeywords"):
+        if name in values:
+            keywords = values[name]
+            if not isinstance(keywords, list) or any(
+                not isinstance(keyword, str) or not keyword.strip() for keyword in keywords
+            ):
+                raise ConfigError(
+                    f"MILKY_WILL_POLICY.willingness.{name} must be an array of non-empty strings"
+                )
     for name in ("mentionForce", "quoteForce", "directForce"):
         if name in values and not isinstance(values[name], bool):
             raise ConfigError(f"MILKY_WILL_POLICY.willingness.{name} must be boolean")
