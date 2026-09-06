@@ -27,11 +27,15 @@ SPLIT_TEXT_CASES = {
     },
     "inline_prefix": {
         "value": "前文[SPLIT]\n第二段",
-        "sections": None,
+        "sections": ("前文", "\n第二段"),
     },
     "inline_suffix": {
         "value": "第一段\n[SPLIT]后文",
-        "sections": None,
+        "sections": ("第一段\n", "后文"),
+    },
+    "inline_spaces": {
+        "value": "第一段 [SPLIT] 第二段",
+        "sections": ("第一段 ", " 第二段"),
     },
     "empty_edges": {
         "value": "[SPLIT]\n第一段\n[SPLIT]",
@@ -49,9 +53,27 @@ SPLIT_TEXT_CASES = {
         "value": "没有控制标记的普通文本",
         "sections": None,
     },
+    "escaped_literal": {
+        "value": "显示[[SPLIT]]文本",
+        "sections": None,
+        "normalized": "显示[SPLIT]文本",
+    },
+    "valid_unknown_cq_before_split": {
+        "value": "前[CQ:future,x=y][SPLIT]后",
+        "sections": ("前[CQ:future,x=y]", "后"),
+    },
+    "malformed_cq_with_bracket": {
+        "value": "前[CQ:at,qq=[SPLIT]后",
+        "sections": ("前[CQ:at,qq=", "后"),
+    },
+    "malformed_cq_unclosed": {
+        "value": "前[CQ:future,key=value\n第一[SPLIT]第二",
+        "sections": ("前[CQ:future,key=value\n第一", "第二"),
+    },
 }
 
 CQ_SPLIT_MESSAGE = "前段[CQ:at,qq=10001]\n[SPLIT]\n后段[CQ:reply,id=10002]"
+CQ_INLINE_SPLIT_MESSAGE = "前段[CQ:at,qq=10001][SPLIT]后段[CQ:reply,id=10002]"
 
 ORDERED_ATTACHMENT_FIXTURE = (
     ("image", "base64://fixture-image", None),

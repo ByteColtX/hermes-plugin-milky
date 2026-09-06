@@ -10,8 +10,9 @@ import pytest
 
 from milky.client import ActionError, SendResult
 from outbound.sender import MilkyOutboundSender
-from outbound.splitting import split_outbound_text
+from outbound.splitting import normalize_outbound_text, split_outbound_text
 from tests.fixtures.outbound_split_inputs import (
+    CQ_INLINE_SPLIT_MESSAGE,
     CQ_SPLIT_MESSAGE,
     ORDERED_ATTACHMENT_FIXTURE,
     SENSITIVE_MARKERS,
@@ -82,8 +83,8 @@ class SplitClient:
 
 
 @pytest.mark.parametrize("name", tuple(SPLIT_TEXT_CASES))
-def test_split_fixture_only_matches_strict_marker_lines(name: str) -> None:
-    """fixture 覆盖行尾、大小写和空白边界，匹配只接受精确独立行。"""
+def test_split_fixture_covers_line_and_inline_marker_boundaries(name: str) -> None:
+    """fixture 覆盖独立行、行中、转义和 CQ-like 边界。"""
 
     case = SPLIT_TEXT_CASES[name]
     result = split_outbound_text(case["value"])
@@ -91,6 +92,8 @@ def test_split_fixture_only_matches_strict_marker_lines(name: str) -> None:
         assert result is None
     else:
         assert result == case["sections"]
+    if "normalized" in case:
+        assert normalize_outbound_text(case["value"]) == case["normalized"]
 
 
 def test_split_fixture_contains_no_credentials_real_urls_or_local_paths() -> None:
@@ -107,6 +110,13 @@ def test_split_sections_preserve_internal_whitespace_without_marker_lines() -> N
         "  第一行  \n第二行",
         " 第三行 ",
     )
+
+
+def test_split_sections_remove_inline_marker_only() -> None:
+    """行中标记只删除自身，不改动两侧空白或换行。"""
+
+    assert split_outbound_text("第一段 [SPLIT] 第二段") == ("第一段 ", " 第二段")
+    assert split_outbound_text("第一段[SPLIT]\n第二段") == ("第一段", "\n第二段")
 
 
 @pytest.mark.parametrize(
@@ -152,6 +162,71 @@ def test_sender_sends_split_text_in_order_and_removes_markers() -> None:
     ]
     assert result.message_id == "2002"
     assert result.continuation_message_ids == ("2001",)
+
+
+def test_sender_sends_inline_split_text_in_order() -> None:
+    """普通正文行中的标记也应按顺序形成独立消息。"""
+
+    client = SplitClient()
+    sender = MilkyOutboundSender(client)
+
+    result = asyncio.run(sender.send("dm:800000001", "第一段[SPLIT]第二段"))
+
+    assert result.success is True
+    assert [body["message"] for _, body in client.calls] == [
+        [{"type": "text", "data": {"text": "第一段"}}],
+        [{"type": "text", "data": {"text": "第二段"}}],
+    ]
+
+
+def test_sender_unescapes_literal_split_without_enabling_split_limit() -> None:
+    """字面量转义应还原可见文本且不创建额外消息。"""
+
+    client = SplitClient()
+    sender = MilkyOutboundSender(client)
+
+    result = asyncio.run(sender.send("dm:800000001", "显示[[SPLIT]]文本"))
+
+    assert result.success is True
+    assert [body["message"] for _, body in client.calls] == [
+        [{"type": "text", "data": {"text": "显示[SPLIT]文本"}}],
+    ]
+
+
+def test_sender_splits_after_valid_unknown_cq_candidate() -> None:
+    """语法完整但未知 type 的 CQ fallback 不吞掉候选之后的标记。"""
+
+    client = SplitClient()
+    sender = MilkyOutboundSender(client)
+
+    result = asyncio.run(sender.send("dm:800000001", "前[CQ:future,x=y][SPLIT]后"))
+
+    assert result.success is True
+    assert [body["message"] for _, body in client.calls] == [
+        [
+            {"type": "text", "data": {"text": "前"}},
+            {"type": "text", "data": {"text": "[CQ:future,x=y]"}},
+        ],
+        [{"type": "text", "data": {"text": "后"}}],
+    ]
+
+
+def test_sender_splits_inside_malformed_cq_like_text() -> None:
+    """malformed CQ-like 文本中的标记按普通控制语法处理。"""
+
+    client = SplitClient()
+    sender = MilkyOutboundSender(client)
+
+    result = asyncio.run(sender.send("dm:800000001", "前[CQ:at,qq=[SPLIT]后"))
+
+    assert result.success is True
+    assert [body["message"] for _, body in client.calls] == [
+        [
+            {"type": "text", "data": {"text": "前"}},
+            {"type": "text", "data": {"text": "[CQ:at,qq="}},
+        ],
+        [{"type": "text", "data": {"text": "后"}}],
+    ]
 
 
 def test_sender_filters_empty_split_sections_and_rejects_marker_only() -> None:
@@ -232,6 +307,25 @@ def test_sender_keeps_unmarked_long_text_unbounded_by_split_limit() -> None:
     assert len(client.calls) == 4
 
 
+def test_sender_keeps_escaped_literal_long_text_unbounded_by_split_limit() -> None:
+    """只有字面量转义的长文本不应误用三条分段上限。"""
+
+    client = SplitClient()
+    sender = MilkyOutboundSender(client, max_text_length=2)
+
+    result = asyncio.run(sender.send("dm:800000001", "一[[SPLIT]]二三四"))
+
+    assert result.success is True
+    assert [body["message"][0]["data"]["text"] for _, body in client.calls] == [
+        "一[",
+        "SP",
+        "LI",
+        "T]",
+        "二三",
+        "四",
+    ]
+
+
 def test_sender_formats_cq_controls_inside_each_split_unit_in_order() -> None:
     """CQ-compatible 控制码在各分段内保持原顺序并走既有 formatter。"""
 
@@ -239,6 +333,25 @@ def test_sender_formats_cq_controls_inside_each_split_unit_in_order() -> None:
     sender = MilkyOutboundSender(client)
 
     result = asyncio.run(sender.send("dm:800000001", CQ_SPLIT_MESSAGE))
+
+    assert result.success is True
+    assert client.calls[0][1]["message"] == [
+        {"type": "text", "data": {"text": "前段"}},
+        {"type": "mention", "data": {"user_id": 10001}},
+    ]
+    assert client.calls[1][1]["message"] == [
+        {"type": "text", "data": {"text": "后段"}},
+        {"type": "reply", "data": {"message_seq": 10002}},
+    ]
+
+
+def test_sender_formats_cq_controls_around_inline_split_in_order() -> None:
+    """行中分段不改变相邻 CQ-compatible 控制码顺序。"""
+
+    client = SplitClient()
+    sender = MilkyOutboundSender(client)
+
+    result = asyncio.run(sender.send("dm:800000001", CQ_INLINE_SPLIT_MESSAGE))
 
     assert result.success is True
     assert client.calls[0][1]["message"] == [

@@ -26,7 +26,7 @@ from .formatter import (
     video_segment,
 )
 from .materialization import prepare_materialization
-from .splitting import split_outbound_text
+from .splitting import parse_outbound_text
 
 _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
@@ -991,12 +991,12 @@ class MilkyOutboundSender:
 
         del reply_to
         if isinstance(content, str):
-            split_sections = split_outbound_text(content)
-            if split_sections is not None:
-                return self._split_message_parts(split_sections)
-            chunks = chunk_text(content, self._max_text_length)
+            parsed = parse_outbound_text(content)
+            if parsed.sections is not None:
+                return self._split_message_parts(parsed.sections)
+            chunks = chunk_text(parsed.normalized_text, self._max_text_length)
             if not chunks:
-                return (format_message(content),)
+                return (format_message(parsed.normalized_text),)
             return tuple(format_message(chunk) for chunk in chunks)
         return (format_message(content),)
 

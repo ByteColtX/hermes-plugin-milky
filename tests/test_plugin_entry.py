@@ -146,7 +146,11 @@ def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) ->
         assert "[SILENT]" in entry.PLATFORM_GUIDANCE
         assert "[SPLIT]" in entry.PLATFORM_GUIDANCE
         assert "up to 3 sequential messages" in entry.PLATFORM_GUIDANCE
-        assert "marker line is stripped on outbound delivery" in entry.PLATFORM_GUIDANCE
+        assert "on its own line or inline" in entry.PLATFORM_GUIDANCE
+        assert "[[SPLIT]]" in entry.PLATFORM_GUIDANCE
+        assert "Complete CQ-compatible codes are parsed as units" in entry.PLATFORM_GUIDANCE
+        assert "malformed CQ-like text follows ordinary text rules" in entry.PLATFORM_GUIDANCE
+        assert "Text sections are delivered before" in entry.PLATFORM_GUIDANCE
         assert "no message is sent outbound" in entry.PLATFORM_GUIDANCE
         assert "101" not in hint
         assert "9001" not in hint
