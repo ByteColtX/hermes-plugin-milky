@@ -209,7 +209,7 @@ uid <user_id> 退出了群聊 Details: {"group_id": <group_id>, "user_id": <user
 
 ### Requirement: 只声明显式设计的 Action 工具
 
-v0.1 MUST NOT 注册任意 Action catalog、自动请求审批或 WebHook listener；v0.1 只允许显式注册 `milky_profile_like`、`milky_nudge` 和 `milky_recall_group_message` 三个 ToolSpec。`MILKY_HOME_CHANNEL` 只用于 Hermes core 投递受信系统消息，不是 Agent 可调用的 Action，也不是审批或授权来源。每个 ToolSpec MUST 有独立参数校验、目标校验和统一错误结果；未来新增能力前 MUST 先补充对应契约。
+v0.1 MUST NOT 注册任意 Action catalog、自动请求审批或 WebHook listener；v0.1 只允许显式注册当前固定的 25 个 ToolSpec，具体工具名和参数以 manifest 及对应的 QQ ToolSpec 规范为准。`MILKY_HOME_CHANNEL` 只用于 Hermes core 投递受信系统消息，不是 Agent 可调用的 Action，也不是审批或授权来源。每个 ToolSpec MUST 有独立参数校验、目标校验和统一错误结果；未来新增能力前 MUST 先补充对应契约。
 
 #### Scenario: Agent 请求未注册 Action
 

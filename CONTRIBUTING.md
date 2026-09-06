@@ -5,10 +5,10 @@
 
 本仓库是 Hermes 的 Milky QQ 平台适配器，当前代码已覆盖仓库声明的协议解析、事件流、入站
 pipeline、出站消息/媒体和固定 ToolSpec 边界。开始贡献前，请先阅读
-[ARCHITECTURE.md](ARCHITECTURE.md)；它是协议、模块边界和行为的项目基线。当前 OpenSpec
-change 位于 [`openspec/changes/`](openspec/changes/)，每个 change 的 `tasks.md` 是该
-change 的实现进度和任务状态来源；不要把 fake host 或 fixture 结果当作真实 Hermes/Milky
-集成能力证明。
+[ARCHITECTURE.md](ARCHITECTURE.md)；它是协议、模块边界和行为的项目基线。当前没有未归档
+change；后续变更计划放在 [`openspec/changes/`](openspec/changes/)，每个 change 的
+`tasks.md` 是该 change 的实现进度和任务状态来源。不要把 fake host 或 fixture 结果当作真实
+Hermes/Milky 集成能力证明。
 
 我们欢迎 bug 报告、协议 fixture、测试、代码和文档改进。请根据目录阅读相关章节，
 这样可以减少来回确认，也能让贡献更容易被复现和审查。🎉
@@ -100,10 +100,10 @@ change 的实现进度和任务状态来源；不要把 fake host 或 fixture �
 <!-- omit in toc -->
 #### Before Submitting an Enhancement
 
-- 确认问题在当前代码或 active OpenSpec change 中尚未被覆盖；
+- 确认问题在当前代码或已有的 OpenSpec change 中尚未被覆盖；
 - 仔细阅读 [ARCHITECTURE.md](ARCHITECTURE.md) 和相关 OpenSpec spec，确认建议没有违反既定边界；
 - 搜索已有的 [Issues](https://github.com/ByteColtX/hermes-plugin-milky/issues)，已有建议请在原 issue 中补充；
-- 说明建议是否属于 Milky v0.1 范围。高风险 Action、WebHook、`MILKY_HOME_CHANNEL`、
+- 说明建议是否属于当前适配器范围。高风险 Action、WebHook、`MILKY_HOME_CHANNEL`、
   temp 出站和插件自有媒体缓存等能力需要单独设计，不能直接作为小改动加入。
 
 <!-- omit in toc -->
@@ -135,8 +135,10 @@ uv sync
 
 #### 开发流程
 
-1. 阅读 `ARCHITECTURE.md` 和当前 OpenSpec change 的全部 artifacts，尤其是 `tasks.md`。
-2. 选择目标 change 的下一个未完成任务；先补充契约或脱敏 fixture，再实现最小行为。
+1. 阅读 `ARCHITECTURE.md`；如果目标已有 OpenSpec change，再阅读其全部 artifacts，尤其是
+   `tasks.md`。
+2. 如果目标 change 已有未完成任务，选择下一个任务；否则先创建 change，再补充契约或脱敏
+   fixture，最后实现最小行为。
 3. 为新增行为补充单元、集成或协议 fixture 测试，并在 `tasks.md` 中记录可复现证据。
 4. 运行质量检查后再提交 PR：
 
@@ -158,7 +160,7 @@ git diff --check
 
 ### Improving The Documentation
 
-文档改动应以 `ARCHITECTURE.md` 和 active OpenSpec change 为依据。请：
+文档改动应以 `ARCHITECTURE.md` 和相关 OpenSpec change（如果存在）为依据。请：
 
 - 修正过时、含糊或与实现不符的描述，并明确标注尚未实现的目标行为；
 - 协议行为变化同步更新对应的 OpenSpec spec 和必要的 fixture 说明；

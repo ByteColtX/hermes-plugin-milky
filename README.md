@@ -34,8 +34,8 @@ Hermes 的 Milky QQ 平台适配器
 >
 > 示例中的 ID 仅为占位值。
 
-详细的模块职责、生命周期和行为契约见 [ARCHITECTURE.md](ARCHITECTURE.md)；进行中的规范和
-测试证据见 [openspec/changes/](openspec/changes/)。
+详细的模块职责、生命周期和行为契约见 [ARCHITECTURE.md](ARCHITECTURE.md)；主规范和已归档
+change 的测试证据见 [openspec/](openspec/)。
 
 <!-- omit in toc -->
 
@@ -449,8 +449,8 @@ malformed 和 unsupported 会保持明确失败分类。缺少消息序号时不
 `hermes-plugin-milky.qq-platform-guidance`，并在连接完成后使用已确认的 QQ UID 和昵称渲染
 媒体、CQ-compatible、无回复和 bundled skill 指引。旧宿主仍可完成平台注册，但只获得首句提示。
 
-详细的稳定模块边界见 [ARCHITECTURE.md](ARCHITECTURE.md)；可观察行为、测试要求和进行中的
-规范见 [openspec/changes/](openspec/changes/)。
+详细的稳定模块边界见 [ARCHITECTURE.md](ARCHITECTURE.md)；可观察行为和测试要求见
+[openspec/](openspec/)。新建的未归档 change 会放在 [openspec/changes/](openspec/changes/)。
 
 ## 贡献
 

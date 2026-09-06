@@ -64,8 +64,15 @@ MUST NOT 接受 `group`、`image` 或 `mentionHere` 字段。省略 Will policy 
 
 插件 manifest MUST 声明必需的 `MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN` 和可选的
 `MILKY_ALLOWED_CHATS`、`MILKY_WILL_POLICY`、`MILKY_SESSION_BUFFER_SIZE`、`MILKY_HOME_CHANNEL`、
-`MILKY_MAX_LOCAL_MEDIA_BYTES`，声明 `provides_tools` 且仅包含 `milky_profile_like`、
-`milky_nudge` 和 `milky_recall_group_message`，并 MUST NOT 声明任意未纳入显式 ToolSpec 的
+`MILKY_MAX_LOCAL_MEDIA_BYTES`，并声明当前固定的 25 个显式 ToolSpec：
+`send_profile_like`、`send_friend_nudge`、`send_group_nudge`、`recall_group_message`、
+`get_group_info`、`get_group_member_list`、`get_group_member_info`、`set_group_member_mute`、
+`set_group_whole_mute`、`get_forwarded_messages`、`get_private_file_download_url`、
+`kick_group_member`、`quit_group`、`delete_friend`、`get_friend_requests`、
+`accept_friend_request`、`reject_friend_request`、`get_group_file_download_url`、
+`accept_group_request`、`reject_group_request`、`accept_group_invitation`、
+`reject_group_invitation`、`get_group_files`、`get_friend_info` 和
+`set_group_member_special_title`；manifest MUST NOT 声明任意未纳入显式 ToolSpec 的
 Action 工具。
 
 #### Scenario: 查看插件配置提示

@@ -10,13 +10,13 @@
 ### Requirement: Milky platform hint 只保留平台首句
 
 Milky 注册到 Hermes 的 `platform_hint` MUST 只包含原提示的首句
-`You are communicating via Hermes's Milky QQ platform.`；原提示其余文案 MUST NOT 继续出现在
+`You are chatting on QQ through Hermes's Milky platform.`；原提示其余文案 MUST NOT 继续出现在
 `platform_hint` 中。
 
 #### Scenario: 注册后检查静态 platform hint
 
 - **WHEN** Hermes 调用 Milky 插件注册入口并读取平台注册参数
-- **THEN** `platform_hint` SHALL 等于 `You are communicating via Hermes's Milky QQ platform.`
+- **THEN** `platform_hint` SHALL 等于 `You are chatting on QQ through Hermes's Milky platform.`
 - **AND** SHALL 不包含媒体发送、CQ-compatible segment、ID 来源限制或 bundled skill 的其余指引
 
 ### Requirement: Milky 操作指引通过 system prompt section 提供
