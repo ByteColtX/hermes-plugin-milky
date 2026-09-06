@@ -266,10 +266,15 @@ Will 决定一条消息是先等待，还是交给 Hermes：
 确定性规则。
 
 `directForce`、`mentionForce`、`quoteForce` 可让对应信号跳过随机抽样，直接 `trigger`。
+其中 `mentionForce` 只匹配直接提及当前 Bot（`mention.user_id == self_id`），`quoteForce` 只匹配
+至少一个明确引用当前 Bot 的 reply（`reply.data.sender_id == self_id`）；他人提及、`mention_all`、
+`here`、他人引用和无法确认目标的引用都会继续走其他 force 条件或概率抽样。
 `forceKeywords` 与这些 force 字段等价地跳过随机抽样，但不额外增加 score；两类关键词同时
 命中时，`interestKeywords` 仍控制增益倍率，`forceKeywords` 决定最终触发。
-这里的 `quoteGain`/`quoteForce` 只看是否存在 reply，不要求 reply 指向 Bot；这与 routing 的
-`quote` 规则不同。显式 self-poke 使用 `pokeGain`，`friend_nudge` 和 `group_nudge` 仍是
+`mentionGain` 只在直接提及当前 Bot 时加分；`quoteGain` 只在至少一个 reply 明确引用当前 Bot
+时加分，`has_reply` 只保留 reply 存在性事实，不会单独产生 `quoteGain`；`pokeGain` 只在协议
+确认 Bot 为接收者的 self-poke 时加分。非 Bot 或无法确认目标的 mention、reply、poke 均不产生
+对应 gain。routing 的 `quote` 规则同样只认引用 Bot；`friend_nudge` 和 `group_nudge` 仍是
 observe-only，不会直接创建 Agent turn。通过 Gate 且得到 `trigger` 后立即扣除一次
 `replyCost` 参与成本，不等待 Hermes 接受、资源解析或最终发送；后续失败不回滚。等待、Gate
 拒绝、命令、temp 和系统事件不会扣费。

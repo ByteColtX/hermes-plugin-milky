@@ -6,6 +6,7 @@ import math
 
 import pytest
 
+from milky.models import ReplySegment, Segment
 from will import (
     WillingnessConfig,
     WillingnessWillEngine,
@@ -27,6 +28,7 @@ def make_input(
     text: str = "合成文本",
     mention_kinds: tuple[str, ...] = ("none",),
     has_reply: bool = False,
+    segments: tuple[Segment, ...] = (),
     has_image: bool = False,
     is_self_quote: bool = False,
     is_self_poke: bool = False,
@@ -41,7 +43,7 @@ def make_input(
         chat_key=chat_key,
         channel=chat_key,
         timestamp=1700000000,
-        segments=(),
+        segments=segments,
         text=text,
         mention_kinds=mention_kinds,  # type: ignore[arg-type]
         has_reply=has_reply,
@@ -128,14 +130,100 @@ def test_willingness_formula_adds_message_attributes_and_clamps() -> None:
     assert calculate_score(100, input_value, config) == 100
 
 
-def test_willingness_keeps_self_target_features_out_of_its_formula() -> None:
-    """self quote 只影响 routing，willingness 仍按 reply 存在性计算。"""
+def test_willingness_requires_bot_targets_for_mention_and_quote_gain() -> None:
+    """mentionGain 和 quoteGain 只消费明确指向 Bot 的特征。"""
 
-    config = WillingnessConfig(text_gain=10, quote_gain=30, default_multiplier=1)
+    config = WillingnessConfig(
+        text_gain=10,
+        mention_gain=20,
+        quote_gain=30,
+        default_multiplier=1,
+    )
+    no_target = make_input()
+    other_mention = make_input(mention_kinds=("all",))
+    self_mention = make_input(mention_kinds=("self",))
     ordinary_quote = make_input(has_reply=True)
     self_quote = make_input(has_reply=True, is_self_quote=True)
 
-    assert calculate_score(0, ordinary_quote, config) == calculate_score(0, self_quote, config)
+    assert calculate_score(0, no_target, config) == 10
+    assert calculate_score(0, other_mention, config) == 10
+    assert calculate_score(0, self_mention, config) == 30
+    assert calculate_score(0, ordinary_quote, config) == 10
+    assert calculate_score(0, self_quote, config) == 40
+
+
+@pytest.mark.parametrize(
+    ("name", "input_kwargs", "expected_gain"),
+    (
+        ("self mention", {"mention_kinds": ("self",)}, 20),
+        ("duplicate self mentions", {"mention_kinds": ("self", "self")}, 20),
+        ("mention all", {"mention_kinds": ("all",)}, 0),
+        ("mention here", {"mention_kinds": ("here",)}, 0),
+        ("unknown mention", {"mention_kinds": ("none",)}, 0),
+    ),
+)
+def test_willingness_mention_gain_uses_only_one_bot_target_signal(
+    name: str, input_kwargs: dict[str, object], expected_gain: float
+) -> None:
+    """mentionGain 只对 Bot direct mention 生效，且每条消息最多一次。"""
+
+    config = WillingnessConfig(text_gain=0, mention_gain=20)
+
+    assert calculate_score(0, make_input(**input_kwargs), config) == expected_gain, name
+
+
+@pytest.mark.parametrize(
+    ("name", "input_kwargs", "expected_gain"),
+    (
+        (
+            "self quote",
+            {"has_reply": True, "is_self_quote": True},
+            30,
+        ),
+        (
+            "multiple replies with one self quote",
+            {
+                "has_reply": True,
+                "is_self_quote": True,
+                "segments": (
+                    ReplySegment(kind="reply", raw={}, message_seq=2001, sender_id=800000003),
+                    ReplySegment(kind="reply", raw={}, message_seq=2002, sender_id=900000001),
+                ),
+            },
+            30,
+        ),
+        ("other quote", {"has_reply": True, "is_self_quote": False}, 0),
+        ("unknown quote", {"has_reply": True, "is_self_quote": False}, 0),
+    ),
+)
+def test_willingness_quote_gain_requires_one_bot_target(
+    name: str, input_kwargs: dict[str, object], expected_gain: float
+) -> None:
+    """quoteGain 只对至少一个明确引用 Bot 的 reply 生效一次。"""
+
+    config = WillingnessConfig(text_gain=0, quote_gain=30)
+
+    assert calculate_score(0, make_input(**input_kwargs), config) == expected_gain, name
+
+
+@pytest.mark.parametrize(
+    ("name", "is_self_poke", "expected_score"),
+    (
+        ("self poke", True, 40),
+        ("other poke", False, 0),
+        ("unknown poke", False, 0),
+    ),
+)
+def test_willingness_poke_gain_requires_bot_target(
+    name: str, is_self_poke: bool, expected_score: float
+) -> None:
+    """pokeGain 只对协议确认 Bot 为接收者的 poke 生效。"""
+
+    config = WillingnessConfig(text_gain=0, poke_gain=40, probability_threshold=100)
+    engine = WillingnessWillEngine(config, clock=lambda: 0.0, random_fn=lambda: 0.99)
+
+    assert engine.decide(make_input(event_type="poke", is_self_poke=is_self_poke)) == "wait", name
+    assert engine.get_current_willingness("group:700000001") == expected_score, name
 
 
 def test_willingness_probability_is_thresholded_and_clamped() -> None:
@@ -196,7 +284,7 @@ def test_willingness_clock_rollback_does_not_change_score_or_timestamps() -> Non
 
 
 def test_willingness_force_bypasses_random_in_declared_order() -> None:
-    """direct、mention、quote force 均应在随机抽样前直接 trigger。"""
+    """direct、self mention、self quote force 均应跳过随机抽样。"""
 
     def fail_random() -> float:
         raise AssertionError("force path sampled random")
@@ -207,7 +295,82 @@ def test_willingness_force_bypasses_random_in_declared_order() -> None:
 
     assert direct.decide(make_input(scene="friend")) == "trigger"
     assert mention.decide(make_input(mention_kinds=("self",))) == "trigger"
-    assert quote.decide(make_input(has_reply=True)) == "trigger"
+    assert quote.decide(make_input(has_reply=True, is_self_quote=True)) == "trigger"
+
+
+@pytest.mark.parametrize(
+    ("name", "input_kwargs"),
+    (
+        ("other mention", {"mention_kinds": ("none",)}),
+        ("mention all", {"mention_kinds": ("all",)}),
+        ("mention here", {"mention_kinds": ("here",)}),
+        ("other quote", {"has_reply": True}),
+        ("unknown quote", {"has_reply": True, "is_self_quote": False}),
+    ),
+)
+def test_willingness_non_self_targets_do_not_force(
+    name: str, input_kwargs: dict[str, object]
+) -> None:
+    """非 Bot mention 或 quote 不能绕过抽样触发。"""
+
+    random_calls = 0
+
+    def stable_wait_random() -> float:
+        nonlocal random_calls
+        random_calls += 1
+        return 0.99
+
+    engine = WillingnessWillEngine(
+        WillingnessConfig(
+            mention_force=True,
+            quote_force=True,
+            probability_threshold=100,
+        ),
+        random_fn=stable_wait_random,
+    )
+
+    assert engine.decide(make_input(**input_kwargs)) == "wait", name
+    assert random_calls == 1, name
+
+
+@pytest.mark.parametrize(
+    ("name", "config", "input_kwargs"),
+    (
+        (
+            "self mention",
+            WillingnessConfig(mention_force=True),
+            {"mention_kinds": ("self",)},
+        ),
+        (
+            "self quote",
+            WillingnessConfig(quote_force=True),
+            {"has_reply": True, "is_self_quote": True},
+        ),
+        (
+            "one self quote among multiple replies",
+            WillingnessConfig(quote_force=True),
+            {
+                "has_reply": True,
+                "is_self_quote": True,
+                "segments": (
+                    ReplySegment(kind="reply", raw={}, message_seq=2001, sender_id=800000003),
+                    ReplySegment(kind="reply", raw={}, message_seq=2002, sender_id=900000001),
+                ),
+            },
+        ),
+    ),
+)
+def test_willingness_self_targets_force_without_random(
+    name: str, config: WillingnessConfig, input_kwargs: dict[str, object]
+) -> None:
+    """self mention 和任一 self quote 都应直接触发。"""
+
+    def fail_random() -> float:
+        raise AssertionError(f"{name} force path sampled random")
+
+    engine = WillingnessWillEngine(config, random_fn=fail_random)
+
+    assert engine.decide(make_input(**input_kwargs)) == "trigger"
 
 
 def test_force_keywords_bypass_random_without_becoming_interest_keywords() -> None:
@@ -278,6 +441,7 @@ def test_poke_uses_only_poke_gain_and_nudge_stays_observe_only() -> None:
         mention_kinds=("self",),
         has_reply=True,
         has_image=True,
+        is_self_poke=True,
     )
     nudge = make_input(event_type="friend_nudge")
 

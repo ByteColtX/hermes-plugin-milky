@@ -1,41 +1,4 @@
-# will-willingness Specification
-
-## Purpose
-
-借鉴 YesImBot 设计的状态和数值语义决定每个聊天何时愿意回复，保留完整嵌套配置、
-可注入时钟与随机源，以及 trigger 决策完成后扣除回复参与成本的策略边界。
-
-## Requirements
-
-### Requirement: willingness 状态按 chat 独立维护
-
-每个 chat MUST 独立维护 `score`、`lastMessageAt` 和 `lastDecayAt`，初始分数 SHALL 使用 `initialScore`；一个 chat 的消息、衰减或扣费 MUST NOT 改变另一个 chat 的状态。
-
-#### Scenario: 两个 chat 互不影响
-
-- **WHEN** group A 增加 willingness 分数
-- **THEN** group B 和 dm C 的分数、时间戳 SHALL 保持各自状态
-
-#### Scenario: 时钟回拨
-
-- **WHEN** 当前时间早于某 chat 的 `lastDecayAt`
-- **THEN** 该 chat 的 score SHALL 保持不变
-- **AND** SHALL 不因负静默时间产生额外增益或衰减
-
-### Requirement: willingness 使用完整静默衰减公式
-
-willingness MUST 按 hot/warm 窗口权重计算 weighted silence，并在阈值以上先以阈值半速衰减、跨过阈值后按完整 half-life 衰减；结果 SHALL clamp 为不小于 0，低于 0.01 SHALL 归零。
-
-#### Scenario: 热窗口与温窗口重叠
-
-- **WHEN** 消息后的时间同时落在 hot 和 warm 窗口
-- **THEN** weighted silence SHALL 分别乘以 `hotDecayWeight` 和 `warmDecayWeight` 后相加
-- **AND** 衰减结果 SHALL 使用配置的 half-life 和 probability threshold
-
-#### Scenario: 分数超过概率阈值
-
-- **WHEN** score 高于正的 probability threshold 且静默时间跨过到达阈值所需时间
-- **THEN** 系统 SHALL 先按阈值计算前半段衰减，再按完整 half-life 计算剩余部分
+## MODIFIED Requirements
 
 ### Requirement: 消息增益和概率遵循本项目定义的参考语义
 
@@ -98,10 +61,10 @@ force 判断 MUST 保持 `directForce`、`mentionForce`、`quoteForce` 的既有
 `mentionForce` 仅在消息明确直接提及当前 Bot 时命中，`quoteForce` 仅在至少一个 `reply`
 segment 明确指向当前 Bot 时命中。任一 force 条件满足即 trigger，否则才使用
 `random < probability` 抽样。普通 reply 的存在性不得单独使 `quoteGain` 或 `quoteForce` 命中；
-只有明确引用当前 Bot 的 reply 才能满足对应目标条件。`forceKeywords` MUST 只对通过 Gate 的合法普通
-`message_receive` 生效，并 MUST 使用规范化正文的直接子串匹配。对于通过 Gate 且得到
-`trigger` 的普通消息，系统 SHALL 在该次 trigger 决策完成后立即扣除一次 `replyCost`，
-不等待资源解析、Hermes `handle_message()` 或最终 QQ 发送；该扣分不因后续处理失败回滚。
+只有明确引用当前 Bot 的 reply 才能满足对应目标条件。`forceKeywords` MUST 只对通过 Gate 的合法普通 `message_receive` 生效，
+并 MUST 使用规范化正文的直接子串匹配。对于通过 Gate 且得到 `trigger` 的普通消息，系统
+SHALL 在该次 trigger 决策完成后立即扣除一次 `replyCost`，不等待资源解析、Hermes
+`handle_message()` 或最终 QQ 发送；该扣分不因后续处理失败回滚。
 
 #### Scenario: direct force
 
@@ -157,25 +120,23 @@ segment 明确指向当前 Bot 时命中。任一 force 条件满足即 trigger�
 #### Scenario: 强制关键词为空或未命中
 
 - **WHEN** `forceKeywords` 为空，或规范化正文不包含其中任何关键词
-- **THEN** forceKeywords SHALL 不产生强制 trigger
+- **THEN** `forceKeywords` SHALL 不产生强制 trigger
 - **AND** Will SHALL 继续依据现有 force 条件或概率抽样返回 `wait` 或 `trigger`
 
 #### Scenario: Gate deny 或 wait
 
 - **WHEN** 消息被 Gate 拒绝或 Will 返回 wait
-- **THEN** score SHALL 不执行 reply cost 扣除
+- **THEN** score SHALL 不执行 `replyCost` 扣除
 
 #### Scenario: Hermes trigger 交接失败
 
 - **WHEN** 消息通过 Gate、Will 返回 trigger，且后续资源解析、映射或 Hermes 交接失败
-- **THEN** 系统 SHALL 保留该次已经执行的 reply cost 扣除
+- **THEN** 系统 SHALL 保留该次已经执行的 `replyCost` 扣除
 - **AND** SHALL NOT 因失败恢复该次扣分
 
 ### Requirement: poke 增益不混入普通消息属性
 
-受支持且明确指向当前 Bot 的 poke 观察 SHALL 只使用 `pokeGain`、marginal gain 和 dynamic multiplier
-参与 Will 概率，不得额外增加 text、mention 或 direct gain。非 Bot 或目标未知的 poke SHALL NOT
-增加 `pokeGain`，其余 poke 观察流程保持不变。
+受支持且明确指向当前 Bot 的 poke 观察 SHALL 只使用 `pokeGain`、marginal gain 和 dynamic multiplier 参与 Will 概率，不得额外增加 text、mention 或 direct gain。非 Bot 或目标未知的 poke SHALL NOT 增加 `pokeGain`，其余 poke 观察流程保持不变。
 
 #### Scenario: poke 事件计算
 
@@ -187,4 +148,4 @@ segment 明确指向当前 Bot 时命中。任一 force 条件满足即 trigger�
 
 - **WHEN** poke 事件的接收者不是 Bot，或接收方向缺失、非法或无法确认
 - **THEN** score SHALL NOT 增加 `pokeGain`
-- **AND** 不得从发送者、正文或其他未知字段推断 Bot 接收目标
+- **AND** SHALL 不得从发送者、正文或其他未知字段推断 Bot 接收目标

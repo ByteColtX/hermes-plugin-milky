@@ -304,7 +304,8 @@ class WillingnessWillEngine:
                 now,
                 self.config,
             )
-        next_score = add_gain(decayed, self.config.poke_gain, self.config)
+        poke_gain = self.config.poke_gain if input_value.is_self_poke else 0
+        next_score = add_gain(decayed, poke_gain, self.config)
         self._states[chat_key] = WillingnessState(next_score, now, now)
         return self._sample(calculate_probability(next_score, self.config))
 
@@ -412,7 +413,7 @@ def calculate_score(current: float, input_value: WillInput, config: WillingnessC
 
     current = _clamp_score(current, config)
     attributes = config.mention_gain if _has_mention(input_value) else 0
-    attributes += config.quote_gain if input_value.has_reply else 0
+    attributes += config.quote_gain if input_value.is_self_quote else 0
     attributes += config.image_gain if input_value.has_image else 0
     attributes += config.direct_gain if input_value.is_direct else 0
     multiplier = (
@@ -476,15 +477,15 @@ def should_force(input_value: WillInput, config: WillingnessConfig) -> bool:
 
     if config.direct_force and input_value.is_direct:
         return True
-    if config.mention_force and _has_mention(input_value):
+    if config.mention_force and input_value.mention_self:
         return True
-    if config.quote_force and input_value.has_reply:
+    if config.quote_force and input_value.is_self_quote:
         return True
     return has_keyword(input_value.text, config.force_keywords)
 
 
 def _has_mention(input_value: WillInput) -> bool:
-    return any(kind in {"self", "all", "here"} for kind in input_value.mention_kinds)
+    return input_value.mention_self
 
 
 def _clamp_score(value: float, config: WillingnessConfig) -> float:
