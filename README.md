@@ -48,6 +48,7 @@ change 的测试证据见 [openspec/](openspec/)。
 - [安装](#%E5%AE%89%E8%A3%85)
 - [配置](#%E9%85%8D%E7%BD%AE)
 - [日志](#%E6%97%A5%E5%BF%97)
+- [常用运维](#%E5%B8%B8%E7%94%A8%E8%BF%90%E7%BB%B4)
 - [功能与使用](#%E5%8A%9F%E8%83%BD%E4%B8%8E%E4%BD%BF%E7%94%A8)
 - [API 与开发](#api-%E4%B8%8E%E5%BC%80%E5%8F%91)
 - [贡献](#%E8%B4%A1%E7%8C%AE)
@@ -70,8 +71,37 @@ change 的测试证据见 [openspec/](openspec/)。
 ### 从 Hermes 安装
 
 ```bash
-hermes plugins install ByteColtX/hermes-plugin-milky
+hermes plugins install ByteColtX/hermes-plugin-milky --enable
 ```
+
+`--enable` 会在安装成功后直接启用插件并跳过确认提示。首次安装完成后，可以用下面的命令确认
+插件状态：
+
+```bash
+hermes plugins list
+```
+
+如果 `hermes-plugin-milky` 显示为 disabled，启用插件：
+
+```bash
+hermes plugins enable hermes-plugin-milky
+```
+
+插件启用后，按[配置](#%E9%85%8D%E7%BD%AE)完成 Milky 服务地址、access token 和可选白名单配置，
+然后重启 Gateway：
+
+```bash
+hermes gateway restart
+```
+
+已有安装需要拉取新版本时，执行：
+
+```bash
+hermes plugins update hermes-plugin-milky
+hermes gateway restart
+```
+
+更新插件代码或配置后都需要重启 Gateway，运行中的进程不会自动加载新的插件代码。
 
 ### 从源码设置开发环境
 
@@ -79,6 +109,14 @@ hermes plugins install ByteColtX/hermes-plugin-milky
 git clone https://github.com/ByteColtX/hermes-plugin-milky.git
 cd hermes-plugin-milky
 uv sync
+```
+
+源码安装适合开发和调试。拉取新代码后重新同步环境，并重启 Gateway：
+
+```bash
+git pull
+uv sync
+hermes gateway restart
 ```
 
 > [!IMPORTANT]
@@ -387,6 +425,75 @@ Action、Tool 和出站日志保留结果分类、已知状态码和 `duration_m
 完整 URL、请求/响应 body、消息正文、媒体引用、路径、文件内容、Tool 原始参数或结果。Tool 调用方
 仍会收到既有 raw envelope。日志不可用或 handler 失败不改变连接、重连、Gate/Will、扣费、发送和
 未知结果语义。
+
+## 常用运维
+
+### Gateway 与 Hermes 状态
+
+```bash
+# 查看 Gateway 状态
+hermes gateway status
+
+# 重启 Gateway，使启动配置生效
+hermes gateway restart
+
+# 执行 Hermes 整体状态和深度健康检查
+hermes status --deep
+hermes doctor
+```
+
+### 日志与配置
+
+```bash
+# 查看最近的 Gateway 日志和错误
+hermes logs gateway -n 100
+hermes logs errors --since 30m
+
+# 临时提高日志级别并实时跟踪
+hermes logs gateway --level DEBUG --since 15m -f
+
+# 列出日志文件，以及检查配置文件位置和有效性
+hermes logs list
+hermes config path
+hermes config env-path
+hermes config check
+hermes config get security.redact_secrets
+```
+
+### 插件与 Milky smoke
+
+```bash
+# 查看已安装插件及启用状态
+hermes plugins list
+
+# 在源码 checkout 中执行只读 Milky smoke
+uv run scripts/milky_smoke.py
+
+# 生成用于提交 issue 的脱敏诊断摘要
+hermes dump
+```
+
+`milky_smoke.py` 默认只执行登录、群列表、Bot 成员禁言同步和有界 SSE 连接。发送消息或上传文件
+必须显式使用 `--allow-write`，并且目标还必须位于 `MILKY_ALLOWED_CHATS` 中；没有明确授权时不要
+使用该选项。`hermes dump` 用于生成脱敏诊断摘要，不要把包含敏感配置的命令输出直接粘贴到公开 issue。
+
+### 排查日志中的 chat key 脱敏
+
+Hermes core 默认会对日志中的敏感字段进行脱敏。如果需要临时确认日志中的完整 `chat_key`，可用
+Hermes CLI 关闭全局脱敏：
+
+```bash
+hermes config set security.redact_secrets false
+```
+
+修改后必须重启 Gateway；该配置只在进程启动时读取。排查完成后立即恢复脱敏：
+
+```bash
+hermes config set security.redact_secrets true
+```
+
+该开关影响 Hermes 全局的日志、工具输出和聊天响应，不只影响 Milky。关闭期间可能泄露 API key、
+token 或密码，仅应在受控环境中短时使用。
 
 ## 功能与使用
 
