@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from session.identity import validate_chat_key
+from session.identity import validate_chat_rule
 
 from .base import Gate, GateContext, GateResult
 
@@ -23,15 +23,15 @@ class SelfMessageGate(Gate):
 
 
 class ChatAllowlistGate(Gate):
-    """按完整的 namespaced chat key 执行白名单门禁。"""
+    """按具体 chat key 或命名空间通配符执行白名单门禁。"""
 
     name = "chat_allowlist"
 
     def __init__(self, allowed_chats: Iterable[str] | None = None) -> None:
-        """保存已校验的完整 chat key 白名单。"""
+        """保存已校验的具体 chat key 和命名空间通配符。"""
 
         values = () if allowed_chats is None else allowed_chats
-        self._allowed_chats = frozenset(validate_chat_key(value) for value in values)
+        self._allowed_chats = frozenset(validate_chat_rule(value) for value in values)
 
     @property
     def allowed_chats(self) -> frozenset[str]:
@@ -40,9 +40,15 @@ class ChatAllowlistGate(Gate):
         return self._allowed_chats
 
     def check(self, context: GateContext) -> GateResult:
-        """只按完整 chat key 匹配，不读取数值部分或其他字段。"""
+        """按完整 chat key 或对应命名空间通配符匹配。"""
 
-        if not self._allowed_chats or context.chat_key in self._allowed_chats:
+        prefix = context.chat_key.partition(":")[0]
+        wildcard = f"{prefix}:*"
+        if (
+            not self._allowed_chats
+            or context.chat_key in self._allowed_chats
+            or wildcard in self._allowed_chats
+        ):
             return GateResult(True, "passed")
         return GateResult(False, "chat_not_allowed")
 

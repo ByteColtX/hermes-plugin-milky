@@ -33,6 +33,7 @@ from .identity import (
     make_dedup_key,
     normalize_chat_key,
     validate_chat_key,
+    validate_chat_rule,
 )
 
 __all__ = [
@@ -65,4 +66,5 @@ __all__ = [
     "render_ordered_context",
     "render_system_context_record",
     "validate_chat_key",
+    "validate_chat_rule",
 ]

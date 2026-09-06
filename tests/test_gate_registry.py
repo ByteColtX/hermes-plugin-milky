@@ -13,6 +13,7 @@ from gates import (
     GateRegistry,
     MutedGroupGate,
 )
+from session.identity import ChatKeyError
 
 
 def make_context(**overrides: object) -> GateContext:
@@ -67,6 +68,56 @@ def test_allowlist_matches_complete_namespaced_chat_key() -> None:
     assert group.allow is True
     assert dm.allow is False
     assert dm.reason == "chat_not_allowed"
+
+
+@pytest.mark.parametrize(
+    ("rule", "allowed_context", "denied_context"),
+    [
+        (
+            "dm:*",
+            {"scene": "friend", "chat_key": "dm:301"},
+            {"scene": "group", "chat_key": "group:301"},
+        ),
+        (
+            "group:*",
+            {"scene": "group", "chat_key": "group:301"},
+            {"scene": "friend", "chat_key": "dm:301"},
+        ),
+    ],
+)
+def test_allowlist_matches_only_the_corresponding_namespace(
+    rule: str,
+    allowed_context: dict[str, str],
+    denied_context: dict[str, str],
+) -> None:
+    """命名空间通配符应只放行对应的 friend 或 group。"""
+
+    registry = GateRegistry(allowed_chats={rule})
+
+    assert registry.check(make_context(**allowed_context)).allow is True
+    denied = registry.check(make_context(**denied_context))
+    assert denied.allow is False
+    assert denied.reason == "chat_not_allowed"
+
+
+def test_allowlist_mixes_exact_keys_and_namespace_wildcards() -> None:
+    """具体 key 和通配符应按 OR 语义混合匹配。"""
+
+    registry = GateRegistry(allowed_chats={"group:300", "dm:*"})
+
+    assert registry.check(make_context(chat_key="group:300")).allow is True
+    assert registry.check(make_context(scene="friend", chat_key="dm:301")).allow is True
+    denied = registry.check(make_context(chat_key="group:301"))
+    assert denied.allow is False
+    assert denied.reason == "chat_not_allowed"
+
+
+@pytest.mark.parametrize("rule", ["dm:**", "group:12*", "*:123", "private:*"])
+def test_allowlist_rejects_unsupported_rules(rule: str) -> None:
+    """Gate 构造不能把任意 glob 或未知场景当作授权规则。"""
+
+    with pytest.raises(ChatKeyError):
+        GateRegistry(allowed_chats={rule})
 
 
 def test_empty_allowlist_allows_friend_and_unmuted_group() -> None:

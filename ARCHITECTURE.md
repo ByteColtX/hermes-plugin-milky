@@ -248,7 +248,8 @@ friend 映射为 private message，group 映射为 group message；`source` 固�
 Gate 是进入 Will 和 Hermes 前的确定性硬性门禁，顺序不可变：
 
 1. `SelfMessageGate`：`sender_id == self_id` 时拒绝；
-2. `ChatAllowlistGate`：`MILKY_ALLOWED_CHATS` 为空则放行，否则要求完整 chat key 命中；
+2. `ChatAllowlistGate`：`MILKY_ALLOWED_CHATS` 为空则放行，否则要求完整 chat key 精确命中，
+   或要求对应的 `dm:*` / `group:*` 命名空间通配符命中；
 3. `MutedGroupGate`：member 或 whole 为 `muted` 时拒绝，未成功维护为 `unmuted` 前拒绝。
 
 Gate 不包含概率、关键词、回复发送、网络查询或 Will 分数修改。
@@ -416,7 +417,7 @@ context buffer、willingness 状态，以及 MuteTracker 群状态和 TTL 任务
 |---|---:|---|
 | `MILKY_BASE_URL` | 是 | HTTP(S) 基址；保留 path prefix |
 | `MILKY_ACCESS_TOKEN` | 是 | Bearer token；只在认证层使用 |
-| `MILKY_ALLOWED_CHATS` | 否 | 完整 `group:<id>` / `dm:<id>` 入站白名单；为空放行 |
+| `MILKY_ALLOWED_CHATS` | 否 | 具体 `group:<id>` / `dm:<id>` 或 `group:*` / `dm:*` 入站白名单；通配符只匹配对应命名空间；为空放行 |
 | `MILKY_WILL_POLICY` | 否 | 嵌套 `engine`、`routing`、`willingness`、`priority` 策略 |
 | `MILKY_SESSION_BUFFER_SIZE` | 否 | wait buffer 上限；默认 20，0 表示禁用历史缓冲 |
 | `MILKY_HOME_CHANNEL` | 否 | 系统/cron 默认目标；完整 `group:<id>` 或 `dm:<id>` |
@@ -450,7 +451,7 @@ ToolSpec schema/显式调用/最小响应校验及日志脱敏。
 
 ### 当前状态与未决边界
 
-当前没有未归档 change；`openspec/changes/` 仅保留已完成 change 的归档历史。
+当前存在未归档 change 时，`openspec/changes/` 同时包含进行中的规划与已完成 change 的归档历史。
 已有主规范继续覆盖入站 context/图片合并、出站附件/native media/文件上传、固定 QQ ToolSpec
 和安全日志边界；当前工具清单为 25 项，完成项以主规范和归档 change 的 `tasks.md`、evidence
 ledger 为准。

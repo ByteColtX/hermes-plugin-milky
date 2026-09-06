@@ -56,9 +56,10 @@ requires_env:
 optional_env:
   - name: MILKY_ALLOWED_CHATS
     description: >-
-      可选的入站 chat key 白名单，逗号分隔完整的 `group:<十进制群号>` 或
-      `dm:<十进制 QQ 号>`。留空表示不因该白名单拒绝 friend/group 消息；仅控制
-      入站 Gate，不影响系统消息或 cron 的 home channel。
+      可选的入站 chat key 白名单，逗号分隔具体的 `group:<十进制群号>` 或
+      `dm:<十进制 QQ 号>`，也支持完整的 `group:*` 或 `dm:*` 命名空间通配符。
+      `group:*` 只匹配群聊，`dm:*` 只匹配私聊；留空表示不因该白名单拒绝
+      friend/group 消息；仅控制入站 Gate，不影响系统消息或 cron 的 home channel。
     prompt: 入站 chat 白名单
     password: false
   - name: MILKY_WILL_POLICY

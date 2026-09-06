@@ -11,6 +11,7 @@ from typing import Final
 _MISSING: Final = object()
 _DECIMAL_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
 _CHAT_KEY_PATTERN = re.compile(r"^(group|dm):(0|[1-9][0-9]*)$")
+_CHAT_RULE_PATTERN = re.compile(r"^(group|dm):(\*|[0-9]+)$")
 _SCENE_PREFIXES = {"friend": "dm", "group": "group"}
 
 
@@ -93,6 +94,20 @@ def validate_chat_key(value: object) -> str:
     return normalize_chat_key(value)
 
 
+def validate_chat_rule(value: object) -> str:
+    """校验白名单规则，并规范化具体 chat key 或保留受支持通配符。"""
+
+    if not isinstance(value, str):
+        raise ChatKeyError("chat rule must be text")
+    match = _CHAT_RULE_PATTERN.fullmatch(value)
+    if match is None:
+        raise ChatKeyError("chat rule must be group:<id>, dm:<id>, group:* or dm:*")
+    suffix = match.group(2)
+    if suffix == "*":
+        return f"{match.group(1)}:*"
+    return f"{match.group(1)}:{int(suffix)}"
+
+
 def make_dedup_key(self_id: object, chat_key: object, message_id: object) -> str:
     """生成带 Bot 和 chat 命名空间的稳定去重 key。"""
 
@@ -138,4 +153,5 @@ __all__ = [
     "make_dedup_key",
     "normalize_chat_key",
     "validate_chat_key",
+    "validate_chat_rule",
 ]

@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from session.identity import ChatKeyError, validate_chat_rule
+
 _CHAT_KEY_PATTERN = re.compile(r"^(group|dm):([0-9]+)$")
 _ACTION_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 _INTEGER_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
@@ -178,7 +180,7 @@ def _normalize_base_url(value: object) -> str:
 
 
 def _parse_allowed_chats(value: object) -> frozenset[str]:
-    """解析完整的 group/dm chat key 白名单。"""
+    """解析具体 chat key 和受支持通配符组成的白名单。"""
 
     if value is None or (isinstance(value, str) and not value.strip()):
         return frozenset()
@@ -187,7 +189,16 @@ def _parse_allowed_chats(value: object) -> frozenset[str]:
     items = [item.strip() for item in value.split(",")]
     if any(not item for item in items):
         raise ConfigError("MILKY_ALLOWED_CHATS contains an empty chat key")
-    return frozenset(_normalize_chat_key(item) for item in items)
+    return frozenset(_normalize_chat_rule(item) for item in items)
+
+
+def _normalize_chat_rule(value: str) -> str:
+    """规范化一个具体 chat key 或命名空间通配符。"""
+
+    try:
+        return validate_chat_rule(value)
+    except ChatKeyError:
+        raise ConfigError("MILKY_ALLOWED_CHATS contains an invalid chat rule") from None
 
 
 def _normalize_chat_key(value: str) -> str:

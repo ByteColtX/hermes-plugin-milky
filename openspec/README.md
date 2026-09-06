@@ -12,8 +12,8 @@ pipeline、Will、资源边界、出站媒体/文件、固定 QQ ToolSpec 以及
 section。主规范位于
 `openspec/specs/`，未归档的增量 change 位于 `openspec/changes/`。
 
-当前没有未归档 change；`openspec/changes/` 仅保留已完成 change 的归档历史。新建未归档
-change 后，其中的 proposal、design、delta spec 和 tasks 是该变更的规划与证据记录。
+当前存在未归档 change 时，`openspec/changes/` 同时包含进行中的规划与已完成 change 的
+归档历史。其中进行中的 change 使用 proposal、design、delta spec 和 tasks 记录规划与证据。
 proposal 中对“尚未实现”的描述是创建 change 时的范围说明，不能单独替代当前代码和测试
 证据；未归档 delta 也不会自动写入 `openspec/specs/`。在实现和自动化证据完整后，才可以
 使用 `$openspec-sync-specs` 或 `$openspec-archive-change` 整理主规范和 change 历史。

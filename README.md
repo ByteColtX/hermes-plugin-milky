@@ -33,6 +33,9 @@ Hermes 的 Milky QQ 平台适配器
 > ```
 >
 > 示例中的 ID 仅为占位值。
+>
+> 允许使用 `dm:*` 放行所有私聊，或使用 `group:*` 放行所有群聊；通配符只匹配对应的
+> `dm:`/`group:` 命名空间，也可以和具体 chat key 混用。
 
 详细的模块职责、生命周期和行为契约见 [ARCHITECTURE.md](ARCHITECTURE.md)；主规范和已归档
 change 的测试证据见 [openspec/](openspec/)。
@@ -103,13 +106,14 @@ MILKY_HOME_CHANNEL=group:123456789
 | --- | --- | --- |
 | `MILKY_BASE_URL` | 是 | Milky 服务基址；Action 使用 `<base>/api/{action}`，事件流使用 `<base>/event`。远程部署请使用 HTTPS。 |
 | `MILKY_ACCESS_TOKEN` | 是 | Milky access token，只用于 Bearer 认证。 |
-| `MILKY_ALLOWED_CHATS` | 否 | 入站 chat key 白名单，例如 `group:123456789,dm:987654321`；留空表示允许所有会话进入。 |
+| `MILKY_ALLOWED_CHATS` | 否 | 入站 chat key 白名单，支持具体 `group:<群号>`/`dm:<QQ号>` 以及 `group:*`/`dm:*`；通配符只匹配对应命名空间，可混用；留空表示允许所有会话进入。 |
 | `MILKY_WILL_POLICY` | 否 | 决定消息等待（`wait`）或触发（`trigger`）的嵌套 JSON 配置。 |
 | `MILKY_SESSION_BUFFER_SIZE` | 否 | `wait` 历史消息上限，默认 `20`；设为 `0` 可关闭历史缓冲。 |
 | `MILKY_HOME_CHANNEL` | 否 | 系统消息和 cron 的默认目标；不参与入站白名单。 |
 | `MILKY_MAX_LOCAL_MEDIA_BYTES` | 否 | 出站本地资源原始字节数上限，默认 `33554432`（`32 MiB`），合法范围 `8388608`（`8 MiB`）至 `33554432`（`32 MiB`）。 |
 
-chat key 只接受 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>`；`temp` 会话不会回退到其他目标。
+消息 chat key 只接受 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>`；白名单另支持完整的
+`group:*` 和 `dm:*` 规则，`temp` 会话不会回退到其他目标。
 
 ### Hermes Agent 推荐配置
 

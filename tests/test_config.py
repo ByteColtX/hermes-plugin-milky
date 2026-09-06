@@ -116,23 +116,40 @@ def test_load_config_rejects_invalid_base_url(value: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "value",
+    ("value", "expected"),
     [
-        "group:123,dm:456",
-        " group:123 , dm:456 ",
+        ("group:123,dm:456", frozenset({"group:123", "dm:456"})),
+        (" group:123 , dm:456 ", frozenset({"group:123", "dm:456"})),
+        ("group:123, dm:* , dm:*", frozenset({"group:123", "dm:*"})),
+        ("group:*, dm:*", frozenset({"group:*", "dm:*"})),
     ],
 )
-def test_load_config_normalizes_chat_allowlist(value: str) -> None:
-    """白名单应保留完整且命名空间隔离的 chat key。"""
+def test_load_config_normalizes_chat_allowlist(
+    value: str,
+    expected: frozenset[str],
+) -> None:
+    """白名单应规范化具体 key 和受支持的命名空间通配符。"""
 
     config = load_config(DEFAULT_ENV | {"MILKY_ALLOWED_CHATS": value})
 
-    assert config.allowed_chats == frozenset({"group:123", "dm:456"})
+    assert config.allowed_chats == expected
 
 
 @pytest.mark.parametrize(
     "value",
-    ["group:abc", "private:123", "group:1:2", "dm:-1", "group:", "group: 1"],
+    [
+        "group:abc",
+        "private:123",
+        "group:1:2",
+        "dm:-1",
+        "group:",
+        "group: 1",
+        "dm:**",
+        "group:12*",
+        "*:123",
+        "private:*",
+        "*",
+    ],
 )
 def test_load_config_rejects_invalid_chat_allowlist(value: str) -> None:
     """白名单中的非法目标不得被静默转换。"""
@@ -249,6 +266,8 @@ def test_load_config_preserves_home_channel_as_outbound_target(value: str, expec
         "group:-1",
         "group:1:2",
         "dm:abc",
+        "dm:*",
+        "group:*",
     ],
 )
 def test_load_config_rejects_invalid_home_channel_without_echoing_value(value: str) -> None:
