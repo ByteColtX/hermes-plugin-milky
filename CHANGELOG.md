@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.4.0] - 2026-09-07
+
+### 变更与修复
+
+- willingness 的 `mentionForce`、`quoteForce`、`mentionGain`、`quoteGain` 和 `pokeGain` 现在只
+  消费明确指向当前 Bot 的结构化目标信号；他人/全体/`here` 提及、非 Bot 或未知引用和 poke
+  不再错误触发对应 force 或 gain。
+- 移除插件私有安全日志后端，统一通过 Hermes logger 输出 `hermes_plugins.milky.*` 命名空间下的
+  结构化事件；保留 Action、SSE、入站、资源、出站、Mute 和 Tool 的结果分类与耗时观测。
+- Tool 成功结果继续向调用方原样交付，日志不再复制 Tool 参数、响应 body、下载 URL、路径或自由文本。
+- 完善日志、SSE 重连、生命周期、home channel、Tool 权限和敏感信息边界的架构文档、README 与
+  OpenSpec 契约。
+
+### 验证与边界
+
+- 完整测试：810 passed，2 skipped；跳过项为当前环境缺少 Hermes host 的集成测试。
+- Ruff、格式检查、构建和 OpenSpec strict validate 均通过。
+- 未执行真实 Hermes host、Milky 服务、消息发送或文件上传；真实部署环境仍需单独验证。
+
 ## [1.3.0] - 2026-09-06
 
 ### 新增

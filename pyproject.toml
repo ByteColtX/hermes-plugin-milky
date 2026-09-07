@@ -1,6 +1,6 @@
 [project]
 name = "hermes-plugin-milky"
-version = "1.3.0"
+version = "1.4.0"
 description = "Hermes 的 Milky QQ 平台适配器"
 readme = "README.md"
 authors = [
