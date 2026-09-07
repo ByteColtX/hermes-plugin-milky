@@ -12,10 +12,8 @@ Hermes 的 Milky QQ 平台适配器
 - 提供群组、成员、文件和好友/入群请求等 QQ 能力。
 
 > [!WARNING]
-> **当前有两类权限隔离尚未完成：**
+> **当前仍有一类权限隔离尚未完成：**
 >
-> - **Slash command：** 没有独立的发送者门禁。白名单会话中的任意成员都可能触发 Hermes
->   内置命令或插件命令。
 > - **ToolSpec：** 25 个 QQ 工具没有独立的调用者和目标授权。模型、其他会话或 cron
 >   可能查询无关群/好友，或执行禁言、踢人、撤回、退群、删好友、接受/拒绝请求等操作。
 >
@@ -203,6 +201,32 @@ display:
       busy_steer_ack_enabled: false
       live_status: off             # 关闭支持状态文本时的实时状态
 
+# Slash Command 发送者门禁；命令名不带 /
+platforms:
+  milky:
+    extra:
+      # 私聊管理员 QQ 号
+      allow_admin_from:
+        - "123456789"
+
+      # 私聊普通用户允许的只读命令
+      user_allowed_commands:
+        - "milky"
+        - "status"
+        - "context"
+        - "agents"
+
+      # 群聊管理员 QQ 号
+      group_allow_admin_from:
+        - "123456789"
+
+      # 群聊普通用户允许的只读命令
+      group_user_allowed_commands:
+        - "milky"
+        - "status"
+        - "context"
+        - "agents"
+
 # 关闭后台自动复盘、自动写入记忆/Skill
 auxiliary:
   background_review:
@@ -218,6 +242,15 @@ session_reset:
   idle_minutes: 120
   notify: false
 ```
+
+管理员可以执行所有已注册命令；普通用户默认可以执行 `/help` 和 `/whoami`，以及对应
+`user_allowed_commands` 中列出的命令。私聊和群聊的管理员列表分别配置；某个作用域未配置
+对应的 `*_allow_admin_from` 时，该作用域的 Slash Command 门禁不会启用。
+
+建议只开放明确的只读命令。`config`、`tools`、`model`、`sessions`、`cron`、`goal`、
+`memory`、`suggestions` 和 `skills` 等命令包含配置、会话、工具或任务状态变更，不建议加入普通用户白名单。
+
+修改后需要重启 Gateway；配置只在启动时读取。
 
 `group_sessions_per_user: false` 会让群友共享同一个 Hermes session；这适合群聊，但也意味着
 群内消息会共同影响上下文。`busy_input_mode: queue` 让 Hermes 负责 queue、follow-up、
