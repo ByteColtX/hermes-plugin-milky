@@ -178,10 +178,6 @@ agent:
 model:
   supports_vision: true
 
-# 关闭自动建议创建 Skill
-skills:
-  creation_nudge_interval: 0
-
 # 群聊消息不要打断当前任务，排队处理
 display:
   busy_input_mode: queue
@@ -230,7 +226,16 @@ platforms:
 # 关闭后台自动复盘、自动写入记忆/Skill
 auxiliary:
   background_review:
-    enabled: false
+    enabled: true
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  nudge_interval: 20    # 每累计 20 个对话回合，触发一次自动记忆复盘，写入 MEMORY.md / USER.md
+
+# 关闭自动建议创建 Skill
+skills:
+  creation_nudge_interval: 0
 
 # /goal 的最大自动续行轮数
 goals:
@@ -259,6 +264,17 @@ pending 和 interrupt/steer，插件不复制 Agent 执行队列。
 > [!TIP]
 > 平台显示设置必须放在 `display.platforms.milky` 下，不要放到全局 `display` 下。
 
+### 关闭自动压缩进度提示
+
+如果不希望在 QQ 中看到自动压缩过程中的 `413`/compression 提示，可通过 CLI 关闭：
+
+```bash
+hermes config set compression.progress_notices false
+hermes gateway restart
+```
+
+该配置只隐藏常规压缩进度提示；压缩最终失败时的错误提示仍会保留。
+
 `image_input_mode: native` 与 `model.supports_vision: true` 只应配置在已确认支持
 OpenAI-compatible `image_url` 输入的主模型上。如果接口不支持原生图片输入，请移除这两项并
 使用文本视觉路径。修改后重启 Gateway；日志应出现 `Image routing: native`。
@@ -273,6 +289,12 @@ hermes config set memory.provider holographic
 
 它适合本地部署：数据保存在本地，不依赖付费云服务，并支持围绕实体召回长期上下文。修改后
 重启 Gateway 使配置生效。
+
+查看本地记忆库中的事实记录：
+
+```bash
+sqlite3 -header -column ~/.hermes/memory_store.db "SELECT fact_id, content, category, tags, trust_score, updated_at FROM facts ORDER BY fact_id;"
+```
 
 ### Will policy
 
