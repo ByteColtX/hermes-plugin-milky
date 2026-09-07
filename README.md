@@ -37,8 +37,8 @@ Hermes 的 Milky QQ 平台适配器
 > 允许使用 `dm:*` 放行所有私聊，或使用 `group:*` 放行所有群聊；通配符只匹配对应的
 > `dm:`/`group:` 命名空间，也可以和具体 chat key 混用。
 
-详细的模块职责、生命周期和行为契约见 [ARCHITECTURE.md](ARCHITECTURE.md)；主规范和已归档
-change 的测试证据见 [openspec/](openspec/)。
+详细的模块职责、生命周期和行为契约见 [ARCHITECTURE.md](ARCHITECTURE.md)；主规范、未归档
+change 和已归档 change 的测试证据见 [openspec/](openspec/)。
 
 <!-- omit in toc -->
 

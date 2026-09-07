@@ -5,9 +5,9 @@
 
 本仓库是 Hermes 的 Milky QQ 平台适配器，当前代码已覆盖仓库声明的协议解析、事件流、入站
 pipeline、出站消息/媒体和固定 ToolSpec 边界。开始贡献前，请先阅读
-[ARCHITECTURE.md](ARCHITECTURE.md)；它是协议、模块边界和行为的项目基线。当前没有未归档
-change；后续变更计划放在 [`openspec/changes/`](openspec/changes/)，每个 change 的
-`tasks.md` 是该 change 的实现进度和任务状态来源。不要把 fake host 或 fixture 结果当作真实
+[ARCHITECTURE.md](ARCHITECTURE.md)；它是协议、模块边界和行为的项目基线。变更计划放在
+[`openspec/changes/`](openspec/changes/)，未归档 change 的 `tasks.md` 是该 change 的实现
+进度和任务状态来源。不要把 fake host 或 fixture 结果当作真实
 Hermes/Milky 集成能力证明。
 
 我们欢迎 bug 报告、协议 fixture、测试、代码和文档改进。请根据目录阅读相关章节，
