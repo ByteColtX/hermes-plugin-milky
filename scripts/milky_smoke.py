@@ -164,11 +164,18 @@ async def _run_writes(
     if not arguments.allow_write:
         return {"status": "blocked_write_flag"}
 
-    sender = MilkyOutboundSender(
-        client,
-        mute_tracker=tracker,
-        max_local_media_bytes=config.max_local_media_bytes,
-    )
+    sender_kwargs: dict[str, object] = {
+        "mute_tracker": tracker,
+        "max_local_media_bytes": config.max_local_media_bytes,
+    }
+    if config.long_text_forward_threshold > 0:
+        sender_kwargs.update(
+            {
+                "long_text_forward_threshold": config.long_text_forward_threshold,
+                "identity_loader": client.get_login_info,
+            }
+        )
+    sender = MilkyOutboundSender(client, **sender_kwargs)  # type: ignore[arg-type]
     results: dict[str, object] = {}
     for label, target in (
         ("group_message", arguments.group_chat),

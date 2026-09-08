@@ -135,3 +135,12 @@ optional_env:
       Base64 会产生约 `4/3` 的编码放大，内网部署也不消除 Milky 或下游服务端限制。
     prompt: 出站本地资源大小上限（字节）
     password: false
+  - name: MILKY_LONG_TEXT_FORWARD_THRESHOLD
+    description: >-
+      可选的超长文本合并转发阈值，默认 `0`（关闭）；只接受 `0` 至 `4096`
+      的十进制整数。配置为正数时，仅当一次出站文本的可见规范化长度严格大于
+      该值，且 Hermes 提供有序文本/native media 批次时，才使用一个 Milky
+      `forward.messages`；身份读取失败时使用固定 `user_id=10001`、
+      `sender_name=QQ用户`。文档/文件继续走独立 upload。
+    prompt: 超长文本合并转发阈值（字符）
+    password: false

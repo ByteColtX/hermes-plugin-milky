@@ -17,6 +17,14 @@ class ParsedOutboundText:
     normalized_text: str
     sections: tuple[str, ...] | None
 
+    @property
+    def visible_text(self) -> str:
+        """返回删除有效控制标记和空逻辑段后的可见正文。"""
+
+        if self.sections is None:
+            return self.normalized_text
+        return "".join(self.sections)
+
 
 @dataclass(frozen=True, slots=True)
 class _Line:

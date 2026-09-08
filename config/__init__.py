@@ -21,6 +21,8 @@ _INTEGER_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
 MIN_LOCAL_MEDIA_BYTES = 8 * 1024 * 1024
 MAX_LOCAL_MEDIA_BYTES = 32 * 1024 * 1024
 DEFAULT_MAX_LOCAL_MEDIA_BYTES = MAX_LOCAL_MEDIA_BYTES
+MAX_LONG_TEXT_FORWARD_THRESHOLD = 4096
+DEFAULT_LONG_TEXT_FORWARD_THRESHOLD = 0
 
 _ROUTING_DEFAULTS = {
     "direct": "trigger",
@@ -79,6 +81,7 @@ class MilkyConfig:
     session_buffer_size: int = 20
     home_channel: str | None = field(default=None, repr=False)
     max_local_media_bytes: int = DEFAULT_MAX_LOCAL_MEDIA_BYTES
+    long_text_forward_threshold: int = DEFAULT_LONG_TEXT_FORWARD_THRESHOLD
 
     @property
     def event_url(self) -> str:
@@ -110,6 +113,7 @@ class MilkyConfig:
             "has_access_token": bool(self.access_token),
             "has_home_channel": self.home_channel is not None,
             "max_local_media_bytes": self.max_local_media_bytes,
+            "long_text_forward_threshold": self.long_text_forward_threshold,
         }
 
 
@@ -134,6 +138,12 @@ def load_config(environment: Mapping[str, str] | None = None) -> MilkyConfig:
     max_local_media_bytes = _parse_max_local_media_bytes(
         values.get("MILKY_MAX_LOCAL_MEDIA_BYTES", str(DEFAULT_MAX_LOCAL_MEDIA_BYTES))
     )
+    long_text_forward_threshold = _parse_long_text_forward_threshold(
+        values.get(
+            "MILKY_LONG_TEXT_FORWARD_THRESHOLD",
+            str(DEFAULT_LONG_TEXT_FORWARD_THRESHOLD),
+        )
+    )
     return MilkyConfig(
         base_url=base_url,
         access_token=access_token,
@@ -142,6 +152,7 @@ def load_config(environment: Mapping[str, str] | None = None) -> MilkyConfig:
         session_buffer_size=session_buffer_size,
         home_channel=home_channel,
         max_local_media_bytes=max_local_media_bytes,
+        long_text_forward_threshold=long_text_forward_threshold,
     )
 
 
@@ -396,6 +407,18 @@ def _parse_max_local_media_bytes(value: object) -> int:
     return parsed
 
 
+def _parse_long_text_forward_threshold(value: object) -> int:
+    """解析超长文本合并转发阈值。"""
+
+    name = "MILKY_LONG_TEXT_FORWARD_THRESHOLD"
+    if not isinstance(value, str) or not _INTEGER_PATTERN.fullmatch(value.strip()):
+        raise ConfigError(f"{name} must be a decimal integer")
+    parsed = int(value)
+    if not 0 <= parsed <= MAX_LONG_TEXT_FORWARD_THRESHOLD:
+        raise ConfigError(f"{name} is out of range")
+    return parsed
+
+
 def validate_max_local_media_bytes(value: object) -> int:
     """校验已经解析的本地出站资源上限。"""
 
@@ -407,8 +430,10 @@ def validate_max_local_media_bytes(value: object) -> int:
 
 
 __all__ = [
+    "DEFAULT_LONG_TEXT_FORWARD_THRESHOLD",
     "DEFAULT_MAX_LOCAL_MEDIA_BYTES",
     "MAX_LOCAL_MEDIA_BYTES",
+    "MAX_LONG_TEXT_FORWARD_THRESHOLD",
     "MIN_LOCAL_MEDIA_BYTES",
     "ConfigError",
     "MilkyConfig",

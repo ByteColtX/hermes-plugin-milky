@@ -137,6 +137,7 @@ class MilkyAdapter(BasePlatformAdapter):
                 self._client,
                 mute_tracker=self._mute_tracker,
                 max_local_media_bytes=self._config.max_local_media_bytes,
+                long_text_forward_threshold=self._config.long_text_forward_threshold,
             )
         )
         if slash_command_service is None:
@@ -602,6 +603,9 @@ class MilkyAdapter(BasePlatformAdapter):
         self._self_id = self_id
         nickname = getattr(self._mute_tracker, "nickname", None)
         self._nickname = nickname if isinstance(nickname, str) else None
+        bind_identity = getattr(self._outbound, "bind_identity", None)
+        if callable(bind_identity):
+            bind_identity(self._self_id, self._nickname)
         self._initial_sync_complete = True
         start = getattr(self._mute_tracker, "start", None)
         if callable(start):

@@ -148,6 +148,7 @@ MILKY_HOME_CHANNEL=group:123456789
 | `MILKY_SESSION_BUFFER_SIZE` | 否 | `wait` 历史消息上限，默认 `20`；设为 `0` 可关闭历史缓冲。 |
 | `MILKY_HOME_CHANNEL` | 否 | 系统消息和 cron 的默认目标；不参与入站白名单。 |
 | `MILKY_MAX_LOCAL_MEDIA_BYTES` | 否 | 出站本地资源原始字节数上限，默认 `33554432`（`32 MiB`），合法范围 `8388608`（`8 MiB`）至 `33554432`（`32 MiB`）。 |
+| `MILKY_LONG_TEXT_FORWARD_THRESHOLD` | 否 | 超长文本合并转发阈值，默认 `0`（关闭）；只接受 `0..4096` 的十进制整数，只有可见规范化文本长度严格大于正值时才选择一个 `forward`。 |
 
 消息 chat key 只接受 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>`；白名单另支持完整的
 `group:*` 和 `dm:*` 规则，`temp` 会话不会回退到其他目标。
@@ -256,6 +257,17 @@ session_reset:
 `memory`、`suggestions` 和 `skills` 等命令包含配置、会话、工具或任务状态变更，不建议加入普通用户白名单。
 
 修改后需要重启 Gateway；配置只在启动时读取。
+
+设置 `MILKY_LONG_TEXT_FORWARD_THRESHOLD` 为正数后，超出阈值的有序文本/native
+`image`/`record`/`video` 批次会通过一次 `send_group_message` 或
+`send_private_message` 发送，顶层 `message` 只含一个 `forward`，节点身份优先使用已确认的
+Bot `uin`/昵称。身份读取失败、昵称为空或含控制字符时固定使用 `user_id=10001`、
+`sender_name=QQ用户`；成功出参使用单一 `data.message_seq`。配置为 `0` 或文本长度不超过阈值时，
+继续使用普通分块和 `[SPLIT]` 三条预检。文档/文件不是该自动 forward 的目标，继续走独立
+file upload；Hermes 若只提供分离的 `MEDIA:` 调用，插件不会猜测其与文本属于同一批次。
+
+需要回滚时删除该变量或改回 `0`，然后重启 Gateway。本文不宣称 Milky 服务端对 forward
+总大小或节点数量的未验证上限。
 
 `group_sessions_per_user: false` 会让群友共享同一个 Hermes session；这适合群聊，但也意味着
 群内消息会共同影响上下文。`busy_input_mode: queue` 让 Hermes 负责 queue、follow-up、

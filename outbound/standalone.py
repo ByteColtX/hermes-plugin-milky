@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable, Sequence
 
 from config import ConfigError, MilkyConfig, load_config
 from milky.client import ActionError, MilkyClient
+from milky.models import MilkyEnvelope
 
 from .chunking import chunk_text
 from .formatter import OutboundFormatError, format_message
@@ -100,10 +101,17 @@ async def standalone_send(
     except Exception:  # noqa: BLE001 - 创建连接失败不得暴露底层文本
         return _failure("transport_unknown")
 
-    sender = MilkyOutboundSender(
-        client,
-        max_local_media_bytes=resolved_config.max_local_media_bytes,
-    )
+    sender_kwargs: dict[str, object] = {
+        "max_local_media_bytes": resolved_config.max_local_media_bytes,
+    }
+    if resolved_config.long_text_forward_threshold > 0:
+        sender_kwargs.update(
+            {
+                "long_text_forward_threshold": resolved_config.long_text_forward_threshold,
+                "identity_loader": lambda: _load_standalone_identity(client),
+            }
+        )
+    sender = MilkyOutboundSender(client, **sender_kwargs)  # type: ignore[arg-type]
     try:
         result = await sender.send(chat_id, message)  # type: ignore[arg-type]
         return _result_dict(result)
@@ -199,6 +207,29 @@ async def _close_quietly(resource: object) -> None:
             await result
     except Exception:  # noqa: BLE001 - 清理错误只能留在本地生命周期边界
         return
+
+
+async def _load_standalone_identity(client: object) -> object:
+    """用空对象请求读取 standalone forward 身份。"""
+
+    get_login_info = getattr(client, "get_login_info", None)
+    if callable(get_login_info):
+        return await _maybe_await(get_login_info())
+    call = getattr(client, "call", None)
+    if not callable(call):
+        raise ActionError("unsupported", "get_login_info", "identity Action is unavailable")
+    result = await _maybe_await(call("get_login_info", {}))
+    if isinstance(result, MilkyEnvelope):
+        return result.data
+    return result
+
+
+async def _maybe_await(value: object) -> object:
+    """兼容异步和同步 standalone fake client。"""
+
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 __all__ = ["make_standalone_sender", "standalone_send"]

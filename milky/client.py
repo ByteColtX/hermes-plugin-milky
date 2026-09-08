@@ -481,7 +481,7 @@ class MilkyClient:
     async def get_login_info(self) -> LoginInfo:
         """获取登录身份并校验 ``data.uin``。"""
 
-        envelope = await self.call("get_login_info")
+        envelope = await self.call("get_login_info", {})
         result = self._parse_typed(envelope, "get_login_info")
         assert isinstance(result, LoginInfo)
         return result

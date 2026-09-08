@@ -31,6 +31,29 @@ class FakeClient:
         self.close_calls += 1
 
 
+class LiveForwardClient(FakeClient):
+    """记录真实 sender 使用的消息 Action 和身份查询。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.login_calls = 0
+        self.message_calls: list[tuple[str, dict[str, object]]] = []
+
+    async def get_login_info(self) -> object:
+        """记录不应由 live forward 路径重复触发的身份查询。"""
+
+        self.login_calls += 1
+        return SimpleNamespace(uin=900000002, nickname="重复查询身份")
+
+    async def send_group_message(self, group_id: int, message: list[dict[str, object]]) -> object:
+        """记录群消息并返回合成 message_seq。"""
+
+        self.message_calls.append(
+            ("send_group_message", {"group_id": group_id, "message": message})
+        )
+        return SimpleNamespace(message_id="fixture-live-send")
+
+
 class FakeMuteTracker:
     """模拟登录和禁言状态初始同步。"""
 
@@ -209,6 +232,39 @@ def test_connect_syncs_state_before_starting_event_stream() -> None:
 
         await adapter.disconnect()
         assert tracker.close_calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_live_sender_reuses_initial_identity_without_extra_login_request() -> None:
+    """live adapter 应绑定初始同步身份，普通消息和 forward 都不重复查登录信息。"""
+
+    async def scenario() -> None:
+        client = LiveForwardClient()
+        from outbound.sender import MilkyOutboundSender
+
+        sender = MilkyOutboundSender(
+            client,
+            long_text_forward_threshold=1,
+            identity_loader=client.get_login_info,
+        )
+        adapter, _, stream, _, _, _ = make_adapter(sender=sender, client=client)
+
+        assert await adapter.connect() is True
+        await stream.started.wait()
+
+        ordinary = await adapter.send("group:700000001", "短")
+        forwarded = await adapter.send("group:700000001", "超长文本")
+
+        assert ordinary.success is True
+        assert forwarded.success is True
+        assert client.login_calls == 0
+        forward = client.message_calls[1][1]["message"][0]
+        assert forward["type"] == "forward"
+        node = forward["data"]["messages"][0]
+        assert (node["user_id"], node["sender_name"]) == (900000001, "合成机器人")
+
+        await adapter.disconnect()
 
     asyncio.run(scenario())
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-DEFAULT_TEXT_LENGTH = 4000
+DEFAULT_TEXT_LENGTH = 4096
 
 
 def chunk_text(text: object, max_length: int = DEFAULT_TEXT_LENGTH) -> tuple[str, ...]:

@@ -8,8 +8,10 @@ from pathlib import Path
 import pytest
 
 from config import (
+    DEFAULT_LONG_TEXT_FORWARD_THRESHOLD,
     DEFAULT_MAX_LOCAL_MEDIA_BYTES,
     MAX_LOCAL_MEDIA_BYTES,
+    MAX_LONG_TEXT_FORWARD_THRESHOLD,
     MIN_LOCAL_MEDIA_BYTES,
     ConfigError,
     load_config,
@@ -331,6 +333,28 @@ def test_load_config_parses_local_media_size_limit(value: str, expected: int) ->
 
 
 @pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, DEFAULT_LONG_TEXT_FORWARD_THRESHOLD),
+        ("0", 0),
+        ("1", 1),
+        (str(MAX_LONG_TEXT_FORWARD_THRESHOLD), MAX_LONG_TEXT_FORWARD_THRESHOLD),
+    ],
+)
+def test_load_config_parses_long_text_forward_threshold(value: str | None, expected: int) -> None:
+    """超长文本合并转发阈值应保存为脱敏配置摘要中的整数。"""
+
+    environment = DEFAULT_ENV.copy()
+    if value is not None:
+        environment["MILKY_LONG_TEXT_FORWARD_THRESHOLD"] = value
+
+    config = load_config(environment)
+
+    assert config.long_text_forward_threshold == expected
+    assert config.redacted_summary()["long_text_forward_threshold"] == expected
+
+
+@pytest.mark.parametrize(
     "value",
     [
         "",
@@ -352,6 +376,17 @@ def test_load_config_rejects_invalid_local_media_size_limit(value: str) -> None:
         assert value.strip() not in str(error.value)
 
 
+@pytest.mark.parametrize("value", ["", " ", "-1", "1.5", "not-an-int", "4097"])
+def test_load_config_rejects_invalid_long_text_forward_threshold(value: str) -> None:
+    """超长文本合并转发阈值拒绝空值、非十进制整数和越界值。"""
+
+    with pytest.raises(ConfigError, match="MILKY_LONG_TEXT_FORWARD_THRESHOLD") as error:
+        load_config(DEFAULT_ENV | {"MILKY_LONG_TEXT_FORWARD_THRESHOLD": value})
+
+    if value.strip():
+        assert value.strip() not in str(error.value)
+
+
 def test_manifest_declares_only_the_new_environment_contract_and_tools() -> None:
     """manifest 应只暴露新环境变量和明确的 Milky ToolSpec。"""
 
@@ -366,6 +401,7 @@ def test_manifest_declares_only_the_new_environment_contract_and_tools() -> None
     assert "MILKY_SESSION_BUFFER_SIZE" in manifest
     assert "MILKY_HOME_CHANNEL" in manifest
     assert "MILKY_MAX_LOCAL_MEDIA_BYTES" in manifest
+    assert "MILKY_LONG_TEXT_FORWARD_THRESHOLD" in manifest
     assert "33554432" in manifest
     assert "provides_tools:" in manifest
     for tool_name in (

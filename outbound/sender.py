@@ -6,21 +6,28 @@ import asyncio
 import inspect
 import logging
 import time
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from config import DEFAULT_MAX_LOCAL_MEDIA_BYTES, validate_max_local_media_bytes
+from config import (
+    DEFAULT_LONG_TEXT_FORWARD_THRESHOLD,
+    DEFAULT_MAX_LOCAL_MEDIA_BYTES,
+    MAX_LONG_TEXT_FORWARD_THRESHOLD,
+    validate_max_local_media_bytes,
+)
 from milky.client import ActionError
 from milky.logging import render_event
 from milky.models import MilkyEnvelope
-from session.identity import CanonicalError, normalize_chat_key
+from session.identity import BotIdentity, CanonicalError, normalize_chat_key
 
 from .chunking import DEFAULT_TEXT_LENGTH, chunk_text
 from .file_upload import FileUploader
 from .formatter import (
     OutboundFormatError,
     format_message,
+    forward_segment,
     image_segment,
     record_segment,
     text_segment,
@@ -32,6 +39,7 @@ from .splitting import parse_outbound_text
 _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
 _MAX_SAFE_INTEGER = 9007199254740991
+_FALLBACK_FORWARD_IDENTITY = BotIdentity(10001, "QQ用户")
 _MISSING = object()
 
 logger = logging.getLogger("hermes_plugins.milky.outbound.sender")
@@ -74,20 +82,40 @@ class MilkyOutboundSender:
         mute_tracker: object | None = None,
         max_text_length: int = DEFAULT_TEXT_LENGTH,
         max_local_media_bytes: int = DEFAULT_MAX_LOCAL_MEDIA_BYTES,
+        long_text_forward_threshold: int = DEFAULT_LONG_TEXT_FORWARD_THRESHOLD,
+        identity_loader: Callable[[], object] | None = None,
     ) -> None:
         if isinstance(max_text_length, bool) or not isinstance(max_text_length, int):
             raise TypeError("max_text_length must be an integer")
         if max_text_length <= 0:
             raise ValueError("max_text_length must be positive")
+        if (
+            isinstance(long_text_forward_threshold, bool)
+            or not isinstance(long_text_forward_threshold, int)
+            or not 0 <= long_text_forward_threshold <= MAX_LONG_TEXT_FORWARD_THRESHOLD
+        ):
+            raise ValueError("long_text_forward_threshold is out of range")
         self._client = client
         self._mute_tracker = mute_tracker
         self._max_text_length = max_text_length
         self._max_local_media_bytes = validate_max_local_media_bytes(max_local_media_bytes)
+        self._long_text_forward_threshold = long_text_forward_threshold
+        self._identity_loader = identity_loader
+        self._forward_identity: BotIdentity | None = None
+        self._forward_identity_attempted = False
         self._uploader = FileUploader(
             client,  # type: ignore[arg-type]
             max_local_media_bytes=self._max_local_media_bytes,
         )
         self._refresh_tasks: set[asyncio.Task[None]] = set()
+
+    def bind_identity(self, self_id: object, nickname: object) -> bool:
+        """绑定 live 连接初始同步确认的 Bot 身份。"""
+
+        self._forward_identity_attempted = True
+        identity = _safe_forward_identity(self_id, nickname)
+        self._forward_identity = identity
+        return identity is not None
 
     async def close(self) -> None:
         """取消由发送失败触发、尚未结束的群状态刷新任务。"""
@@ -111,10 +139,32 @@ class MilkyOutboundSender:
 
         del metadata, reply_to
         started = time.perf_counter()
+        forward_selected = False
+        identity_source: str | None = None
         try:
             target = parse_outbound_target(chat_id)
-            parts = self._message_parts(content, None)
-            parts = await self._materialize_message_parts(parts)
+            forward_selected = self._should_use_forward(content)
+            if forward_selected:
+                forward_nodes = self._forward_message_parts(content)
+                forward_nodes = await self._materialize_message_parts(forward_nodes)
+                identity, identity_source = await self._resolve_forward_identity()
+                parts = (
+                    [
+                        forward_segment(
+                            [
+                                {
+                                    "user_id": identity.self_id,
+                                    "sender_name": identity.nickname,
+                                    "segments": node,
+                                }
+                                for node in forward_nodes
+                            ]
+                        )
+                    ],
+                )
+            else:
+                parts = self._message_parts(content, None)
+                parts = await self._materialize_message_parts(parts)
         except (ActionError, OutboundFormatError, ValueError) as error:
             result = _failure(_error_classification(error), _safe_reason(error))
             logger.warning(
@@ -153,44 +203,69 @@ class MilkyOutboundSender:
             if not result.success:
                 if sent_ids:
                     result = _with_partial(result, sent_ids, index)
-                _log_outbound_result(target, result, chunk_count=len(parts), started=started)
+                _log_outbound_result(
+                    target,
+                    result,
+                    chunk_count=len(parts),
+                    started=started,
+                    delivery="forward" if forward_selected else "message",
+                    identity_source=identity_source,
+                )
                 return result
             if result.message_id is None:
                 result = _failure("malformed", "send result has no message id")
-                _log_outbound_result(target, result, chunk_count=len(parts), started=started)
+                _log_outbound_result(
+                    target,
+                    result,
+                    chunk_count=len(parts),
+                    started=started,
+                    delivery="forward" if forward_selected else "message",
+                    identity_source=identity_source,
+                )
                 return result
             sent_ids.append(result.message_id)
         result = _success(sent_ids[-1], continuation_message_ids=tuple(sent_ids[:-1]))
-        _log_outbound_result(target, result, chunk_count=len(parts), started=started)
+        _log_outbound_result(
+            target,
+            result,
+            chunk_count=len(parts),
+            started=started,
+            delivery="forward" if forward_selected else "message",
+            identity_source=identity_source,
+        )
         return result
 
     async def _materialize_message_parts(
         self, parts: tuple[list[dict[str, Any]], ...]
     ) -> tuple[list[dict[str, Any]], ...]:
-        """在消息 Action 前物化 CQ 或结构化输入中的图片。"""
+        """在消息 Action 前物化所有支持的 native media。"""
 
         materialized_parts: list[list[dict[str, Any]]] = []
         for segments in parts:
             materialized_parts.append(
-                [await self._materialize_image_segment(segment) for segment in segments]
+                [await self._materialize_media_segment(segment) for segment in segments]
             )
         return tuple(materialized_parts)
 
-    async def _materialize_image_segment(self, segment: dict[str, Any]) -> dict[str, Any]:
-        """将 image segment 的本地 URI 转换为 Milky 可接受的 URI。"""
+    async def _materialize_media_segment(self, segment: dict[str, Any]) -> dict[str, Any]:
+        """将 native media 的本地 URI 转换为 Milky 可接受的 URI。"""
 
-        if segment.get("type") != "image":
+        kind_by_type = {"image": "image", "record": "audio", "video": "video"}
+        expected_kind = kind_by_type.get(segment.get("type"))
+        if expected_kind is None:
             return segment
         data = segment["data"]
         attachment = await prepare_materialization(
             data["uri"],
-            expected_kind="image",
-            action="send_image",
+            expected_kind=expected_kind,  # type: ignore[arg-type]
+            action={"image": "send_image", "record": "send_voice", "video": "send_video"}[
+                segment["type"]
+            ],
             max_local_media_bytes=self._max_local_media_bytes,
         )
         materialized_data = dict(data)
         materialized_data["uri"] = attachment.uri
-        return {"type": "image", "data": materialized_data}
+        return {"type": segment["type"], "data": materialized_data}
 
     async def send_image(
         self,
@@ -992,6 +1067,91 @@ class MilkyOutboundSender:
         except (ActionError, TypeError, ValueError) as error:
             return _failure(_error_classification(error), _safe_reason(error))
 
+    def _should_use_forward(self, content: object) -> bool:
+        """按可见规范化文本长度决定是否选择合并转发。"""
+
+        if self._long_text_forward_threshold == 0:
+            return False
+        if isinstance(content, str):
+            visible_text = parse_outbound_text(content).visible_text
+        else:
+            segments = format_message(content)
+            visible_text = "".join(
+                segment["data"]["text"] for segment in segments if segment["type"] == "text"
+            )
+        return len(visible_text) > self._long_text_forward_threshold
+
+    def _forward_message_parts(self, content: object) -> tuple[list[dict[str, Any]], ...]:
+        """构造合并转发的有序节点，跳过普通路径的三条限制。"""
+
+        if isinstance(content, str):
+            parsed = parse_outbound_text(content)
+            sections = parsed.sections if parsed.sections is not None else (parsed.normalized_text,)
+            if not sections:
+                raise OutboundFormatError("invalid_input", "message is blank")
+            chunks: list[str] = []
+            for section in sections:
+                chunks.extend(chunk_text(section, self._max_text_length))
+            if not chunks:
+                raise OutboundFormatError("invalid_input", "message is blank")
+            return tuple(format_message(chunk) for chunk in chunks)
+
+        return self._forward_structured_parts(format_message(content))
+
+    def _forward_structured_parts(
+        self, segments: Sequence[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], ...]:
+        """把有序 structured segments 拆为 forward 节点并保留媒体相对顺序。"""
+
+        nodes: list[list[dict[str, Any]]] = []
+        pending: list[dict[str, Any]] = []
+        current: list[dict[str, Any]] | None = None
+        for segment in segments:
+            if segment["type"] == "text":
+                chunks = chunk_text(segment["data"]["text"], self._max_text_length)
+                for chunk in chunks:
+                    node: list[dict[str, Any]] = []
+                    if not nodes and pending:
+                        node.extend(pending)
+                        pending = []
+                    node.append(text_segment(chunk))
+                    nodes.append(node)
+                    current = node
+                continue
+            if current is None:
+                pending.append(segment)
+            else:
+                current.append(segment)
+
+        if pending:
+            if nodes:
+                nodes[0][0:0] = pending
+            else:
+                nodes.append(pending)
+        if not nodes or any(not node for node in nodes):
+            raise OutboundFormatError("invalid_input", "message is blank")
+        return tuple(nodes)
+
+    async def _resolve_forward_identity(self) -> tuple[BotIdentity, str]:
+        """解析 standalone 身份，失败时固定使用安全 fallback。"""
+
+        if self._forward_identity_attempted:
+            identity = self._forward_identity or _FALLBACK_FORWARD_IDENTITY
+            return identity, "confirmed" if self._forward_identity is not None else "fallback"
+        self._forward_identity_attempted = True
+        if self._identity_loader is not None:
+            try:
+                identity = _coerce_forward_identity(await _maybe_await(self._identity_loader()))
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - 身份失败只允许固定 fallback
+                identity = None
+            self._forward_identity = identity
+        return (
+            self._forward_identity or _FALLBACK_FORWARD_IDENTITY,
+            "confirmed" if self._forward_identity is not None else "fallback",
+        )
+
     def _message_parts(self, content: object, reply_to: object) -> tuple[list[dict[str, Any]], ...]:
         """格式化普通内容，并保持 CQ 片段不跨越分块边界。"""
 
@@ -1143,6 +1303,37 @@ async def _maybe_await(value: object) -> Any:
     if inspect.isawaitable(value):
         return await value
     return value
+
+
+def _coerce_forward_identity(value: object) -> BotIdentity | None:
+    """从已确认登录结果读取 uin/nickname，不猜测其他身份字段。"""
+
+    if isinstance(value, BotIdentity):
+        return _safe_forward_identity(value.self_id, value.nickname)
+    if isinstance(value, Mapping):
+        return _safe_forward_identity(value.get("uin"), value.get("nickname"))
+    try:
+        return _safe_forward_identity(value.uin, value.nickname)  # type: ignore[attr-defined]
+    except AttributeError:
+        return None
+
+
+def _safe_forward_identity(self_id: object, nickname: object) -> BotIdentity | None:
+    """校验 forward 节点身份，拒绝动态猜测和控制字符。"""
+
+    if (
+        isinstance(self_id, bool)
+        or not isinstance(self_id, int)
+        or not _MIN_QQ_ID <= self_id <= _MAX_QQ_ID
+        or not isinstance(nickname, str)
+        or not nickname.strip()
+        or any(unicodedata.category(character).startswith("C") for character in nickname)
+    ):
+        return None
+    normalized_nickname = " ".join(nickname.split())
+    if not normalized_nickname:
+        return None
+    return BotIdentity(self_id=self_id, nickname=normalized_nickname)
 
 
 def _invoke_without_missing(method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -1413,35 +1604,29 @@ def _log_outbound_result(
     *,
     chunk_count: int,
     started: float,
+    delivery: str = "message",
+    identity_source: str | None = None,
 ) -> None:
     """记录文本或 segment 发送的最终普通日志结果。"""
 
+    fields: dict[str, object] = {
+        "stage": "send",
+        "route": target.scene,
+        "peer_id": target.peer_id,
+        "classification": "accepted" if result.success else _log_classification(result.error_kind),
+        "chunk_count": chunk_count,
+        "duration_ms": _duration_ms(started),
+    }
+    if delivery != "message":
+        fields["delivery"] = delivery
+    if identity_source is not None:
+        fields["identity_source"] = identity_source
     if result.success:
-        logger.info(
-            render_event(
-                "milky.outbound",
-                stage="send",
-                route=target.scene,
-                peer_id=target.peer_id,
-                classification="accepted",
-                chunk_count=chunk_count,
-                sent_count=chunk_count,
-                duration_ms=_duration_ms(started),
-            )
-        )
+        fields["sent_count"] = chunk_count
+        logger.info(render_event("milky.outbound", fields))
         return
-    logger.warning(
-        render_event(
-            "milky.outbound",
-            stage="send",
-            route=target.scene,
-            peer_id=target.peer_id,
-            classification=_log_classification(result.error_kind),
-            reason=_log_reason(result.error_kind),
-            chunk_count=chunk_count,
-            duration_ms=_duration_ms(started),
-        )
-    )
+    fields["reason"] = _log_reason(result.error_kind)
+    logger.warning(render_event("milky.outbound", fields))
 
 
 def _log_upload_result(

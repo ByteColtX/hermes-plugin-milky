@@ -326,6 +326,21 @@ SSE receive loop 必须处理 `event:`、多行 `data:`、空行边界、断线�
 如果物理文本消息因此超过三条，插件在首个消息 Action 前整体返回本地边界错误，不截断、不部分
 发送。没有有效标记的普通长文本不受三条上限影响，文本段仍先于 `MEDIA:` 附件且不交错。
 
+启动配置 `MILKY_LONG_TEXT_FORWARD_THRESHOLD` 默认 `0`，只接受 `0..4096` 的十进制整数。
+正值且一次出站文本的可见规范化长度严格大于阈值时，插件在普通分块和 `[SPLIT]` 三条预检前
+选择 forward 路径：所有非空逻辑段和既有长度分块按顺序组成一个 `forward.messages`，顶层
+`message` 只含一个 `forward`，群聊/私聊分别调用 `send_group_message`/
+`send_private_message`。每个节点包含 `user_id`、`sender_name` 和 `segments`，身份优先取 live
+连接初始同步或 standalone 的 `get_login_info({})`；读取失败、身份缺失或昵称为空/含控制字符时
+固定使用 `10001`/`QQ用户`，成功结果只取远端 `data.message_seq` 作为单一 `message_id`，不伪造
+`time`、`forward_id` 或 continuation ID。预检、嵌套 segment 校验和本地 media materialization
+全部在第一个消息 Action 前完成；forward Action 失败不回退普通分块、不重试。
+
+自动 forward 只接收同一有序出站批次中的 native `image`、`record`、`video`。文档/文件没有
+进入该 `forward` 的 outgoing segment，继续使用独立 `upload_group_file`/
+`upload_private_file`；Hermes 仅提供分离的 `MEDIA:` 文本和附件调用时，插件不猜测批次归属，
+仍按既有先文本后附件边界投递。实现不宣称 Milky 服务端对 forward 总大小或节点数量的未验证上限。
+
 Agent 的本地附件通过 Hermes 的 `MEDIA:<local_path>` 指令进入上述入口：普通回复把指令放在
 最终回复中，显式调用通用 `send_message` 时把指令放在 `message` 参数中。Hermes 按扩展名调用
 `send_image_file`、`send_voice`、`send_video` 或 `send_document`。该指令是平台发送约定，不是
@@ -464,10 +479,13 @@ context buffer、willingness 状态，以及 MuteTracker 群状态和 TTL 任务
 | `MILKY_SESSION_BUFFER_SIZE` | 否 | wait buffer 上限；默认 20，0 表示禁用历史缓冲 |
 | `MILKY_HOME_CHANNEL` | 否 | 系统/cron 默认目标；完整 `group:<id>` 或 `dm:<id>` |
 | `MILKY_MAX_LOCAL_MEDIA_BYTES` | 否 | 出站本地资源原始字节数上限；默认 `33554432`（`32 MiB`），范围 `8388608`–`33554432`（`8–32 MiB`） |
+| `MILKY_LONG_TEXT_FORWARD_THRESHOLD` | 否 | 超长文本合并转发阈值；默认 `0`，范围 `0..4096`，严格大于阈值才选择 forward |
 
 `MILKY_HOME_CHANNEL` 不参与入站 allowlist；未配置时不猜测 origin、默认频道或私聊目标。已
 连接 adapter 的 live 投递复用普通 sender；standalone cron 每次创建并关闭临时 client，
-目前只支持文本和已格式化文本，不支持媒体、文件或线程参数。
+目前只支持文本和已格式化文本，不支持 `MEDIA:` 媒体、文件或线程参数；启用正的
+`MILKY_LONG_TEXT_FORWARD_THRESHOLD` 时，standalone 只在阈值触发的文本路径额外用一次
+`get_login_info({})` 确认 forward 节点身份。
 
 ## 12. 测试、状态与非目标
 

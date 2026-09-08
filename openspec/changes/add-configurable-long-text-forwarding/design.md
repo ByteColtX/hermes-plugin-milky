@@ -1,6 +1,6 @@
 ## Context
 
-当前 `MilkyOutboundSender` 对普通字符串先解析 `[SPLIT]`，再按默认 `4000` 个 Python Unicode 字符分块，并逐条调用目标场景对应的消息 Action。普通 `[SPLIT]` 路径最多允许三条顶层文本消息；`outbound/formatter.py` 已能校验 outgoing `forward` segment，但 sender 尚未把文本分块和 native media 转换为 forward 节点。Milky v1.3 的 `send_group_message`/`send_private_message` 接收 `OutgoingSegment[]`，其中 `forward.data.messages[]` 的节点必填 `user_id`、`sender_name`、`segments`；`file` 不在 outgoing segment 集合中。配置目前只在启动阶段解析。live adapter 的初始同步已经确认 Bot 的 `self_id` 和昵称，但 sender 尚未设计连接完成后的身份绑定；standalone sender 也没有定义 `get_login_info({})` 的失败和不安全昵称语义。
+当前 `MilkyOutboundSender` 对普通字符串先解析 `[SPLIT]`，再按默认 `4096` 个 Python Unicode 字符分块，并逐条调用目标场景对应的消息 Action。普通 `[SPLIT]` 路径最多允许三条顶层文本消息；`outbound/formatter.py` 已能校验 outgoing `forward` segment，但 sender 尚未把文本分块和 native media 转换为 forward 节点。Milky v1.3 的 `send_group_message`/`send_private_message` 接收 `OutgoingSegment[]`，其中 `forward.data.messages[]` 的节点必填 `user_id`、`sender_name`、`segments`；`file` 不在 outgoing segment 集合中。配置目前只在启动阶段解析。live adapter 的初始同步已经确认 Bot 的 `self_id` 和昵称，但 sender 尚未设计连接完成后的身份绑定；standalone sender 也没有定义 `get_login_info({})` 的失败和不安全昵称语义。
 
 本 change 的行为契约见 proposal.md 及三个 delta spec。重点约束是：一旦阈值判断选择合并转发，所有文本发送单元都必须进入一个 `forward.messages` 数组，不能先发送部分普通消息再发送 forward。
 
@@ -8,7 +8,7 @@
 
 **Goals:**
 
-- 增加默认值为 `0`、范围为 `0..4000` 的 `MILKY_LONG_TEXT_FORWARD_THRESHOLD`，并保持未配置部署的行为不变。
+- 增加默认值为 `0`、范围为 `0..4096` 的 `MILKY_LONG_TEXT_FORWARD_THRESHOLD`，并保持未配置部署的行为不变。
 - 在现有文本解析和长度边界基础上生成有序 forward nodes，使普通长文本、任意数量的 `[SPLIT]` 非空逻辑段和同一出站批次中的 native 图片/语音/视频都能由一次消息 Action 发送，并为节点提供真实身份或固定安全 fallback 身份。
 - 复用已确认的 Milky outgoing forward schema、目标路由、CQ-compatible segment 转换和现有安全失败分类。
 - 在网络访问前完成身份、节点 schema、空内容和本地资源物化前置条件的整体预检，避免产生部分发送。
@@ -49,7 +49,7 @@ top-level     section, then chunk each section
 delivery      into one forward.messages list
 ```
 
-forward 路径必须使用解析器提供的全部非空 sections，不调用普通路径把尾部合并到第三段的逻辑；每个 section 再沿用现有安全切点和 `4000` 字符边界。最终 sender 只看到一个包含单一 `forward` segment 的顶层消息，因此普通路径的三条顶层限制不适用于 forward 节点数量。
+forward 路径必须使用解析器提供的全部非空 sections，不调用普通路径把尾部合并到第三段的逻辑；每个 section 再沿用现有安全切点和 `4096` 字符边界。最终 sender 只看到一个包含单一 `forward` segment 的顶层消息，因此普通路径的三条顶层限制不适用于 forward 节点数量。
 
 普通路径仍保持原流程：超过三条的有效 `[SPLIT]` 物理消息在首个 Action 前整体失败，普通长文本按原顺序逐条发送并保留部分成功结果。
 
