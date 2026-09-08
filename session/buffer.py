@@ -77,7 +77,7 @@ class DetachedTriggerBatch[T]:
             )
         )
         system = tuple((event.ingress_sequence or 0, event) for event in self.system_context)
-        return render_ordered_context((*regular, *system))
+        return render_ordered_context((*regular, *system), chat_key=self.chat_key)
 
     @property
     def current_text(self) -> str:
@@ -294,11 +294,18 @@ def render_message_record(message: object) -> str:
     return f"<{' '.join(fields)}> {_escape_body(body)}"
 
 
-def render_channel_context(messages: Iterable[object]) -> str | None:
+def render_channel_context(messages: Iterable[object], chat_key: str | None = None) -> str | None:
     """按 oldest-first 顺序渲染历史；空历史返回 None。"""
 
-    records = tuple(render_message_record(message) for message in messages)
-    return None if not records else "\n".join(records)
+    values = tuple(messages)
+    if not values:
+        if chat_key is not None:
+            validate_chat_key(chat_key)
+        return None
+    return render_ordered_context(
+        tuple((sequence, message) for sequence, message in enumerate(values)),
+        chat_key=chat_key,
+    )
 
 
 def render_system_context_record(event: ContextOnlyEvent) -> str:
@@ -309,17 +316,64 @@ def render_system_context_record(event: ContextOnlyEvent) -> str:
     return f"<event {_escape_header(event.event_type)}> {_escape_body(event.body)}"
 
 
-def render_ordered_context(records: Iterable[tuple[int, object]]) -> str | None:
+def render_ordered_context(
+    records: Iterable[tuple[int, object]], chat_key: str | None = None
+) -> str | None:
     """按 ingress sequence 合并普通历史和系统上下文。"""
 
-    ordered = sorted(records, key=lambda item: item[0])
+    ordered = tuple(sorted(records, key=lambda item: item[0]))
+    if not ordered:
+        if chat_key is not None:
+            validate_chat_key(chat_key)
+        return None
+    resolved_chat_key = _resolve_context_chat_key(
+        tuple(record for _sequence, record in ordered),
+        chat_key,
+    )
     rendered: list[str] = []
     for _sequence, record in ordered:
         if isinstance(record, ContextOnlyEvent):
             rendered.append(render_system_context_record(record))
         else:
-            rendered.append(render_message_record(record))
+            rendered.append(_render_context_message_record(record, resolved_chat_key))
     return None if not rendered else "\n".join(rendered)
+
+
+def _render_context_message_record(message: object, chat_key: str) -> str:
+    """按已确认 chat namespace 渲染一条普通历史消息。"""
+
+    if chat_key.startswith("dm:"):
+        return _escape_body(_required_field(message, "body"))
+    return render_message_record(message)
+
+
+def _resolve_context_chat_key(records: tuple[object, ...], explicit_chat_key: str | None) -> str:
+    """确认有序上下文中的单一 chat namespace。"""
+
+    resolved_explicit = None
+    if explicit_chat_key is not None:
+        resolved_explicit = validate_chat_key(explicit_chat_key)
+
+    discovered: str | None = None
+    for record in records:
+        record_chat_key = getattr(record, "chat_key", None)
+        if record_chat_key is None:
+            if resolved_explicit is None:
+                raise ValueError("context record must provide chat_key")
+            continue
+        normalized = validate_chat_key(record_chat_key)
+        if resolved_explicit is not None and normalized != resolved_explicit:
+            raise ValueError("context record chat_key disagrees with context chat_key")
+        if discovered is None:
+            discovered = normalized
+        elif discovered != normalized:
+            raise ValueError("context records must use one chat namespace")
+
+    if resolved_explicit is not None:
+        return resolved_explicit
+    if discovered is None:
+        raise ValueError("context requires a confirmed chat namespace")
+    return discovered
 
 
 def _required_field(message: object, field_name: str) -> object:

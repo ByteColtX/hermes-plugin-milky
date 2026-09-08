@@ -66,14 +66,17 @@ trigger MUST 在同 chat admission 边界中原子清空历史 wait buffer，并
 ### Requirement: 历史上下文使用稳定紧凑文本格式
 
 detached batch 转换为 `channel_context` 时 MUST 按 ingress sequence 保留其中的普通历史消息
-和已登记的 context-only 系统事件。普通消息每条 MUST 使用单行格式：
+和已登记的 context-only 系统事件，并根据已确认的 `dm:`/`group:` chat namespace 选择普通历史
+的展示形式。所有历史 renderer 出口 MUST 使用同一选择规则。group 普通消息每条 MUST 继续使用：
 
 ~~~text
 <sender uid <sender_id> msg_id <message_id> reply_to <reply_id>> <body>
 ~~~
 
 `msg_id` 和 `reply_to` 没有值时 MUST 省略，并保持字段顺序；普通消息 header 和 body 之间
-使用一个空格。若被实际渲染的 `reply` 目标的 `sender_id` 等于当前 Bot 的 `self_id`，
+使用一个空格。对于 dm 普通历史消息，每条记录 MUST 只包含经过现有 body 编码规则处理的
+正文，不得生成 sender、uid、`msg_id`、`reply_to` 或其他普通消息 header。dm 记录仍 MUST
+保持单行格式。若被实际渲染的 `reply` 目标的 `sender_id` 等于当前 Bot 的 `self_id`，
 Agent-facing header 中的 `reply_to <reply_id>` MUST 改为 `reply_to your_previous_msg`，
 不得在同一个 `reply_to` 字段中展示该 Bot 消息的数字 ID。当前消息自身的 `msg_id` MUST
 继续展示真实 Milky 消息 ID（若可用）。该展示替换只适用于交给 Agent 的
@@ -86,16 +89,17 @@ Agent-facing header 中的 `reply_to <reply_id>` MUST 改为 `reply_to your_prev
 推断自引用。
 
 系统事件 MUST 使用 `<event <event_type>> <body>` 格式，不得伪装成普通消息或 segment
-placeholder。普通消息的 `body` MUST 来自规范化消息内容和本 change 定义的结构化占位符；
+placeholder；该格式对 group 和 dm 均保持不变。普通消息的 `body` MUST 来自规范化消息内容和
+本 change 定义的结构化占位符；
 系统事件的 body MUST 来自事件字段的可读渲染。普通消息和系统事件之间 MUST 使用一个换行
 拼接；不得添加额外历史标题。
 
 当前 trigger 消息 MUST 只进入本次 `MessageEvent.text`，不得进入 `channel_context`；没有
 历史消息和待注入系统事件时，`channel_context` MUST 为 `None`，而不是空字符串。
 
-header 中的非可信值 MUST 将尖括号、反斜杠、回车和换行编码为不会改变记录边界的字面量；
-body 中的回车和换行也 MUST 编码为字面量 `\\n`。上下文 MUST NOT 包含 timestamp、dedup key、
-认证信息或插件本地媒体路径。
+group header 中的非可信值 MUST 将尖括号、反斜杠、回车和换行编码为不会改变记录边界的字面量；
+group 和 dm body 中的回车和换行也 MUST 编码为字面量 `\\n`。dm body 中的尖括号和反斜杠继续
+按既有 body 规则处理。上下文 MUST NOT 包含 timestamp、dedup key、认证信息或插件本地媒体路径。
 
 #### Scenario: 当前消息引用 Bot 时使用 Agent-facing 自引用文案
 
@@ -106,12 +110,19 @@ body 中的回车和换行也 MUST 编码为字面量 `\\n`。上下文 MUST NOT
 - **AND** Hermes `MessageEvent.reply_to_message_id` SHALL 仍为被引用消息的真实
   `message_seq`
 
-#### Scenario: 历史消息引用 Bot 时使用相同文案
+#### Scenario: group 历史消息引用 Bot 时使用相同文案
 
-- **WHEN** wait 历史消息包含引用 Bot 的 `reply`，并在下一次 trigger 中进入
+- **WHEN** wait 历史 group 消息包含引用 Bot 的 `reply`，并在下一次 trigger 中进入
   `channel_context`
 - **THEN** 对应历史记录 SHALL 使用 `reply_to your_previous_msg`
 - **AND** 当前 trigger SHALL 不因该历史记录被复制进 `channel_context`
+
+#### Scenario: dm 历史消息引用 Bot 时不生成普通消息 header
+
+- **WHEN** wait 历史 dm 消息包含引用 Bot 或其他消息的 `reply`，并在下一次 trigger 中进入 `channel_context`
+- **THEN** 对应历史记录 SHALL 只包含经过 body 编码的消息正文
+- **AND** 对应历史记录 SHALL NOT 包含 `reply_to`、`your_previous_msg`、sender、uid 或 `msg_id` header
+- **AND** Hermes 对当前 trigger 的 reply metadata SHALL 继续使用真实引用字段
 
 #### Scenario: 引用他人时保留真实 reply ID
 
@@ -144,20 +155,21 @@ body 中的回车和换行也 MUST 编码为字面量 `\\n`。上下文 MUST NOT
 
 - **WHEN** detached batch 包含两条 wait 普通消息，当前 trigger 另有一条消息
 - **THEN** `channel_context` SHALL 只包含两条历史的单行记录
-- **AND** 每条记录 SHALL 使用 `<sender uid ... msg_id ... reply_to ...> body` 格式
+- **AND** group 历史记录 SHALL 使用既有 `<sender uid ... msg_id ... reply_to ...> body` 格式，dm 历史记录 SHALL 只包含对应的转义正文
 - **AND** 当前 trigger 消息 SHALL 只出现在 `MessageEvent.text`
 
 #### Scenario: 多条历史消息按 FIFO 拼接
 
 - **WHEN** detached batch 依次包含两条历史普通消息
 - **THEN** `channel_context` SHALL 按最早到最新的 ingress sequence 形成单行记录
-- **AND** 每条记录 SHALL 包含可用的 sender、uid、msg_id 和 reply_to 字段
+- **AND** group 每条记录 SHALL 包含可用的 sender、uid、msg_id 和 reply_to 字段，dm 每条记录 SHALL 只保留对应的转义正文
 - **AND** SHALL 不包含当前 trigger 消息或额外群 ID
 
 #### Scenario: 系统事件与普通历史按顺序合并
 
 - **WHEN** 一个 chat 先后产生普通 wait 消息、`group_nudge` 和 `group_member_increase`
 - **THEN** 下次 trigger 的 `channel_context` SHALL 按 ingress sequence 混合排列这些记录
+- **AND** 普通 group 记录 SHALL 使用消息 header，普通 dm 记录 SHALL 只使用正文
 - **AND** 系统事件 SHALL 使用 `<event group_nudge> ...` 或 `<event group_member_increase> ...` 格式
 - **AND** 系统事件 SHALL NOT 形成独立 Hermes turn
 
@@ -179,6 +191,13 @@ body 中的回车和换行也 MUST 编码为字面量 `\\n`。上下文 MUST NOT
 - **THEN** 空 batch 的 `channel_context` SHALL 为 `None`
 - **AND** 非可信字符 SHALL 按规定编码而不改变记录边界
 - **AND** 原始 payload、认证信息和插件本地媒体路径 SHALL NOT 被直接拼接
+
+#### Scenario: dm body 包含边界字符
+
+- **WHEN** dm 历史 body 含有尖括号、反斜杠或换行
+- **THEN** body 中的换行 SHALL 被编码为字面量 `\\n`
+- **AND** body SHALL 保持既有 body 文本语义，不生成 header 或额外记录
+- **AND** 原始 payload SHALL NOT 被直接拼接
 
 ### Requirement: wait 不写入 Hermes transcript
 

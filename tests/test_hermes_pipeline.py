@@ -15,6 +15,7 @@ from inbound.pipeline import InboundPipeline, PipelineResult
 from milky.resources import (
     HermesAttachmentMaterialization,
     ResolvedMessage,
+    ResolvedReply,
     ResolvedTriggerBatch,
     ResourceResolver,
 )
@@ -332,6 +333,145 @@ def test_wait_history_is_context_only_and_current_message_is_not_repeated() -> N
     assert event.text == "<合成名片 uid 800000002 msg_id 2002> @合成机器人触发消息"
     assert "触发消息" not in event.channel_context
     assert "历史消息" not in event.text
+
+
+def test_dm_wait_history_is_body_only_and_group_history_stays_headered() -> None:
+    """dm pipeline 上下文只交付正文，group 仍保持既有 header。"""
+
+    class DmResolvedBodyResolver(FakeResolver):
+        """为 dm 历史替换正文，确认 pipeline 使用 resolved body。"""
+
+        async def resolve_batch(self, batch: object) -> ResolvedTriggerBatch:
+            """只改写 dm 历史，保留其他场景的既有 fake 行为。"""
+
+            resolved = await super().resolve_batch(batch)
+            if not batch.chat_key.startswith("dm:"):
+                return resolved
+            return ResolvedTriggerBatch(
+                resolved.chat_key,
+                tuple(
+                    ResolvedMessage(body=f"resolved:{message.body}") for message in resolved.history
+                ),
+                ResolvedMessage(
+                    body=resolved.current.body,
+                    replies=(
+                        ResolvedReply(
+                            message_seq=2398,
+                            sender_id=900000001,
+                            sender_name="合成机器人",
+                            timestamp=1700000008,
+                            body="机器人原文",
+                            segments=(),
+                        ),
+                    ),
+                ),
+            )
+
+    async def scenario() -> tuple[FakeMessageEvent, FakeMessageEvent]:
+        hermes = FakeHermes()
+        pipeline = make_pipeline(
+            hermes,
+            DmResolvedBodyResolver(),
+            routing=RoutingConfig(
+                direct="wait", mention="trigger", all_message="wait", keywords=("触发",)
+            ),
+        )
+        friend_history = load_fixture("events/message_receive.friend.json")
+        friend_history["data"]["message_seq"] = 2401
+        friend_history["data"]["segments"] = [
+            {
+                "type": "reply",
+                "data": {
+                    "message_seq": 2399,
+                    "sender_id": 900000001,
+                    "sender_name": "合成机器人",
+                    "time": 1700000009,
+                    "segments": [{"type": "text", "data": {"text": "机器人原文"}}],
+                },
+            },
+            {"type": "text", "data": {"text": "私聊历史\\路径\r\n下一行"}},
+        ]
+        friend_current = load_fixture("events/message_receive.friend.json")
+        friend_current["data"]["message_seq"] = 2402
+        friend_current["data"]["segments"] = [
+            {
+                "type": "reply",
+                "data": {
+                    "message_seq": 2398,
+                    "sender_id": 900000001,
+                    "sender_name": "合成机器人",
+                    "time": 1700000008,
+                    "segments": [{"type": "text", "data": {"text": "机器人原文"}}],
+                },
+            },
+            {"type": "text", "data": {"text": "私聊触发"}},
+        ]
+        group_history = load_fixture("events/message_receive.group.all_segments.json")
+        group_history["data"]["message_seq"] = 2403
+        group_history["data"]["segments"] = [
+            {"type": "text", "data": {"text": "群聊历史"}},
+        ]
+        group_current = load_fixture("events/message_receive.group.all_segments.json")
+        group_current["data"]["message_seq"] = 2404
+        group_current["data"]["segments"] = [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "text", "data": {"text": "群聊触发"}},
+        ]
+
+        assert (await pipeline.handle_event(friend_history)).classification == "wait"
+        assert (await pipeline.handle_event(friend_current)).classification == "trigger"
+        assert (await pipeline.handle_event(group_history)).classification == "wait"
+        assert (await pipeline.handle_event(group_current)).classification == "trigger"
+        await pipeline.wait_idle()
+        return hermes.events[0], hermes.events[1]
+
+    friend_event, group_event = asyncio.run(scenario())
+
+    assert friend_event.channel_context == "resolved:私聊历史\\路径\\n下一行"
+    assert friend_event.text == (
+        "<合成好友 uid 800000001 msg_id 2402 reply_to your_previous_msg> 私聊触发"
+    )
+    assert friend_event.reply_to_message_id == "2398"
+    assert friend_event.reply_to_author_id == "900000001"
+    assert friend_event.reply_to_is_own_message is True
+    assert "reply_to" not in friend_event.channel_context
+    assert "msg_id" not in friend_event.channel_context
+    assert group_event.channel_context == "<合成名片 uid 800000002 msg_id 2403> 群聊历史"
+    assert group_event.text == "<合成名片 uid 800000002 msg_id 2404> @合成机器人群聊触发"
+
+
+def test_dm_history_and_system_context_keep_ingress_order() -> None:
+    """dm 普通历史和系统事件混排时只改变普通记录模板。"""
+
+    async def scenario() -> FakeMessageEvent:
+        hermes = FakeHermes()
+        pipeline = make_pipeline(
+            hermes,
+            FakeResolver(),
+            routing=RoutingConfig(
+                direct="wait", mention="trigger", all_message="wait", keywords=("触发",)
+            ),
+        )
+        history = load_fixture("events/message_receive.friend.json")
+        history["data"]["message_seq"] = 2501
+        history["data"]["segments"] = [{"type": "text", "data": {"text": "私聊历史"}}]
+        trigger = load_fixture("events/message_receive.friend.json")
+        trigger["data"]["message_seq"] = 2502
+        trigger["data"]["segments"] = [{"type": "text", "data": {"text": "私聊触发"}}]
+        assert (await pipeline.handle_event(history)).classification == "wait"
+        recall = load_fixture("events/system.message_recall.friend.json")
+        recall["data"]["message_seq"] = 2503
+        assert (await pipeline.handle_event(recall)).classification == "observe_only"
+        assert (await pipeline.handle_event(trigger)).classification == "trigger"
+        await pipeline.wait_idle()
+        return hermes.events[0]
+
+    event = asyncio.run(scenario())
+
+    assert event.channel_context == (
+        "私聊历史\n<event message_recall> uid 800000001 撤回了消息 msg_seq 2503"
+    )
+    assert event.text == "<合成好友 uid 800000001 msg_id 2502> 私聊触发"
 
 
 def test_pipeline_logs_wait_trigger_gate_and_handoff(caplog) -> None:

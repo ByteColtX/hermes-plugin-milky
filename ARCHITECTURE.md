@@ -226,13 +226,21 @@ inline `reply` 通过单行 header 的 `reply_to` 和 Hermes reply metadata 表�
 
 ### Context、资源和媒体
 
-普通历史消息使用单行格式：
+普通历史消息按已确认的 `dm:`/`group:` chat namespace 选择单行格式。group 普通历史继续使用：
 
 ```text
 <sender uid <sender_id> msg_id <message_id> reply_to <reply_id>> <body>
 ```
 
-缺失字段省略；系统事件使用 `<event <event_type>> <body>`。header/body 中的回车、换行、尖括号及反斜杠必须编码为不改变记录边界的字面量。无历史记录时 `channel_context` 为 `None`，不是空字符串；当前 trigger 不进入其中。
+group 缺失字段省略，保持字段顺序；dm 普通历史每条只输出经过既有 body 编码的正文，不生成
+sender、uid、`msg_id`、`reply_to` 或其他普通消息 header。dm 和 group 的普通历史都按 ingress
+sequence 拼接；dm body 中的回车和换行编码为字面量 `\\n`，不新增 header 专用编码。系统事件
+对两种 chat 均使用 `<event <event_type>> <body>`，不得伪装成普通消息。所有直接 batch、公开
+renderer 和资源解析后的 pipeline 出口都使用同一已确认 namespace 选择规则；缺少或混用
+namespace 时失败，不从正文、sender 名称或 raw payload 推断。header/body 中的非可信值必须
+编码为不改变记录边界的字面量。无历史记录时 `channel_context` 为 `None`，不是空字符串；当前
+trigger 不进入其中。当前 `MessageEvent.text` 继续使用既有普通消息 header 和正文格式，不受
+dm 历史 body-only 规则影响。
 
 wait 阶段只保存 URL、resource/file ID、文件名、MIME/大小提示和原始 segment，不下载文件；trigger 阶段才可调用已确认的 Milky resource Action、`get_message` 或 Hermes helper。group file 使用 `get_group_file_download_url(group_id, file_id)`；private file 只有 `file_hash` 可用时才使用 `get_private_file_download_url(user_id, file_id, file_hash, ...)`。
 
@@ -350,8 +358,9 @@ materialization。CQ sticker 的 `file://localhost`、`file:///...` 和本地路
 前返回分类错误，不发送原始 CQ 或纯文本 fallback。
 
 未确认映射、未知类型或参数错误按 text fallback 原样发送，但 fallback 不代表 native 语义
-执行。`uid` 和 `msg_id` 只能来自当前消息或 `channel_context` 的真实 header；不实现 CQ 入站、
-OneBot Action、OneBot echo 或 WebSocket RPC。
+执行。`uid` 和 `msg_id` 只能来自当前消息或 group `channel_context` 的真实 header；dm 历史
+body-only 记录不提供这些 Agent-facing 字段。不实现 CQ 入站、OneBot Action、OneBot echo 或
+WebSocket RPC。
 
 `[SILENT]` 是 Hermes core 的无需回复控制标记。Milky plugin 不解析、删除或根据它调用 Action；
 仅接收 Hermes core 已决定交付的文本或独立附件。

@@ -97,7 +97,13 @@ trigger 的当前消息 MUST 只作为本次正文；已经 drain 的历史 wait
 ### Requirement: Agent-facing 文本区分历史上下文和当前消息
 
 当存在 detached 历史时，适配器 MUST 将历史紧凑记录只放入 `MessageEvent.channel_context`，
-并使用资源解析及 batch 内容去重完成后的历史正文；当前 trigger 消息 MUST 以同一紧凑 header 格式放入 `MessageEvent.text`，并使用与其媒体代表一致的图片 basename。适配器 MUST NOT 把 `[New message]` 标记或当前消息复制到 `channel_context`；Hermes 已有的 Agent 输入组装语义负责在历史块和当前消息之间加入该标记。没有历史时，适配器 MUST 保持 `channel_context=None`，并只交付当前消息正文。
+并使用资源解析及 batch 内容去重完成后的历史正文。所有历史 renderer 出口 MUST 根据同一已
+确认 chat namespace 选择模板：group 历史继续使用既有单行 header，dm 普通历史只使用经过
+body 编码的正文，不生成普通消息 header。当前 trigger 消息 MUST 继续以现有紧凑 header 格式
+放入 `MessageEvent.text`，并使用与其媒体代表一致的图片 basename。适配器 MUST NOT 把
+`[New message]` 标记或当前消息复制到 `channel_context`；Hermes 已有的 Agent 输入组装语义
+负责在历史块和当前消息之间加入该标记。没有历史时，适配器 MUST 保持 `channel_context=None`，
+并只交付当前消息正文。
 
 #### Scenario: Agent 收到历史和当前消息
 
@@ -113,6 +119,14 @@ trigger 的当前消息 MUST 只作为本次正文；已经 drain 的历史 wait
 - **THEN** `channel_context` SHALL 为 `None`
 - **AND** `text` SHALL 仍使用当前消息的紧凑 header 和规范化正文
 - **AND** 适配器 SHALL 不伪造历史标题或空的上下文 block
+
+#### Scenario: Agent 收到 dm 历史和当前消息
+
+- **WHEN** 一条或多条 dm 历史消息后收到一条当前 dm trigger 消息
+- **THEN** `channel_context` SHALL 只包含按 ingress sequence 排列的历史正文行
+- **AND** `channel_context` SHALL NOT 包含历史消息的 sender、uid、`msg_id` 或 `reply_to` header
+- **AND** `text` SHALL 继续使用当前 dm 消息的现有单行 header 和规范化正文
+- **AND** 当前 trigger SHALL 不出现在 `channel_context`
 
 ### Requirement: trigger 决策后反馈 Will
 

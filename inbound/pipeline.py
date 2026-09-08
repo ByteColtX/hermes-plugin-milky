@@ -605,7 +605,7 @@ def _render_resolved_history(batch: object, resolved_batch: ResolvedTriggerBatch
         )
         for event in getattr(batch, "system_context", ())
     )
-    return render_ordered_context(records)
+    return render_ordered_context(records, chat_key=batch.chat_key)
 
 
 def _context_image_materializations(

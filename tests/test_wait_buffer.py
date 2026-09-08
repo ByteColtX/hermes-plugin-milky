@@ -10,9 +10,12 @@ from session import ChatAdmissionCoordinator
 from session.buffer import (
     DetachedTriggerBatch,
     WaitBuffer,
+    format_channel_context,
     render_channel_context,
     render_message_record,
+    render_ordered_context,
 )
+from session.context import ContextOnlyEvent
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +122,67 @@ def test_drain_atomically_detaches_history_and_separates_current_message() -> No
     assert batch.current_text == "<Carol uid 103 msg_id 3> trigger"
     assert current not in batch.history
     assert buffer.snapshot("group:300") == ()
+
+
+def test_dm_context_is_body_only_while_current_text_keeps_header() -> None:
+    """私聊历史只保留正文，当前消息仍使用既有消息头。"""
+
+    history = message(
+        1,
+        chat_key="dm:300",
+        sender_name="私聊发送者",
+        body="历史 <正文>\\路径\r\n下一行",
+        message_id="9001",
+        quote_message_id="8999",
+    )
+    current = message(
+        2,
+        chat_key="dm:300",
+        sender_name="私聊发送者",
+        body="当前正文",
+        message_id="9002",
+    )
+    buffer = WaitBuffer()
+    buffer.append("dm:300", history, ingress_sequence=1)
+
+    batch = buffer.drain("dm:300", current, ingress_sequence=2)
+
+    assert batch.channel_context == "历史 <正文>\\路径\\n下一行"
+    assert batch.current_text == "<私聊发送者 uid 102 msg_id 9002> 当前正文"
+    assert render_channel_context((history,)) == batch.channel_context
+    assert format_channel_context((history,)) == batch.channel_context
+    assert "uid" not in batch.channel_context
+    assert "msg_id" not in batch.channel_context
+    assert "reply_to" not in batch.channel_context
+
+
+def test_context_renderer_requires_one_confirmed_chat_namespace() -> None:
+    """公开 renderer 不从正文猜测 chat 类型，也不接受混用 namespace。"""
+
+    dm = message(1, chat_key="dm:300")
+    group = message(2, chat_key="group:300")
+
+    assert (
+        render_ordered_context(((1, dm), (2, ContextOnlyEvent("dm:300", "friend_nudge", "事件"))))
+        == "body-1\n<event friend_nudge> 事件"
+    )
+
+    for records in (((1, dm), (2, group)), ((1, message(3, chat_key="invalid")),)):
+        try:
+            render_ordered_context(records)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unconfirmed or mixed chat namespace was accepted")
+
+    assert (
+        render_ordered_context(
+            ((1, ContextOnlyEvent("group:300", "group_nudge", "群事件")),),
+            chat_key="group:300",
+        )
+        == "<event group_nudge> 群事件"
+    )
+    assert render_ordered_context(()) is None
 
 
 def test_context_omits_empty_ids_and_escapes_untrusted_boundaries() -> None:

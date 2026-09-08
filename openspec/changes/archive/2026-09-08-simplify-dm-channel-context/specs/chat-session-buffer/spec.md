@@ -51,7 +51,7 @@ timestamp、dedup key、认证信息或插件本地媒体路径。
 - **AND** 该 header SHALL 保留当前消息真实的 `msg_id`（若可用）
 - **AND** Hermes `MessageEvent.reply_to_message_id` SHALL 仍为被引用消息的真实 `message_seq`
 
-#### Scenario: 历史消息引用 Bot 时使用相同文案
+#### Scenario: group 历史消息引用 Bot 时使用相同文案
 
 - **WHEN** wait 历史 group 消息包含引用 Bot 的 `reply`，并在下一次 trigger 中进入 `channel_context`
 - **THEN** 对应历史记录 SHALL 使用 `reply_to your_previous_msg`
