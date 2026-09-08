@@ -124,8 +124,8 @@ def test_drain_atomically_detaches_history_and_separates_current_message() -> No
     assert buffer.snapshot("group:300") == ()
 
 
-def test_dm_context_is_body_only_while_current_text_keeps_header() -> None:
-    """私聊历史只保留正文，当前消息仍使用既有消息头。"""
+def test_dm_context_and_current_text_are_body_only() -> None:
+    """私聊历史和当前消息都只保留经过编码的正文。"""
 
     history = message(
         1,
@@ -139,7 +139,7 @@ def test_dm_context_is_body_only_while_current_text_keeps_header() -> None:
         2,
         chat_key="dm:300",
         sender_name="私聊发送者",
-        body="当前正文",
+        body="当前 <正文>\\路径\r\n下一行",
         message_id="9002",
     )
     buffer = WaitBuffer()
@@ -148,7 +148,7 @@ def test_dm_context_is_body_only_while_current_text_keeps_header() -> None:
     batch = buffer.drain("dm:300", current, ingress_sequence=2)
 
     assert batch.channel_context == "历史 <正文>\\路径\\n下一行"
-    assert batch.current_text == "<私聊发送者 uid 102 msg_id 9002> 当前正文"
+    assert batch.current_text == "当前 <正文>\\路径\\n下一行"
     assert render_channel_context((history,)) == batch.channel_context
     assert format_channel_context((history,)) == batch.channel_context
     assert "uid" not in batch.channel_context
@@ -166,6 +166,11 @@ def test_context_renderer_requires_one_confirmed_chat_namespace() -> None:
         render_ordered_context(((1, dm), (2, ContextOnlyEvent("dm:300", "friend_nudge", "事件"))))
         == "body-1\n<event friend_nudge> 事件"
     )
+    assert render_message_record(dm) == "body-1"
+    assert render_message_record(dm, chat_key="dm:300") == "body-1"
+    assert render_message_record(group, chat_key="group:300") == (
+        "<sender-2 uid 102 msg_id 2> body-2"
+    )
 
     for records in (((1, dm), (2, group)), ((1, message(3, chat_key="invalid")),)):
         try:
@@ -174,6 +179,17 @@ def test_context_renderer_requires_one_confirmed_chat_namespace() -> None:
             pass
         else:
             raise AssertionError("unconfirmed or mixed chat namespace was accepted")
+
+    for candidate, explicit_key in (
+        (dm, "group:300"),
+        (type("BodyOnly", (), {"body": "body-only"})(), None),
+    ):
+        try:
+            render_message_record(candidate, chat_key=explicit_key)
+        except (TypeError, ValueError):
+            pass
+        else:
+            raise AssertionError("unconfirmed or conflicting message namespace was accepted")
 
     assert (
         render_ordered_context(

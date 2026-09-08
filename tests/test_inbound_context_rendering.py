@@ -562,7 +562,7 @@ def test_complete_reply_uses_reply_header_without_success_placeholder() -> None:
 
     event = asyncio.run(scenario())
 
-    assert event.text == "<合成好友 uid 800000001 msg_id 7991 reply_to 7989> 引用消息"
+    assert event.text == "引用消息"
     assert event.reply_to_message_id == "7989"
     assert "[引用]" not in event.text
 
@@ -598,9 +598,7 @@ def test_current_bot_reply_uses_label_and_preserves_hermes_reply_metadata() -> N
 
     event = asyncio.run(scenario())
 
-    assert (
-        event.text == "<合成好友 uid 800000001 msg_id 7992 reply_to your_previous_msg> 引用机器人"
-    )
+    assert event.text == "引用机器人"
     assert event.message_id == "7992"
     assert event.reply_to_message_id == "7989"
     assert event.reply_to_author_id == "900000001"

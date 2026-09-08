@@ -98,7 +98,8 @@ def map_message_event(
                 message_id,
                 quote_id,
                 getattr(message, "quote_target_is_self", False) is True,
-            )
+            ),
+            chat_key=chat_key,
         ),
         message_type=_message_type(message, current_materializations, type_cls),
         user_id=str(sender_id),

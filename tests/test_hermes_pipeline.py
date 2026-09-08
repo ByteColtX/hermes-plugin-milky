@@ -364,6 +364,7 @@ def test_dm_wait_history_is_body_only_and_group_history_stays_headered() -> None
                             segments=(),
                         ),
                     ),
+                    hermes_attachment_materializations=resolved.current.hermes_attachment_materializations,
                 ),
             )
 
@@ -428,12 +429,14 @@ def test_dm_wait_history_is_body_only_and_group_history_stays_headered() -> None
     friend_event, group_event = asyncio.run(scenario())
 
     assert friend_event.channel_context == "resolved:私聊历史\\路径\\n下一行"
-    assert friend_event.text == (
-        "<合成好友 uid 800000001 msg_id 2402 reply_to your_previous_msg> 私聊触发"
-    )
+    assert friend_event.text == "私聊触发"
     assert friend_event.reply_to_message_id == "2398"
     assert friend_event.reply_to_author_id == "900000001"
     assert friend_event.reply_to_is_own_message is True
+    assert friend_event.media_urls == ["/hermes/cache/current.png"]
+    assert friend_event.media_types == ["image/png"]
+    assert friend_event.metadata["scene"] == "friend"
+    assert friend_event.metadata["chat_key"] == "dm:800000001"
     assert "reply_to" not in friend_event.channel_context
     assert "msg_id" not in friend_event.channel_context
     assert group_event.channel_context == "<合成名片 uid 800000002 msg_id 2403> 群聊历史"
@@ -471,7 +474,7 @@ def test_dm_history_and_system_context_keep_ingress_order() -> None:
     assert event.channel_context == (
         "私聊历史\n<event message_recall> uid 800000001 撤回了消息 msg_seq 2503"
     )
-    assert event.text == "<合成好友 uid 800000001 msg_id 2502> 私聊触发"
+    assert event.text == "私聊触发"
 
 
 def test_pipeline_logs_wait_trigger_gate_and_handoff(caplog) -> None:

@@ -83,7 +83,7 @@ class DetachedTriggerBatch[T]:
     def current_text(self) -> str:
         """将当前消息渲染为本次 turn 的正文，不混入历史上下文。"""
 
-        return render_message_record(self.current)
+        return render_message_record(self.current, chat_key=self.chat_key)
 
     @property
     def history_entries(self) -> tuple[T, ...]:
@@ -269,12 +269,16 @@ class WaitBuffer[T]:
         return explicit
 
 
-def render_message_record(message: object) -> str:
-    """按稳定单行尖括号格式渲染消息，不读取 raw payload。"""
+def render_message_record(message: object, chat_key: str | None = None) -> str:
+    """按已确认 chat namespace 渲染一条 Agent-facing 普通消息。"""
+
+    resolved_chat_key = _resolve_message_chat_key(message, chat_key)
+    body = _required_field(message, "body")
+    if resolved_chat_key.startswith("dm:"):
+        return _escape_body(body)
 
     sender_name = _required_field(message, "sender_name")
     sender_id = _required_field(message, "sender_id")
-    body = _required_field(message, "body")
     message_id = getattr(message, "message_id", None)
     reply_id = getattr(message, "quote_message_id", None)
     if reply_id is None:
@@ -342,9 +346,13 @@ def render_ordered_context(
 def _render_context_message_record(message: object, chat_key: str) -> str:
     """按已确认 chat namespace 渲染一条普通历史消息。"""
 
-    if chat_key.startswith("dm:"):
-        return _escape_body(_required_field(message, "body"))
-    return render_message_record(message)
+    return render_message_record(message, chat_key=chat_key)
+
+
+def _resolve_message_chat_key(message: object, explicit_chat_key: str | None) -> str:
+    """确认普通消息 renderer 使用单一、已确认的 chat namespace。"""
+
+    return _resolve_context_chat_key((message,), explicit_chat_key)
 
 
 def _resolve_context_chat_key(records: tuple[object, ...], explicit_chat_key: str | None) -> str:

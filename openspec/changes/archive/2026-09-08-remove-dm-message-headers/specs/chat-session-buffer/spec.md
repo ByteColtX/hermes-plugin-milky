@@ -41,7 +41,7 @@ group header 中的非可信值 MUST 将尖括号、反斜杠、回车和换行�
 group 和 dm body 中的回车和换行也 MUST 编码为字面量 `\\n`。dm body 中的尖括号和反斜杠继续
 按既有 body 规则处理。上下文 MUST NOT 包含 timestamp、dedup key、认证信息或插件本地媒体路径。
 
-#### Scenario: 当前消息引用 Bot 时使用 Agent-facing 自引用文案
+#### Scenario: 当前 group 消息引用 Bot 时使用 Agent-facing 自引用文案
 
 - **WHEN** 当前 trigger group 消息包含 `reply`，且被实际渲染的 `reply.data.sender_id` 等于当前 Bot 的 `self_id`
 - **THEN** `MessageEvent.text` 的 group header SHALL 使用 `reply_to your_previous_msg`

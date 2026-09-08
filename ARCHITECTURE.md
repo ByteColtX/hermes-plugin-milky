@@ -239,8 +239,11 @@ sequence 拼接；dm body 中的回车和换行编码为字面量 `\\n`，不新
 renderer 和资源解析后的 pipeline 出口都使用同一已确认 namespace 选择规则；缺少或混用
 namespace 时失败，不从正文、sender 名称或 raw payload 推断。header/body 中的非可信值必须
 编码为不改变记录边界的字面量。无历史记录时 `channel_context` 为 `None`，不是空字符串；当前
-trigger 不进入其中。当前 `MessageEvent.text` 继续使用既有普通消息 header 和正文格式，不受
-dm 历史 body-only 规则影响。
+trigger 不进入其中。普通 group 的当前 `MessageEvent.text` 和历史记录继续使用既有单行
+header；普通 dm 的当前 `MessageEvent.text` 和历史记录均只输出经过 body 编码的正文，不生成
+sender、uid、`msg_id`、`reply_to` 或其他普通消息 header。dm 中的 system event 仍保留
+`<event <event_type>> <body>`。这些 Agent-facing 文本选择不改变 canonical、真实 Milky
+message ID、Hermes reply metadata、资源解析结果或媒体字段。
 
 wait 阶段只保存 URL、resource/file ID、文件名、MIME/大小提示和原始 segment，不下载文件；trigger 阶段才可调用已确认的 Milky resource Action、`get_message` 或 Hermes helper。group file 使用 `get_group_file_download_url(group_id, file_id)`；private file 只有 `file_hash` 可用时才使用 `get_private_file_download_url(user_id, file_id, file_hash, ...)`。
 
@@ -373,8 +376,8 @@ materialization。CQ sticker 的 `file://localhost`、`file:///...` 和本地路
 前返回分类错误，不发送原始 CQ 或纯文本 fallback。
 
 未确认映射、未知类型或参数错误按 text fallback 原样发送，但 fallback 不代表 native 语义
-执行。`uid` 和 `msg_id` 只能来自当前消息或 group `channel_context` 的真实 header；dm 历史
-body-only 记录不提供这些 Agent-facing 字段。不实现 CQ 入站、OneBot Action、OneBot echo 或
+执行。`uid` 和 `msg_id` 只能来自当前 group 消息或 group `channel_context` 的真实 header；dm
+普通消息的 body-only 记录不提供这些 Agent-facing 字段。不实现 CQ 入站、OneBot Action、OneBot echo 或
 WebSocket RPC。
 
 `[SILENT]` 是 Hermes core 的无需回复控制标记。Milky plugin 不解析、删除或根据它调用 Action；

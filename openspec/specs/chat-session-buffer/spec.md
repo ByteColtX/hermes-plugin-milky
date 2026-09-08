@@ -94,14 +94,16 @@ placeholder；该格式对 group 和 dm 均保持不变。普通消息的 `body`
 系统事件的 body MUST 来自事件字段的可读渲染。普通消息和系统事件之间 MUST 使用一个换行
 拼接；不得添加额外历史标题。
 
-当前 trigger 消息 MUST 只进入本次 `MessageEvent.text`，不得进入 `channel_context`；没有
-历史消息和待注入系统事件时，`channel_context` MUST 为 `None`，而不是空字符串。
+当前 trigger 消息 MUST 只进入本次 `MessageEvent.text`，不得进入 `channel_context`；当前 group
+消息继续使用既有单行 header 和正文格式，当前 dm 消息 MUST 只使用经过 body 编码的正文，不得
+生成普通消息 header。没有历史消息和待注入系统事件时，`channel_context` MUST 为 `None`，而
+不是空字符串。
 
 group header 中的非可信值 MUST 将尖括号、反斜杠、回车和换行编码为不会改变记录边界的字面量；
 group 和 dm body 中的回车和换行也 MUST 编码为字面量 `\\n`。dm body 中的尖括号和反斜杠继续
 按既有 body 规则处理。上下文 MUST NOT 包含 timestamp、dedup key、认证信息或插件本地媒体路径。
 
-#### Scenario: 当前消息引用 Bot 时使用 Agent-facing 自引用文案
+#### Scenario: 当前 group 消息引用 Bot 时使用 Agent-facing 自引用文案
 
 - **WHEN** 当前 trigger 消息包含 `reply`，且被实际渲染的 `reply.data.sender_id` 等于当前
   Bot 的 `self_id`
@@ -109,6 +111,15 @@ group 和 dm body 中的回车和换行也 MUST 编码为字面量 `\\n`。dm bo
 - **AND** 该 header SHALL 保留当前消息真实的 `msg_id`（若可用）
 - **AND** Hermes `MessageEvent.reply_to_message_id` SHALL 仍为被引用消息的真实
   `message_seq`
+
+#### Scenario: 当前 dm 消息引用 Bot 时不生成普通消息 header
+
+- **WHEN** 当前 trigger dm 消息包含引用 Bot 或其他消息的 `reply`
+- **THEN** `MessageEvent.text` SHALL 只包含经过 body 编码的当前消息正文
+- **AND** `MessageEvent.text` SHALL NOT 包含 `reply_to`、`your_previous_msg`、sender、uid 或
+  `msg_id` header
+- **AND** Hermes `MessageEvent.reply_to_message_id`、reply author 和 own-message metadata
+  SHALL 继续使用真实引用字段
 
 #### Scenario: group 历史消息引用 Bot 时使用相同文案
 
@@ -177,7 +188,8 @@ group 和 dm body 中的回车和换行也 MUST 编码为字面量 `\\n`。dm bo
 
 - **WHEN** trigger 发生时没有历史 wait 消息和待注入系统事件
 - **THEN** `channel_context` SHALL 为 `None`
-- **AND** 当前消息 SHALL 仍使用单行 header 和正文格式交给 Hermes
+- **AND** 当前 group 消息 SHALL 仍使用单行 header 和正文格式交给 Hermes
+- **AND** 当前 dm 消息 SHALL 只使用经过 body 编码的正文交给 Hermes
 
 #### Scenario: 上下文包含边界字符
 

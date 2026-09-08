@@ -38,7 +38,7 @@ body 编码的正文，不生成 sender、uid、`msg_id`、`reply_to` 或其他�
 - **AND** `text` SHALL 仍使用当前 group 消息的紧凑 header 和规范化正文
 - **AND** 适配器 SHALL 不伪造历史标题或空的上下文 block
 
-#### Scenario: 没有历史时交付当前 dm 消息
+#### Scenario: Agent 收到无历史的当前 dm 消息
 
 - **WHEN** dm trigger 发生时 detached batch 为空
 - **THEN** `channel_context` SHALL 为 `None`
