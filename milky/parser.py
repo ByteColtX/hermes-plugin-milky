@@ -149,7 +149,7 @@ def parse_incoming_message(event: Event | object) -> ParseResult[IncomingMessage
         self_id=parsed_event.self_id,
         require_scene_entities=False,
     )
-    reason = "no_stable_message_id" if value.message_seq is None else None
+    reason = "no_stable_message_seq" if value.message_seq is None else None
     return ParseResult("accepted", value, reason)
 
 

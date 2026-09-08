@@ -62,7 +62,7 @@ class FakeOutboundClient:
             await asyncio.sleep(self.delay)
         if self.error is not None:
             raise self.error
-        return MilkySendResult(str(self.message_sequences.pop(0)))
+        return MilkySendResult(message_seq=str(self.message_sequences.pop(0)))
 
     async def send_private_message(
         self, user_id: int, message: list[dict[str, Any]]
@@ -72,7 +72,7 @@ class FakeOutboundClient:
             await asyncio.sleep(self.delay)
         if self.error is not None:
             raise self.error
-        return MilkySendResult(str(self.message_sequences.pop(0)))
+        return MilkySendResult(message_seq=str(self.message_sequences.pop(0)))
 
     async def upload_group_file(
         self,

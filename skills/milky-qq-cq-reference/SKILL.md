@@ -13,7 +13,7 @@ metadata:
 
 ## 通用约束
 
-- `at` 的 `uid`、`reply` 的 `msg_id`：使用当前消息或 `channel_context` 消息头中的真实值。
+- `at` 的 `uid`、`reply` 的 `message_seq`：使用当前消息或 `channel_context` 消息头中的真实值。
 - `face_id`：使用当前消息、`channel_context` 或用户明确提供的真实值。
 - ID 必须是无前导零的十进制值；不要从昵称、群名、正文、时间戳、随机数或其他字段推断。
 - 缺少可靠 ID 时不要自动 @、引用或发送 face；`at` 不支持 `qq=all`。
@@ -26,9 +26,9 @@ metadata:
 
 ## reply
 
-`[CQ:reply,id=<msg_id>]`
+`[CQ:reply,id=<message_seq>]`
 
-`id` 填消息头中的原始 `msg_id`；缺失或不可转为数字时不要调用，也不会自动引用当前消息。
+`id` 填消息头中的原始 `message_seq`；缺失或不可转为数字时不要调用，也不会自动引用当前消息。
 
 ## face
 

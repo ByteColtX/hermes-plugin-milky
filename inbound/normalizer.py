@@ -49,7 +49,7 @@ class NormalizedMessage:
     chat_key: str
     peer_id: int
     sender_id: int
-    message_id: str | None
+    message_seq: str | None
     timestamp: int
     segments: tuple[Segment, ...]
     body: str
@@ -107,12 +107,6 @@ class NormalizedMessage:
         """返回是否存在指向 Bot 的 reply。"""
 
         return self.is_self_quote
-
-    @property
-    def reply_message_id(self) -> str | None:
-        """返回供字符串 ID 边界使用的引用序号。"""
-
-        return None if self.reply_message_seq is None else str(self.reply_message_seq)
 
     @property
     def media_refs(self) -> tuple[MediaResourceReference, ...]:
@@ -184,7 +178,7 @@ def normalize_message(
     if parser_reason is not None:
         _append_once(diagnostics, parser_reason)
     if message.message_seq is None:
-        _append_once(diagnostics, "no_stable_message_id")
+        _append_once(diagnostics, "no_stable_message_seq")
 
     metadata = _safe_mapping(
         {
@@ -203,7 +197,7 @@ def normalize_message(
         chat_key=chat_key,
         peer_id=message.peer_id,
         sender_id=message.sender_id,
-        message_id=None if message.message_seq is None else str(message.message_seq),
+        message_seq=None if message.message_seq is None else str(message.message_seq),
         timestamp=message.time,
         segments=message.segments,
         body=extracted.body,

@@ -257,7 +257,7 @@ GET_FORWARDED_MESSAGES_SCHEMA = {
             "forward_id": {
                 "type": "string",
                 "minLength": 1,
-                "description": "合并转发消息 ID",
+                "description": "合并转发标识",
             }
         },
         "required": ["forward_id"],

@@ -50,13 +50,13 @@ class MultimediaClient:
         self.calls.append(("send_group_message", {"group_id": group_id, "message": message}))
         if self.error is not None:
             raise self.error
-        return SendResult(str(self.message_sequences.pop(0)))
+        return SendResult(message_seq=str(self.message_sequences.pop(0)))
 
     async def send_private_message(self, user_id: int, message: list[dict[str, Any]]) -> SendResult:
         self.calls.append(("send_private_message", {"user_id": user_id, "message": message}))
         if self.error is not None:
             raise self.error
-        return SendResult(str(self.message_sequences.pop(0)))
+        return SendResult(message_seq=str(self.message_sequences.pop(0)))
 
     async def upload_group_file(
         self,

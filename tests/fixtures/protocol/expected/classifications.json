@@ -33,7 +33,7 @@
     {"path": "actions/upload_file.malformed.json", "classification": "malformed", "assertions": ["missing.data.file_id"]},
     {"path": "actions/outbound_media_requests.json", "classification": "accepted", "assertions": ["POST", "group/dm", "native_media", "independent_upload"]},
     {"path": "events/message_receive.friend.json", "classification": "accepted", "assertions": ["friend", "text"]},
-    {"path": "events/message_receive.friend.no_message_seq.json", "classification": "accepted", "assertions": ["friend", "no_stable_message_id"]},
+    {"path": "events/message_receive.friend.no_message_seq.json", "classification": "accepted", "assertions": ["friend", "no_stable_message_seq"]},
     {"path": "events/message_receive.group.all_segments.json", "classification": "accepted", "assertions": ["group", "14_known_segments", "inline_reply", "forward_id"]},
     {"path": "events/message_receive.temp.json", "classification": "ignored_temp", "assertions": ["no_chat_key", "no_canonical"]},
     {"path": "events/message_receive.group.unknown_extension.json", "classification": "accepted", "tags": ["unknown_extension", "raw_only"]},

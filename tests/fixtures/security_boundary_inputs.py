@@ -28,7 +28,7 @@ SYNTHETIC_PROTOCOL_VALUES = {
     "self_id": 900000001,
     "peer_id": 700000001,
     "sender_id": 800000002,
-    "message_id": "1005",
+    "message_seq": "1005",
     "body": "合成占位正文",
 }
 

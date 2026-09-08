@@ -10,7 +10,7 @@ from threading import Lock
 
 
 class TtlDeduplicator:
-    """在进程内以固定 TTL 和容量抑制重复 message ID。"""
+    """在进程内以固定 TTL 和容量抑制重复消息序号。"""
 
     def __init__(
         self,

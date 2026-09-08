@@ -172,9 +172,9 @@ SHALL 保留既有 record 占位策略。适配器 MUST NOT 把 `[New message]` 
 
 - **WHEN** 一条或多条 dm 历史消息后收到一条当前 dm trigger 消息
 - **THEN** `channel_context` SHALL 只包含按 ingress sequence 排列的历史正文行
-- **AND** `channel_context` SHALL NOT 包含历史消息的 sender、uid、`msg_id` 或 `reply_to` header
+- **AND** `channel_context` SHALL NOT 包含历史消息的 sender、uid、`msg_seq` 或 `reply_to` header
 - **AND** `text` SHALL 只包含当前 dm 消息的经过 body 编码的正文
-- **AND** `text` SHALL NOT 包含当前消息的 sender、uid、`msg_id` 或 `reply_to` header
+- **AND** `text` SHALL NOT 包含当前消息的 sender、uid、`msg_seq` 或 `reply_to` header
 - **AND** 当前 trigger SHALL 不出现在 `channel_context`
 
 #### Scenario: Agent 收到无历史的当前 dm 消息

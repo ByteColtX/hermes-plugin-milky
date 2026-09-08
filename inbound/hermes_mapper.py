@@ -39,8 +39,8 @@ class _MappedRecord:
     sender_name: str
     sender_id: int
     body: str
-    message_id: str | None
-    quote_message_id: str | None
+    message_seq: str | None
+    quote_message_seq: str | None
     quote_target_is_self: bool = False
 
 
@@ -69,8 +69,8 @@ def map_message_event(
     body = resolved.body
     if not isinstance(body, str):
         raise TypeError("resolved body is invalid")
-    message_id = _optional_text(message, "message_id")
-    quote_id = _optional_text(message, "quote_message_id")
+    message_seq = _optional_text(message, "message_seq")
+    quote_seq = _optional_text(message, "quote_message_seq")
     current_materializations = tuple(resolved.hermes_attachment_materializations)
     materializations = _merge_media_materializations(
         context_image_materializations,
@@ -102,8 +102,8 @@ def map_message_event(
                 sender_name,
                 sender_id,
                 current_body,
-                message_id,
-                quote_id,
+                message_seq,
+                quote_seq,
                 getattr(message, "quote_target_is_self", False) is True,
             ),
             chat_key=chat_key,
@@ -113,10 +113,10 @@ def map_message_event(
         user_name=sender_name,
         source=source,
         raw_message=getattr(message, "raw", None),
-        message_id=message_id,
+        message_id=message_seq,
         media_urls=media_urls,
         media_types=media_types,
-        reply_to_message_id=quote_id,
+        reply_to_message_id=quote_seq,
         reply_to_text=reply_text,
         reply_to_author_id=reply_author_id,
         reply_to_author_name=reply_author_name,
@@ -152,7 +152,7 @@ def map_command_event(
         user_name=sender_name,
         source=source,
         raw_message=getattr(message, "raw", None),
-        message_id=_optional_text(message, "message_id"),
+        message_id=_optional_text(message, "message_seq"),
         media_urls=[],
         media_types=[],
         reply_to_message_id=None,
@@ -194,7 +194,7 @@ def build_source(
         chat_type="group" if scene == "group" else "dm",
         user_id=str(_required_int(message, "sender_id")),
         user_name=_required_text(message, "sender_name"),
-        message_id=_optional_text(message, "message_id"),
+        message_id=_optional_text(message, "message_seq"),
     )
 
 

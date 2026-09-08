@@ -530,9 +530,9 @@ def test_fake_hermes_keeps_builtin_plugin_unknown_and_agent_paths_separate() -> 
             ("/unknown", 1204),
             ("普通正文", 1205),
         ]
-        for text, message_id in messages:
+        for text, message_seq in messages:
             event = copy.deepcopy(base)
-            event["data"]["message_seq"] = message_id
+            event["data"]["message_seq"] = message_seq
             event["data"]["segments"][0]["data"]["text"] = text
             assert (await pipeline.handle_event(event)).classification in {"command", "trigger"}
         await pipeline.wait_idle()

@@ -21,12 +21,9 @@ PLATFORM_GUIDANCE = """
 
 - Reply with only `[SILENT]` to suppress the reply entirely — no message is sent outbound.
 - Place a case-sensitive, unescaped `[SPLIT]` alone on its own line or inline between text sections to split the reply into up to 3 sequential messages when long-text forwarding is disabled; the marker is stripped on outbound delivery.
-- Use `[[SPLIT]]` when the visible text must contain the literal `[SPLIT]`; empty sections are dropped. Complete CQ-compatible codes are parsed as units, while malformed CQ-like text follows ordinary text rules.
-- Text sections are delivered before `MEDIA:` attachments, and text sections and attachments cannot currently be interleaved.
-- Set `MILKY_LONG_TEXT_FORWARD_THRESHOLD` at startup to collect over-threshold text units from one ordered segment batch into one expandable `forward`; the default `0` keeps ordinary delivery.
 
 - Mention a user with `[CQ:at,qq=<uid>]`.
-- Quote a message with `[CQ:reply,id=<msg_id>]`.
+- Quote a message with `[CQ:reply,id=<msg_seq>]`.
 - Only use real IDs drawn from the current message or channel context.
 
 - CQ code details: view skill `hermes-plugin-milky:milky-qq-cq-reference`.

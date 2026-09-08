@@ -20,13 +20,13 @@ class FakeMilky:
 
     async def send_group_message(self, group_id: int, message: list[dict[str, Any]]) -> SendResult:
         self.calls.append(("group", group_id, message))
-        result = SendResult(str(self.next_message_seq))
+        result = SendResult(message_seq=str(self.next_message_seq))
         self.next_message_seq += 1
         return result
 
     async def send_private_message(self, user_id: int, message: list[dict[str, Any]]) -> SendResult:
         self.calls.append(("dm", user_id, message))
-        result = SendResult(str(self.next_message_seq))
+        result = SendResult(message_seq=str(self.next_message_seq))
         self.next_message_seq += 1
         return result
 
@@ -36,7 +36,7 @@ class MessageHeader:
     """提供模型可见的当前消息和历史消息头。"""
 
     uid: str | None
-    msg_id: str | None
+    msg_seq: str | None
 
 
 class FakeHermes:
@@ -64,7 +64,7 @@ class FakeHermes:
         return await self._adapter._send_with_retry(
             "group:700000001",
             content,
-            reply_to=current.msg_id,
+            reply_to=current.msg_seq,
         )
 
     async def flush_pending(self) -> None:
@@ -92,8 +92,8 @@ def test_model_controls_cover_plain_at_reply_combo_history_and_busy_handoff() ->
     async def scenario() -> tuple[FakeMilky, FakeHermes]:
         client = FakeMilky()
         hermes = FakeHermes(make_adapter(client))
-        current = MessageHeader(uid="10001", msg_id="9001")
-        history = (MessageHeader(uid="10002", msg_id="8999"),)
+        current = MessageHeader(uid="10001", msg_seq="9001")
+        history = (MessageHeader(uid="10002", msg_seq="8999"),)
 
         await hermes.deliver("普通回复", current, history)
         await hermes.deliver("[CQ:at,qq=10001]", current, history)
@@ -131,6 +131,6 @@ def test_model_controls_cover_plain_at_reply_combo_history_and_busy_handoff() ->
         for segment in message
     )
     assert hermes.contexts[0] == (
-        MessageHeader(uid="10001", msg_id="9001"),
-        (MessageHeader(uid="10002", msg_id="8999"),),
+        MessageHeader(uid="10001", msg_seq="9001"),
+        (MessageHeader(uid="10002", msg_seq="8999"),),
     )

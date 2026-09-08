@@ -109,7 +109,7 @@ MUST 按 Milky segment schema 生成；图片、语音和视频等媒体 MUST �
 - **THEN** 请求 SHALL 使用 `POST /api/send_group_message`，body SHALL 包含 `group_id` 和只含一个 `forward` segment 的 `message`
 - **AND** `forward.data.messages[]` 的每个节点 SHALL 包含 `user_id`、`sender_name` 和 `segments`
 - **AND** 成功响应 SHALL 使用 `status=ok`、`retcode=0` 和 `data.message_seq`
-- **AND** 插件 SHALL 将 `data.message_seq` 暴露为单一 `message_id`，不产生 `forward_id` 或 continuation ID
+- **AND** 插件侧 SHALL 将 `data.message_seq` 保留为单一 `message_seq`，在 Hermes boundary 映射为单一宿主 `message_id`，不产生 `forward_id` 或 continuation ID
 
 #### Scenario: 文档或文件不进入自动 forward
 
@@ -291,14 +291,16 @@ send message segments，也不得假设远端能访问本地路径。对当前 H
 
 ### Requirement: 发送结果和不支持能力诚实可观测
 
-成功发送 MUST 使用远端 `data.message_seq` 生成稳定字符串消息 ID；成功文件上传 MUST 使用
+成功发送 MUST 使用远端 `data.message_seq` 生成稳定字符串插件侧 `message_seq`；交给 Hermes
+时 SHALL 将同一序号映射为宿主 `SendResult.message_id`。成功文件上传 MUST 使用
 远端确认的 `file_id` 作为附件结果标识；协议拒绝、传输未知、malformed 和 unsupported
 MUST 分别报告，未实现的编辑、撤回、reaction 等能力 MUST 返回 `unsupported`。
 
 #### Scenario: 发送成功
 
 - **WHEN** send Action 成功并返回 `message_seq`
-- **THEN** Hermes SendResult SHALL 标记成功并使用该序号作为 message ID
+- **THEN** 插件侧结果 SHALL 标记成功并使用该序号作为 `message_seq`
+- **AND** Hermes SendResult SHALL 在边界处使用同一序号作为 `message_id`
 - **AND** SHALL 不使用本地时间或随机值
 
 #### Scenario: 群发送失败

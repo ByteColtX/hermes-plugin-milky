@@ -319,7 +319,7 @@ def _local_file_as_base64_uri(file_path: object, action: str, limit: int) -> str
 class SendResult:
     """保存 Milky send Action 返回的稳定远端消息序号。"""
 
-    message_id: str
+    message_seq: str
 
 
 class MilkyClient:
@@ -1659,7 +1659,7 @@ def _parse_send_result(envelope: MilkyEnvelope, action: str) -> SendResult:
     sequence = envelope.data.get("message_seq")
     if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 0:
         raise ActionError("malformed", action, "response is missing message_seq")
-    return SendResult(str(sequence))
+    return SendResult(message_seq=str(sequence))
 
 
 def _parse_upload_result(envelope: MilkyEnvelope, action: str) -> MilkyEnvelope:

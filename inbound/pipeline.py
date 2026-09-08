@@ -211,7 +211,7 @@ class InboundPipeline:
                     stage="dedup",
                     scene=canonical.scene,
                     chat_key=canonical.chat_key,
-                    message_id=canonical.message_id,
+                    message_seq=canonical.message_seq,
                     reason="duplicate_message",
                 )
             )
@@ -227,7 +227,7 @@ class InboundPipeline:
                         stage="gate",
                         scene=canonical.scene,
                         chat_key=canonical.chat_key,
-                        message_id=canonical.message_id,
+                        message_seq=canonical.message_seq,
                         gate=_gate_name(gate_result.reason),
                         reason=_safe_gate_reason(gate_result.reason),
                     )
@@ -245,7 +245,7 @@ class InboundPipeline:
                         stage="canonical",
                         scene=canonical.scene,
                         chat_key=canonical.chat_key,
-                        message_id=canonical.message_id,
+                        message_seq=canonical.message_seq,
                         classification="malformed",
                         reason="invalid_message",
                     )
@@ -261,7 +261,7 @@ class InboundPipeline:
                         stage="will",
                         scene=canonical.scene,
                         chat_key=canonical.chat_key,
-                        message_id=canonical.message_id,
+                        message_seq=canonical.message_seq,
                         decision=decision,
                         ingress_sequence=ticket.ingress_sequence,
                     )
@@ -276,7 +276,7 @@ class InboundPipeline:
                     "stage": "buffer",
                     "scene": canonical.scene,
                     "chat_key": canonical.chat_key,
-                    "message_id": canonical.message_id,
+                    "message_seq": canonical.message_seq,
                     "decision": "wait",
                     "ingress_sequence": ticket.ingress_sequence,
                 }
@@ -292,7 +292,7 @@ class InboundPipeline:
                         stage="will",
                         scene=canonical.scene,
                         chat_key=canonical.chat_key,
-                        message_id=canonical.message_id,
+                        message_seq=canonical.message_seq,
                         classification="malformed",
                         reason="invalid_decision",
                     )
@@ -316,7 +316,7 @@ class InboundPipeline:
                     stage="will",
                     scene=canonical.scene,
                     chat_key=canonical.chat_key,
-                    message_id=canonical.message_id,
+                    message_seq=canonical.message_seq,
                     decision="trigger",
                     ingress_sequence=ticket.ingress_sequence,
                     history_count=len(batch.history),
@@ -449,7 +449,7 @@ class InboundPipeline:
                     "milky.inbound",
                     stage="handoff",
                     chat_key=message.chat_key,
-                    message_id=message.message_id,
+                    message_seq=message.message_seq,
                     scene=message.scene,
                     classification=_error_classification(error),
                     reason="handoff_failed",
@@ -678,8 +678,8 @@ def _render_resolved_history(batch: object, resolved_batch: ResolvedTriggerBatch
                     sender_name=canonical.sender_name,
                     sender_id=canonical.sender_id,
                     body=resolved.body,
-                    message_id=canonical.message_id,
-                    quote_message_id=canonical.quote_message_id,
+                    message_seq=canonical.message_seq,
+                    quote_message_seq=canonical.quote_message_seq,
                     quote_target_is_self=canonical.quote_target_is_self,
                 ),
             )
@@ -714,8 +714,8 @@ class _HistoryRecord:
     sender_name: str
     sender_id: int
     body: str
-    message_id: str | None
-    quote_message_id: str | None
+    message_seq: str | None
+    quote_message_seq: str | None
     quote_target_is_self: bool = False
 
 
@@ -763,9 +763,9 @@ def _batch_log_fields(chat_key: object, sequence: object, current: object) -> di
         fields["chat_key"] = chat_key
     if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence >= 0:
         fields["ingress_sequence"] = sequence
-    message_id = getattr(current, "message_id", None)
-    if message_id is not None:
-        fields["message_id"] = message_id
+    message_seq = getattr(current, "message_seq", None)
+    if message_seq is not None:
+        fields["message_seq"] = message_seq
     scene = getattr(current, "scene", None)
     if scene in {"friend", "group"}:
         fields["scene"] = scene

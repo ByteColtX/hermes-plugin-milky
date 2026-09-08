@@ -78,13 +78,13 @@ class FakeMilkyClient:
         """记录群消息。"""
 
         self.calls.append(("group", group_id, message))
-        return type("SendResult", (), {"message_id": str(self.sequences.pop(0))})()
+        return type("SendResult", (), {"message_seq": str(self.sequences.pop(0))})()
 
     async def send_private_message(self, user_id: int, message: list[dict[str, Any]]) -> object:
         """记录私聊消息。"""
 
         self.calls.append(("dm", user_id, message))
-        return type("SendResult", (), {"message_id": str(self.sequences.pop(0))})()
+        return type("SendResult", (), {"message_seq": str(self.sequences.pop(0))})()
 
     async def close(self) -> None:
         """记录临时资源释放。"""

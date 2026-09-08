@@ -193,12 +193,12 @@ def test_context_fixture_covers_optional_message_headers_and_boundaries() -> Non
         )
     )
 
-    assert fixture["records"][0]["message_id"] == "9001"
-    assert fixture["records"][0]["reply_message_id"] == "8999"
+    assert fixture["records"][0]["message_seq"] == "9001"
+    assert fixture["records"][0]["quote_message_seq"] == "8999"
     assert "\r" in fixture["records"][0]["body"]
     assert "<正文>" in fixture["records"][0]["body"]
-    assert "message_id" not in fixture["records"][1]
-    assert "reply_message_id" not in fixture["records"][1]
+    assert "message_seq" not in fixture["records"][1]
+    assert "quote_message_seq" not in fixture["records"][1]
 
 
 def test_event_fixtures_cover_system_observation_and_unknown_extension() -> None:

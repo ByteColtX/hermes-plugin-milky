@@ -279,22 +279,20 @@ def render_message_record(message: object, chat_key: str | None = None) -> str:
 
     sender_name = _required_field(message, "sender_name")
     sender_id = _required_field(message, "sender_id")
-    message_id = getattr(message, "message_id", None)
-    reply_id = getattr(message, "quote_message_id", None)
-    if reply_id is None:
-        reply_id = getattr(message, "reply_message_id", None)
-    if reply_id is not None and getattr(message, "quote_target_is_self", False) is True:
-        reply_id = "your_previous_msg"
+    message_seq = getattr(message, "message_seq", None)
+    reply_seq = getattr(message, "quote_message_seq", None)
+    if reply_seq is not None and getattr(message, "quote_target_is_self", False) is True:
+        reply_seq = "your_previous_msg"
 
     fields = [
         _escape_header(sender_name),
         "uid",
         _escape_header(sender_id),
     ]
-    if message_id is not None:
-        fields.extend(("msg_id", _escape_header(message_id)))
-    if reply_id is not None:
-        fields.extend(("reply_to", _escape_header(reply_id)))
+    if message_seq is not None:
+        fields.extend(("msg_seq", _escape_header(message_seq)))
+    if reply_seq is not None:
+        fields.extend(("reply_to", _escape_header(reply_seq)))
     return f"<{' '.join(fields)}> {_escape_body(body)}"
 
 

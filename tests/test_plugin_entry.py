@@ -392,7 +392,7 @@ def test_qq_skills_are_split_and_do_not_add_tools() -> None:
     )
 
     assert "[CQ:at,qq=<uid>]" in cq_skill
-    assert "[CQ:reply,id=<msg_id>]" in cq_skill
+    assert "[CQ:reply,id=<message_seq>]" in cq_skill
     assert "[CQ:face,id=<face_id>]" in cq_skill
     assert "[CQ:face,id=<超级表情face_id>,large=1]" in cq_skill
     assert "只有“超级表情”条目的 `face_id` 才能使用 `large=1`" in cq_skill

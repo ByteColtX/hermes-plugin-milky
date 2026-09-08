@@ -39,9 +39,9 @@ class SplitClient:
         self.calls.append((action, {"peer_id": peer_id, "message": message}))
         if self.fail_at is not None and len(self.calls) - 1 == self.fail_at:
             raise self.failure or ActionError("rejected", action, "fixture failure")
-        message_id = str(self.next_message_seq)
+        message_seq = str(self.next_message_seq)
         self.next_message_seq += 1
-        return SendResult(message_id)
+        return SendResult(message_seq=message_seq)
 
     async def upload_group_file(
         self,

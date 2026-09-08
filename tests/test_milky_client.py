@@ -328,7 +328,7 @@ async def _call_message_resource_uploads(client: MilkyClient) -> tuple[str, str]
     await client.get_resource_temp_url("fixture-resource-id")
     await client.upload_group_file(700000001, "https://media.example/file", "fixture.txt")
     await client.upload_private_file(800000001, "https://media.example/file", "fixture.txt")
-    return group_result.message_id, private_result.message_id
+    return group_result.message_seq, private_result.message_seq
 
 
 def test_explicit_outbound_action_methods_use_openapi_fields() -> None:

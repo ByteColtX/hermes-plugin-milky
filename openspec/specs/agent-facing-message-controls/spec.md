@@ -9,7 +9,7 @@
 
 ### Requirement: 平台提示必须公开基础消息控制语法
 
-Milky 平台提示 MUST 告知 Agent 默认不自动 @ 或引用，并 MUST 说明以下两种 CQ-compatible 出站语法及其含义：[CQ:at,qq=<uid>] 用于 @ 指定用户，[CQ:reply,id=<msg_id>] 用于引用指定消息。平台提示 MUST 同时说明 Agent MAY 在需要模拟自然聊天节奏时，在回复中使用单独成行或普通正文行中的大小写严格匹配、未转义 [SPLIT]；有效标记会被删除并按顺序生成最多三条文本消息，空段不发送。提示 MUST 说明 [[SPLIT]] 用于发送字面量 [SPLIT]，并说明完整 CQ-compatible code 按整体解析，而 malformed CQ-like 文本按普通正文规则处理。提示 MUST 说明独立 MEDIA: 附件由 Hermes 在文本投递后交给 Milky，当前不支持与文本段交错。平台提示 MAY 提醒 Agent 按需加载完整的 QQ reference skill；对于 skill 中列出的其他 CQ 码，提示不得把其 fallback 文本行为误称为已确认的 Milky 原生能力。
+Milky 平台提示 MUST 告知 Agent 默认不自动 @ 或引用，并 MUST 说明以下两种 CQ-compatible 出站语法及其含义：[CQ:at,qq=<uid>] 用于 @ 指定用户，[CQ:reply,id=<message_seq>] 用于引用指定消息。平台提示 MUST 同时说明 Agent MAY 在需要模拟自然聊天节奏时，在回复中使用单独成行或普通正文行中的大小写严格匹配、未转义 [SPLIT]；有效标记会被删除并按顺序生成最多三条文本消息，空段不发送。提示 MUST 说明 [[SPLIT]] 用于发送字面量 [SPLIT]，并说明完整 CQ-compatible code 按整体解析，而 malformed CQ-like 文本按普通正文规则处理。提示 MUST 说明独立 MEDIA: 附件由 Hermes 在文本投递后交给 Milky，当前不支持与文本段交错。平台提示 MAY 提醒 Agent 按需加载完整的 QQ reference skill；对于 skill 中列出的其他 CQ 码，提示不得把其 fallback 文本行为误称为已确认的 Milky 原生能力。
 
 #### Scenario: Agent 获得基础语法和分段说明
 
@@ -40,25 +40,25 @@ Milky 平台提示 MUST 告知 Agent 默认不自动 @ 或引用，并 MUST 说�
 #### Scenario: 平台提示保持稳定
 
 - **WHEN** 不同消息触发同一 Milky 会话的平台提示
-- **THEN** 平台提示 SHALL 不嵌入当前消息的 uid、msg_id、正文、token 或媒体 URL
+- **THEN** 平台提示 SHALL 不嵌入当前消息的 uid、msg_seq、正文、token 或媒体 URL
 - **AND** 每轮变化的消息身份 SHALL 只通过当前消息或 channel_context 提供
 
 ### Requirement: 控制码 ID 必须来自 Agent 可见的真实消息头
 
 Agent 生成 `[CQ:at,qq=...]` 时 MUST 原样使用当前消息或 `channel_context` 消息头中出现的
 `uid`；生成 `[CQ:reply,id=...]` 时 MUST 原样使用当前消息或 `channel_context` 消息头中出现的
-`msg_id`。Agent-facing 语法 MUST NOT 允许使用昵称、正文、记忆或猜测替代缺失 ID；字段缺失
+`msg_seq`。Agent-facing 语法 MUST NOT 允许使用昵称、正文、记忆或猜测替代缺失序号；字段缺失
 时不得生成对应控制码。
 
 #### Scenario: 使用当前消息 ID
 
-- **WHEN** 当前 Agent 输入包含 `[Alice uid 101 msg_id 9001]` 的消息头
+- **WHEN** 当前 Agent 输入包含 `[Alice uid 101 msg_seq 9001]` 的消息头
 - **THEN** Agent SHALL 可以生成 `[CQ:at,qq=101]` 或 `[CQ:reply,id=9001]`
 - **AND** 适配器 SHALL 将这些值视为当前消息提供的 ID，而不是从 `Alice` 推断
 
 #### Scenario: 缺少可引用消息序号
 
-- **WHEN** 当前消息和 channel_context 都没有可用的 `msg_id`
+- **WHEN** 当前消息和 channel_context 都没有可用的 `msg_seq`
 - **THEN** Agent SHALL 不生成 `[CQ:reply,id=...]`
 - **AND** 出站边界 SHALL 不因缺失值伪造引用目标
 
@@ -83,7 +83,7 @@ Agent MUST 可以仅输出普通文本、仅输出 at 控制码、仅输出 repl
 #### Scenario: 只引用消息
 
 - **WHEN** Agent 输出 `[CQ:reply,id=9001]关于这件事……`
-- **THEN** 出站消息 SHALL 包含针对 msg_id `9001` 的 reply 和文本 `关于这件事……`
+- **THEN** 出站消息 SHALL 包含针对 message_seq `9001` 的 reply 和文本 `关于这件事……`
 - **AND** 出站消息 SHALL 不自动增加 mention
 
 #### Scenario: 同时 @ 和引用

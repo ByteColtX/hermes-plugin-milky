@@ -51,7 +51,7 @@ class LiveForwardClient(FakeClient):
         self.message_calls.append(
             ("send_group_message", {"group_id": group_id, "message": message})
         )
-        return SimpleNamespace(message_id="fixture-live-send")
+        return SimpleNamespace(message_seq="fixture-live-send")
 
 
 class FakeMuteTracker:

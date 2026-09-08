@@ -210,7 +210,7 @@ def test_reply_with_only_target_id_remains_unexpanded() -> None:
 
 
 def test_missing_message_seq_is_explicitly_non_stable() -> None:
-    """缺失 message_seq 时 parser 保留单帧，不伪造消息 ID。"""
+    """缺失 message_seq 时 parser 保留单帧，不伪造消息序号。"""
 
     payload = load_fixture("events/message_receive.friend.json")
     del payload["data"]["message_seq"]
@@ -218,7 +218,8 @@ def test_missing_message_seq_is_explicitly_non_stable() -> None:
     result = parse_incoming_message(parse_event(payload))
 
     assert result.value.message_seq is None
-    assert result.reason == "no_stable_message_id"
+    assert result.reason == "no_stable_message_seq"
+    assert result.reason != "no_stable_message_id"
 
 
 def test_parser_does_not_perform_network_io(monkeypatch: pytest.MonkeyPatch) -> None:

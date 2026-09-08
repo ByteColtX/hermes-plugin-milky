@@ -213,7 +213,7 @@ class MilkyOutboundSender:
                 )
                 return result
             if result.message_id is None:
-                result = _failure("malformed", "send result has no message id")
+                result = _failure("malformed", "send result has no message sequence")
                 _log_outbound_result(
                     target,
                     result,
@@ -1196,11 +1196,11 @@ class MilkyOutboundSender:
                 raw_result = await _maybe_await(
                     self._client.send_private_message(target.peer_id, segments)
                 )
-            message_id = getattr(raw_result, "message_id", None)
-            if not isinstance(message_id, str) or not message_id:
+            message_seq = getattr(raw_result, "message_seq", None)
+            if not isinstance(message_seq, str) or not message_seq:
                 self._schedule_group_failure(target)
-                return _failure("malformed", "send result has no message id")
-            return _success(message_id)
+                return _failure("malformed", "send result has no message sequence")
+            return _success(message_seq)
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:

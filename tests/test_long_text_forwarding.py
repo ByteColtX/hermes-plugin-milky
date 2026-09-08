@@ -44,9 +44,9 @@ class ForwardClient:
         self.calls.append(("send_group_message", {"group_id": group_id, "message": message}))
         if self.send_error is not None:
             raise self.send_error
-        message_id = str(self.next_message_seq)
+        message_seq = str(self.next_message_seq)
         self.next_message_seq += 1
-        return SendResult(message_id)
+        return SendResult(message_seq=message_seq)
 
     async def send_private_message(self, user_id: int, message: list[dict[str, Any]]) -> SendResult:
         """记录私聊消息并返回合成 message_seq。"""
@@ -54,9 +54,9 @@ class ForwardClient:
         self.calls.append(("send_private_message", {"user_id": user_id, "message": message}))
         if self.send_error is not None:
             raise self.send_error
-        message_id = str(self.next_message_seq)
+        message_seq = str(self.next_message_seq)
         self.next_message_seq += 1
-        return SendResult(message_id)
+        return SendResult(message_seq=message_seq)
 
     async def close(self) -> None:
         """提供 standalone 清理边界。"""

@@ -40,7 +40,7 @@ Hermes 映射都基于同一份可审计的 canonical message，而不是各自�
 
 ### Requirement: canonical record 包含完整稳定身份
 
-每条可处理消息 MUST 提供 `platform`、`self_id`、`scene`、`chat_key`、`peer_id`、`sender_id`、字符串形式的 `message_id`、Unix 秒时间戳、typed segments、正文、mention/quote 信号、分类后的 `media_resource_references`、`file_attachment_references`、forward/reply references、raw 和安全 metadata。`self_id` SHALL 来自事件的 `self_id` 并与启动时 `get_login_info.data.uin` 的身份一致；Milky `message_seq` 是 canonical `message_id` 的来源。通过 friend/group 身份交叉校验后，record MUST 继续携带供会话介绍使用的场景资料；friend 只允许 `user_id`、`nickname`、`sex`，group 只允许 `group_id`、`group_name`、`member_count`、`description`、`announcement`。raw、extras、group member 和未知扩展 MUST NOT 成为会话介绍字段。
+每条可处理消息 MUST 提供 `platform`、`self_id`、`scene`、`chat_key`、`peer_id`、`sender_id`、字符串形式的 `message_seq`、Unix 秒时间戳、typed segments、正文、mention/quote 信号、分类后的 `media_resource_references`、`file_attachment_references`、forward/reply references、raw 和安全 metadata。`self_id` SHALL 来自事件的 `self_id` 并与启动时 `get_login_info.data.uin` 的身份一致；Milky `message_seq` SHALL 是 canonical 稳定序号的唯一来源。进入 Hermes boundary 时，该值才映射到宿主 `MessageEvent.message_id`。通过 friend/group 身份交叉校验后，record MUST 继续携带供会话介绍使用的场景资料；friend 只允许 `user_id`、`nickname`、`sex`，group 只允许 `group_id`、`group_name`、`member_count`、`description`、`announcement`。raw、extras、group member 和未知扩展 MUST NOT 成为会话介绍字段。
 
 #### Scenario: 时间和序号规范化
 
@@ -108,7 +108,7 @@ MUST 按 `friend.nickname` → `sender_id` 的顺序选择。空字符串和只�
 
 ### Requirement: 去重发生在资源和策略副作用之前
 
-适配器 MUST 使用至少为 `milky:<self_id>:<chat_key>:<message_id>` 的 key，在资源补全、Will 和 Hermes turn 之前以有界 TTL 方式原子检查并插入。
+适配器 MUST 使用至少为 `milky:<self_id>:<chat_key>:<message_seq>` 的 key，在资源补全、Will 和 Hermes turn 之前以有界 TTL 方式原子检查并插入。
 
 #### Scenario: 重连重复帧
 
@@ -124,10 +124,10 @@ MUST 按 `friend.nickname` → `sender_id` 的顺序选择。空字符串和只�
 
 ### Requirement: 缺少消息 ID 时显式降级
 
-消息缺少 Milky `message_seq` 时 MUST NOT 伪造稳定去重 key；尽管 v1.3 OpenAPI 将其列为消息必填字段，tolerant parser MAY 将字段缺失的单帧交给 canonical 降级路径，但 MUST 记录 `no_stable_message_id`，且不得把缺失值写入 TTL dedup key。
+消息缺少 Milky `message_seq` 时 MUST NOT 伪造稳定去重 key；尽管 v1.3 OpenAPI 将其列为消息必填字段，tolerant parser MAY 将字段缺失的单帧交给 canonical 降级路径，但 MUST 记录 `no_stable_message_seq`，且不得把缺失值写入 TTL dedup key。
 
 #### Scenario: 无消息 ID 的一次处理
 
 - **WHEN** 合法消息缺少 message ID
 - **THEN** 消息 SHALL 最多按一次当前帧进入后续处理
-- **AND** diagnostics SHALL 包含 `no_stable_message_id`
+- **AND** diagnostics SHALL 包含 `no_stable_message_seq`

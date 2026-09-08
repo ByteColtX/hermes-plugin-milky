@@ -1297,9 +1297,9 @@ def _resource_log_fields(chat_key: str, batch: object) -> dict[str, object]:
     if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence >= 0:
         fields["ingress_sequence"] = sequence
     current = getattr(batch, "current", None)
-    message_id = getattr(current, "message_id", None)
-    if message_id is not None:
-        fields["message_id"] = message_id
+    message_seq = getattr(current, "message_seq", None)
+    if message_seq is not None:
+        fields["message_seq"] = message_seq
     scene = getattr(current, "scene", None)
     if scene in {"friend", "group"}:
         fields["scene"] = scene

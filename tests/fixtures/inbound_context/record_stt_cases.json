@@ -43,7 +43,7 @@
     }
   ],
   "history_channel_context": {
-    "history": "<合成用户 uid 800000001 msg_id 4101> [record:NOT SUPPORTED]",
-    "current": "<合成用户 uid 800000001 msg_id 4102> [record:NOT SUPPORTED]"
+    "history": "<合成用户 uid 800000001 msg_seq 4101> [record:NOT SUPPORTED]",
+    "current": "<合成用户 uid 800000001 msg_seq 4102> [record:NOT SUPPORTED]"
   }
 }

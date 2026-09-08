@@ -161,15 +161,15 @@ connect
 
 空值、负数、非数字和额外分隔符均非法。`message_scene=temp` 记录 `ignored_temp` 后丢弃，不创建 chat key、canonical、dedup、buffer、Will、Hermes turn 或出站目标。
 
-canonical 至少包含 `platform`、`self_id`、scene、chat key、peer/sender ID、Milky message ID、Unix 秒时间戳、typed segments、正文、mention/quote、媒体引用、raw 和安全 metadata。
+canonical 至少包含 `platform`、`self_id`、scene、chat key、peer/sender ID、Milky `message_seq`、Unix 秒时间戳、typed segments、正文、mention/quote、媒体引用、raw 和安全 metadata。
 
 稳定去重 key 为：
 
 ```text
-milky:<self_id>:<chat_key>:<message_id>
+milky:<self_id>:<chat_key>:<message_seq>
 ```
 
-TTL map 的检查和插入必须原子完成，且早于资源补全、Will 和 Hermes turn。缺少 `message_id` 时不得伪造稳定 key；当前帧可以处理一次，但记录 `no_stable_message_id`。
+TTL map 的检查和插入必须原子完成，且早于资源补全、Will 和 Hermes turn。缺少 `message_seq` 时不得伪造稳定 key；当前帧可以处理一次，但记录 `no_stable_message_seq`。
 
 ### Admission、buffer 与 Hermes 交接
 
@@ -242,11 +242,11 @@ inline `reply` 通过单行 header 的 `reply_to` 和 Hermes reply metadata 表�
 普通历史消息按已确认的 `dm:`/`group:` chat namespace 选择单行格式。group 普通历史继续使用：
 
 ```text
-<sender uid <sender_id> msg_id <message_id> reply_to <reply_id>> <body>
+<sender uid <sender_id> msg_seq <message_seq> reply_to <reply_seq>> <body>
 ```
 
 group 缺失字段省略，保持字段顺序；dm 普通历史每条只输出经过既有 body 编码的正文，不生成
-sender、uid、`msg_id`、`reply_to` 或其他普通消息 header。dm 和 group 的普通历史都按 ingress
+sender、uid、`msg_seq`、`reply_to` 或其他普通消息 header。dm 和 group 的普通历史都按 ingress
 sequence 拼接；dm body 中的回车和换行编码为字面量 `\\n`，不新增 header 专用编码。系统事件
 对两种 chat 均使用 `<event <event_type>> <body>`，不得伪装成普通消息。所有直接 batch、公开
 renderer 和资源解析后的 pipeline 出口都使用同一已确认 namespace 选择规则；缺少或混用
@@ -254,9 +254,9 @@ namespace 时失败，不从正文、sender 名称或 raw payload 推断。heade
 编码为不改变记录边界的字面量。无历史记录时 `channel_context` 为 `None`，不是空字符串；当前
 trigger 不进入其中。普通 group 的当前 `MessageEvent.text` 和历史记录继续使用既有单行
 header；普通 dm 的当前 `MessageEvent.text` 和历史记录均只输出经过 body 编码的正文，不生成
-sender、uid、`msg_id`、`reply_to` 或其他普通消息 header。dm 中的 system event 仍保留
+sender、uid、`msg_seq`、`reply_to` 或其他普通消息 header。dm 中的 system event 仍保留
 `<event <event_type>> <body>`。这些 Agent-facing 文本选择不改变 canonical、真实 Milky
-message ID、Hermes reply metadata、资源解析结果或媒体字段。
+message_seq、Hermes reply metadata、资源解析结果或媒体字段。
 
 wait 阶段只保存 URL、resource/file ID、文件名、MIME/大小提示和原始 segment，不下载文件；trigger 阶段才可调用已确认的 Milky resource Action、`get_message` 或 Hermes helper。group file 使用 `get_group_file_download_url(group_id, file_id)`；private file 只有 `file_hash` 可用时才使用 `get_private_file_download_url(user_id, file_id, file_hash, ...)`。
 
@@ -266,7 +266,7 @@ Hermes 拥有入站资源的下载、缓存、SSRF、权限和本地路径规则
 
 ### Hermes MessageEvent
 
-friend 映射为 private message，group 映射为 group message；`source` 固定为 `milky`，`message_id` 使用 Milky ID 字符串，并保留 sender、raw、timestamp、reply metadata、正文、安全 metadata、`channel_context` 和已确认附件。没有受支持正文、媒体或结构化内容时记录丢弃原因，不创建空 `MessageEvent`。
+friend 映射为 private message，group 映射为 group message；`source` 固定为 `milky`，Hermes `message_id` 使用已确认的 Milky `message_seq` 字符串，并保留 sender、raw、timestamp、reply metadata、正文、安全 metadata、`channel_context` 和已确认附件。没有受支持正文、媒体或结构化内容时记录丢弃原因，不创建空 `MessageEvent`。
 
 ## 8. Gate、Will 与禁言状态
 
@@ -319,7 +319,7 @@ member 禁言只读取 `member.shut_up_end_time`；member 和 whole 分开维护
 
 Action 一律使用 HTTP `POST` JSON；无参数 Action 也发送 `{}`。认证为 `Authorization: Bearer <token>`，凭证不得进入日志、异常、结果、fixture 或快照。
 
-client 必须区分 HTTP 错误、非 JSON、协议 `status`/`retcode` 拒绝、malformed data、unsupported、transport unknown 和 timeout。HTTP 200 不等于协议成功；成功发送用远端 `data.message_seq` 生成稳定字符串形式的 `SendResult.message_id`。超时代表远端是否执行未知；可能有副作用的 Action 不盲目重试。
+client 必须区分 HTTP 错误、非 JSON、协议 `status`/`retcode` 拒绝、malformed data、unsupported、transport unknown 和 timeout。HTTP 200 不等于协议成功；插件侧成功发送结果使用远端 `data.message_seq` 生成稳定字符串 `SendResult.message_seq`，交给 Hermes 时才映射为宿主 `SendResult.message_id`。超时代表远端是否执行未知；可能有副作用的 Action 不盲目重试。
 
 SSE receive loop 必须处理 `event:`、多行 `data:`、空行边界、断线重连、退避、取消、未知或损坏事件和资源释放。malformed/unknown 事件安全记录并继续；handler 不得阻塞接收循环。
 
@@ -348,7 +348,7 @@ SSE receive loop 必须处理 `event:`、多行 `data:`、空行边界、断线�
 `message` 只含一个 `forward`，群聊/私聊分别调用 `send_group_message`/
 `send_private_message`。每个节点包含 `user_id`、`sender_name` 和 `segments`，身份优先取 live
 连接初始同步或 standalone 的 `get_login_info({})`；读取失败、身份缺失或昵称为空/含控制字符时
-固定使用 `10001`/`QQ用户`，成功结果只取远端 `data.message_seq` 作为单一 `message_id`，不伪造
+固定使用 `10001`/`QQ用户`，成功结果只取远端 `data.message_seq` 作为插件侧单一 `message_seq`，在 Hermes boundary 映射为单一 `message_id`，不伪造
 `time`、`forward_id` 或 continuation ID。预检、嵌套 segment 校验和本地 media materialization
 全部在第一个消息 Action 前完成；forward Action 失败不回退普通分块、不重试。
 
@@ -380,7 +380,7 @@ Milky 能访问 plugin 的本地路径。每个可能有副作用的 Action 最�
 普通 Agent 文本可使用：
 
 - `[CQ:at,qq=<uid>]` -> native `mention`；
-- `[CQ:reply,id=<msg_id>]` -> native `reply`；
+- `[CQ:reply,id=<message_seq>]` -> native `reply`；
 - `[CQ:image,file=file:///path/to/sticker.ext,type=sticker]` -> native `image`（仅 sticker）。
 
 CQ 图片的 formatter 只负责解析，不做文件 I/O；sender 在消息 Action 前复用统一
@@ -389,7 +389,7 @@ materialization。CQ sticker 的 `file://localhost`、`file:///...` 和本地路
 前返回分类错误，不发送原始 CQ 或纯文本 fallback。
 
 未确认映射、未知类型或参数错误按 text fallback 原样发送，但 fallback 不代表 native 语义
-执行。`uid` 和 `msg_id` 只能来自当前 group 消息或 group `channel_context` 的真实 header；dm
+执行。`uid` 和 `msg_seq` 只能来自当前 group 消息或 group `channel_context` 的真实 header；dm
 普通消息的 body-only 记录不提供这些 Agent-facing 字段。不实现 CQ 入站、OneBot Action、OneBot echo 或
 WebSocket RPC。
 
@@ -450,7 +450,7 @@ Milky 运行时只使用标准 Python logger，并统一放在 `hermes_plugins.m
 `reason`、`attempt` 和 `delay_seconds`。
 
 日志值只允许固定分类、计数、耗时、状态码和已经确认的 `uid`、QQ/群 ID、`chat_key`、
-`message_id` 或 `ingress_sequence`。插件不得把 token、Authorization header、完整 URL、请求或
+`message_seq` 或 `ingress_sequence`。Hermes boundary 的 `message_id` 只用于宿主字段映射；插件不得把 token、Authorization header、完整 URL、请求或
 响应 body、消息正文、关键词、raw segment、媒体 URL、文件名、本地路径、文件内容、Tool 原始
 入参/结果、自由文本异常或 traceback 交给 logger。Tool 调用方仍获得既有 raw envelope；日志不会
 为此复制、摘要或改写业务对象。日志被禁用、丢弃或 handler 失败时，连接、SSE、Gate/Will、buffer、

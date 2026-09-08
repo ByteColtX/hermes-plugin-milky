@@ -77,7 +77,7 @@ def test_canonical_record_uses_event_identity_and_stable_group_display_name() ->
     assert result.value.chat_key == "group:700000001"
     assert result.value.peer_id == 700000001
     assert result.value.sender_id == 800000002
-    assert result.value.message_id == "1002"
+    assert result.value.message_seq == "1002"
     assert result.value.timestamp == 1700000020
     assert result.value.sender_name == "合成名片"
     assert result.value.body.startswith("中性文本")
@@ -85,7 +85,7 @@ def test_canonical_record_uses_event_identity_and_stable_group_display_name() ->
     assert result.value.mention_kind == "self"
     assert result.value.mention_kinds == ("self", "all")
     assert result.value.mention_signals == ("self", "all")
-    assert result.value.quote_message_id == "1000"
+    assert result.value.quote_message_seq == "1000"
     assert result.value.media_resource_references[0].resource_id == "fixture-image-resource"
     assert result.value.file_attachment_references[0].file_id == "fixture-file-id"
     assert result.value.forward_references[0].forward_id == "fixture-forward-id"
@@ -161,18 +161,19 @@ def test_temp_message_is_ignored_without_canonical_or_chat_key() -> None:
     assert result.reason == "temporary message scene"
 
 
-def test_missing_message_id_is_processed_once_without_dedup_key() -> None:
+def test_missing_message_seq_is_processed_once_without_dedup_key() -> None:
     """无序号消息只能显式降级，不能把缺失值写入稳定 key。"""
 
     result = canonicalize_event(load_fixture("events/message_receive.friend.no_message_seq.json"))
 
     assert result.value is not None
-    assert result.value.message_id is None
+    assert result.value.message_seq is None
     assert result.value.dedup_key is None
-    assert "no_stable_message_id" in result.value.diagnostics
+    assert "no_stable_message_seq" in result.value.diagnostics
+    assert "no_stable_message_id" not in result.value.diagnostics
 
 
-def test_make_dedup_key_rejects_missing_or_invalid_stable_id() -> None:
+def test_make_dedup_key_rejects_missing_or_invalid_stable_seq() -> None:
     """稳定 key 不得包含空值、负数或额外分隔符。"""
 
     with pytest.raises(CanonicalError):
@@ -257,7 +258,7 @@ def test_ttl_dedup_zero_capacity_never_retains_a_key() -> None:
     assert dedup.size == 0
 
 
-def test_same_text_with_different_message_ids_is_not_deduplicated() -> None:
+def test_same_text_with_different_message_seqs_is_not_deduplicated() -> None:
     """去重只能使用稳定消息序号，不能使用正文或时间。"""
 
     first_payload = load_fixture("events/message_receive.friend.json")

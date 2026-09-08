@@ -156,7 +156,7 @@ class FakeResolver:
             body=batch.current.body,
             hermes_attachment_materializations=(materialization,),
         )
-        self.calls.append((batch.chat_key, batch.current.message_id or "none"))
+        self.calls.append((batch.chat_key, batch.current.message_seq or "none"))
         self.completed.set()
         return ResolvedTriggerBatch(batch.chat_key, history, current)
 
@@ -299,7 +299,7 @@ def make_pipeline(
 
 
 def test_group_and_friend_triggers_map_to_hermes_with_stable_source() -> None:
-    """friend/group 应分别使用 dm/group source 并保留 Milky 消息 ID。"""
+    """friend/group 应分别使用 dm/group source 并保留 Milky 消息序号。"""
 
     async def scenario() -> list[FakeMessageEvent]:
         hermes = FakeHermes()
@@ -652,8 +652,8 @@ def test_wait_history_is_context_only_and_current_message_is_not_repeated() -> N
 
     event = asyncio.run(scenario())
 
-    assert event.channel_context == "<合成名片 uid 800000002 msg_id 2001> 历史消息"
-    assert event.text == "<合成名片 uid 800000002 msg_id 2002> @合成机器人触发消息"
+    assert event.channel_context == "<合成名片 uid 800000002 msg_seq 2001> 历史消息"
+    assert event.text == "<合成名片 uid 800000002 msg_seq 2002> @合成机器人触发消息"
     assert "触发消息" not in event.channel_context
     assert "历史消息" not in event.text
 
@@ -761,9 +761,9 @@ def test_dm_wait_history_is_body_only_and_group_history_stays_headered() -> None
     assert friend_event.metadata["scene"] == "friend"
     assert friend_event.metadata["chat_key"] == "dm:800000001"
     assert "reply_to" not in friend_event.channel_context
-    assert "msg_id" not in friend_event.channel_context
-    assert group_event.channel_context == "<合成名片 uid 800000002 msg_id 2403> 群聊历史"
-    assert group_event.text == "<合成名片 uid 800000002 msg_id 2404> @合成机器人群聊触发"
+    assert "msg_seq" not in friend_event.channel_context
+    assert group_event.channel_context == "<合成名片 uid 800000002 msg_seq 2403> 群聊历史"
+    assert group_event.text == "<合成名片 uid 800000002 msg_seq 2404> @合成机器人群聊触发"
 
 
 def test_dm_history_and_system_context_keep_ingress_order() -> None:

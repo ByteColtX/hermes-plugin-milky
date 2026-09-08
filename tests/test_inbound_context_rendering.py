@@ -42,8 +42,8 @@ class ContextMessage:
     sender_name: str
     sender_id: int
     body: str
-    message_id: str | None = None
-    reply_message_id: str | None = None
+    message_seq: str | None = None
+    quote_message_seq: str | None = None
     quote_target_is_self: bool = False
 
 
@@ -72,10 +72,13 @@ def test_message_context_is_single_line_and_escapes_header_boundaries() -> None:
     first = ContextMessage("group:700000001", **records[0])
     second = ContextMessage("group:700000001", **records[1])
 
-    assert render_message_record(first) == fixture["expected"]["first"]
+    rendered_first = render_message_record(first)
+    assert rendered_first == fixture["expected"]["first"]
     assert render_message_record(second) == fixture["expected"]["second"]
-    assert "\n" not in render_message_record(first)
-    assert "\r" not in render_message_record(first)
+    assert "msg_seq" in rendered_first
+    assert "msg_id" not in rendered_first
+    assert "\n" not in rendered_first
+    assert "\r" not in rendered_first
 
 
 def test_context_renderer_labels_only_confirmed_self_reply_target() -> None:
@@ -86,8 +89,8 @@ def test_context_renderer_labels_only_confirmed_self_reply_target() -> None:
         "合成机器人",
         800000002,
         "回复正文",
-        message_id="7001",
-        reply_message_id="6999",
+        message_seq="7001",
+        quote_message_seq="6999",
         quote_target_is_self=True,
     )
     other_reply = ContextMessage(
@@ -95,36 +98,38 @@ def test_context_renderer_labels_only_confirmed_self_reply_target() -> None:
         "合成用户",
         800000003,
         "回复正文",
-        message_id="7002",
-        reply_message_id="6998",
+        message_seq="7002",
+        quote_message_seq="6998",
     )
     unknown_target = ContextMessage(
         "group:700000001",
         "合成用户",
         800000003,
         "回复正文",
-        message_id="7003",
-        reply_message_id="6997",
+        message_seq="7003",
+        quote_message_seq="6997",
     )
     no_target = ContextMessage(
         "group:700000001",
         "合成用户",
         800000003,
         "无引用",
-        message_id="7004",
+        message_seq="7004",
         quote_target_is_self=True,
     )
 
-    assert render_message_record(self_reply) == (
-        "<合成机器人 uid 800000002 msg_id 7001 reply_to your_previous_msg> 回复正文"
+    rendered_self_reply = render_message_record(self_reply)
+    assert rendered_self_reply == (
+        "<合成机器人 uid 800000002 msg_seq 7001 reply_to your_previous_msg> 回复正文"
     )
+    assert "msg_id" not in rendered_self_reply
     assert render_message_record(other_reply) == (
-        "<合成用户 uid 800000003 msg_id 7002 reply_to 6998> 回复正文"
+        "<合成用户 uid 800000003 msg_seq 7002 reply_to 6998> 回复正文"
     )
     assert render_message_record(unknown_target) == (
-        "<合成用户 uid 800000003 msg_id 7003 reply_to 6997> 回复正文"
+        "<合成用户 uid 800000003 msg_seq 7003 reply_to 6997> 回复正文"
     )
-    assert render_message_record(no_target) == "<合成用户 uid 800000003 msg_id 7004> 无引用"
+    assert render_message_record(no_target) == "<合成用户 uid 800000003 msg_seq 7004> 无引用"
 
 
 def test_segment_placeholders_keep_order_and_variable_light_app_meta() -> None:
@@ -450,7 +455,7 @@ def test_pipeline_merges_context_events_by_ingress_and_does_not_create_turn() ->
     assert len(hermes.events) == 1
     event = hermes.events[0]
     assert event.channel_context == (
-        "<合成名片 uid 800000002 msg_id 5001> 历史消息\n"
+        "<合成名片 uid 800000002 msg_seq 5001> 历史消息\n"
         "<event group_nudge> uid 800000002 poked uid 900000001\n"
         "<event group_member_increase> uid 800000004 joined the group. Details: "
         '{"group_id": 700000001, "user_id": 800000004, "operator_id": 900000001, "invitor_id": 800000002}'
@@ -517,7 +522,7 @@ def test_pipeline_merges_recall_context_once_and_keeps_scene_namespaces_isolated
     assert len(group_events) == 2
     assert len(friend_events) == 1
     assert group_events[0].channel_context == (
-        "<合成名片 uid 800000002 msg_id 5101> 历史消息\n"
+        "<合成名片 uid 800000002 msg_seq 5101> 历史消息\n"
         "<event message_recall> uid 800000002 recalled message msg_seq 1001\n"
         "<event group_nudge> uid 800000002 poked uid 900000001"
     )
@@ -690,7 +695,7 @@ def test_history_bot_reply_uses_same_label_and_excludes_current_message() -> Non
     event = asyncio.run(scenario())
 
     assert event.channel_context == (
-        "<合成名片 uid 800000002 msg_id 6101 reply_to your_previous_msg> 历史引用"
+        "<合成名片 uid 800000002 msg_seq 6101 reply_to your_previous_msg> 历史引用"
     )
-    assert event.text == "<合成名片 uid 800000002 msg_id 6102> @合成机器人触发消息"
+    assert event.text == "<合成名片 uid 800000002 msg_seq 6102> @合成机器人触发消息"
     assert "触发消息" not in event.channel_context

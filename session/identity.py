@@ -108,15 +108,15 @@ def validate_chat_rule(value: object) -> str:
     return f"{match.group(1)}:{int(suffix)}"
 
 
-def make_dedup_key(self_id: object, chat_key: object, message_id: object) -> str:
+def make_dedup_key(self_id: object, chat_key: object, message_seq: object) -> str:
     """生成带 Bot 和 chat 命名空间的稳定去重 key。"""
 
-    if message_id is None:
-        raise CanonicalError("message_id is not stable")
+    if message_seq is None:
+        raise CanonicalError("message_seq is not stable")
     normalized_self_id = _normalize_decimal(self_id, "self_id")
     normalized_chat_key = validate_chat_key(chat_key)
-    normalized_message_id = _normalize_decimal(message_id, "message_id")
-    return f"milky:{normalized_self_id}:{normalized_chat_key}:{normalized_message_id}"
+    normalized_message_seq = _normalize_decimal(message_seq, "message_seq")
+    return f"milky:{normalized_self_id}:{normalized_chat_key}:{normalized_message_seq}"
 
 
 def _make_bot_identity(self_id: object, nickname: object) -> BotIdentity | None:

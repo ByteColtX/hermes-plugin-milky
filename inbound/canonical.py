@@ -44,13 +44,13 @@ class CanonicalMessage:
     chat_key: str
     peer_id: int
     sender_id: int
-    message_id: str | None
+    message_seq: str | None
     timestamp: int
     sender_name: str
     segments: tuple[Segment, ...]
     body: str
     mention_kinds: tuple[MentionKind, ...]
-    quote_message_id: str | None
+    quote_message_seq: str | None
     media_resource_references: tuple[MediaResourceReference, ...]
     file_attachment_references: tuple[FileAttachmentReference, ...]
     forward_references: tuple[ForwardReference, ...]
@@ -74,15 +74,15 @@ class CanonicalMessage:
     def dedup_key(self) -> str | None:
         """返回稳定消息的去重 key；无序号时显式返回空值。"""
 
-        if self.message_id is None:
+        if self.message_seq is None:
             return None
-        return make_dedup_key(self.self_id, self.chat_key, self.message_id)
+        return make_dedup_key(self.self_id, self.chat_key, self.message_seq)
 
     @property
     def has_quote(self) -> bool:
         """返回消息是否带有引用目标。"""
 
-        return self.quote_message_id is not None
+        return self.quote_message_seq is not None
 
     @property
     def self_quote(self) -> bool:
@@ -208,13 +208,15 @@ def _canonicalize_normalized(
         chat_key=chat_key,
         peer_id=normalized.peer_id,
         sender_id=normalized.sender_id,
-        message_id=normalized.message_id,
+        message_seq=normalized.message_seq,
         timestamp=normalized.timestamp,
         sender_name=sender_name,
         segments=normalized.segments,
         body=normalized.body,
         mention_kinds=normalized.mention_kinds,
-        quote_message_id=normalized.reply_message_id,
+        quote_message_seq=(
+            None if normalized.reply_message_seq is None else str(normalized.reply_message_seq)
+        ),
         media_resource_references=normalized.media_resource_references,
         file_attachment_references=normalized.file_attachment_references,
         forward_references=normalized.forward_references,
@@ -236,7 +238,7 @@ def _message_from_normalized(normalized: NormalizedMessage) -> IncomingMessage:
     return IncomingMessage(
         message_scene=normalized.scene,
         peer_id=normalized.peer_id,
-        message_seq=None if normalized.message_id is None else int(normalized.message_id),
+        message_seq=None if normalized.message_seq is None else int(normalized.message_seq),
         sender_id=normalized.sender_id,
         time=normalized.timestamp,
         segments=normalized.segments,

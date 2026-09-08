@@ -43,7 +43,7 @@ npx --yes @fission-ai/openspec@1.12.0 validate --changes --strict
 - 普通 Agent 流程只接受 `message_receive`。friend 使用 `dm:<十进制 QQ 号>`，group 使用
   `group:<十进制群号>`；非法 ID 和 temp 记录诊断后丢弃，不创建 Agent 状态或出站目标。
 - canonical、TTL dedup 必须早于资源补全、Will 和 Hermes turn；稳定 key 为
-  `milky:<self_id>:<chat_key>:<message_id>`。缺少 message ID 时不得伪造稳定 ID。
+  `milky:<self_id>:<chat_key>:<message_seq>`。缺少 message_seq 时不得伪造稳定 ID。
 - 同一 chat 按 ingress sequence 串行，不复制 Hermes 的 busy/follow-up/interrupt/Agent
   队列。Gate 顺序固定为 `SelfMessageGate`、`ChatAllowlistGate`、`MutedGroupGate`；deny 不
   增长 buffer 或修改 Will。wait 不调用 Hermes，trigger 在决策完成后先扣一次 reply cost，

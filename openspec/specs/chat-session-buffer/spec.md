@@ -70,15 +70,15 @@ detached batch 转换为 `channel_context` 时 MUST 按 ingress sequence 保留�
 的展示形式。所有历史 renderer 出口 MUST 使用同一选择规则。group 普通消息每条 MUST 继续使用：
 
 ~~~text
-<sender uid <sender_id> msg_id <message_id> reply_to <reply_id>> <body>
+<sender uid <sender_id> msg_seq <message_seq> reply_to <reply_seq>> <body>
 ~~~
 
-`msg_id` 和 `reply_to` 没有值时 MUST 省略，并保持字段顺序；普通消息 header 和 body 之间
+`msg_seq` 和 `reply_to` 没有值时 MUST 省略，并保持字段顺序；普通消息 header 和 body 之间
 使用一个空格。对于 dm 普通历史消息，每条记录 MUST 只包含经过现有 body 编码规则处理的
-正文，不得生成 sender、uid、`msg_id`、`reply_to` 或其他普通消息 header。dm 记录仍 MUST
+正文，不得生成 sender、uid、`msg_seq`、`reply_to` 或其他普通消息 header。dm 记录仍 MUST
 保持单行格式。若被实际渲染的 `reply` 目标的 `sender_id` 等于当前 Bot 的 `self_id`，
 Agent-facing header 中的 `reply_to <reply_id>` MUST 改为 `reply_to your_previous_msg`，
-不得在同一个 `reply_to` 字段中展示该 Bot 消息的数字 ID。当前消息自身的 `msg_id` MUST
+不得在同一个 `reply_to` 字段中展示该 Bot 消息的数字序号。当前消息自身的 `msg_seq` MUST
 继续展示真实 Milky 消息 ID（若可用）。该展示替换只适用于交给 Agent 的
 `MessageEvent.text` 和 `channel_context`；Hermes `MessageEvent.reply_to_message_id`
 及其他内部引用字段 MUST 继续保留真实的 Milky `message_seq`。
@@ -108,7 +108,7 @@ group 和 dm body 中的回车和换行也 MUST 编码为字面量 `\\n`。dm bo
 - **WHEN** 当前 trigger 消息包含 `reply`，且被实际渲染的 `reply.data.sender_id` 等于当前
   Bot 的 `self_id`
 - **THEN** `MessageEvent.text` 的 header SHALL 使用 `reply_to your_previous_msg`
-- **AND** 该 header SHALL 保留当前消息真实的 `msg_id`（若可用）
+- **AND** 该 header SHALL 保留当前消息真实的 `msg_seq`（若可用）
 - **AND** Hermes `MessageEvent.reply_to_message_id` SHALL 仍为被引用消息的真实
   `message_seq`
 
@@ -117,7 +117,7 @@ group 和 dm body 中的回车和换行也 MUST 编码为字面量 `\\n`。dm bo
 - **WHEN** 当前 trigger dm 消息包含引用 Bot 或其他消息的 `reply`
 - **THEN** `MessageEvent.text` SHALL 只包含经过 body 编码的当前消息正文
 - **AND** `MessageEvent.text` SHALL NOT 包含 `reply_to`、`your_previous_msg`、sender、uid 或
-  `msg_id` header
+  `msg_seq` header
 - **AND** Hermes `MessageEvent.reply_to_message_id`、reply author 和 own-message metadata
   SHALL 继续使用真实引用字段
 
@@ -132,7 +132,7 @@ group 和 dm body 中的回车和换行也 MUST 编码为字面量 `\\n`。dm bo
 
 - **WHEN** wait 历史 dm 消息包含引用 Bot 或其他消息的 `reply`，并在下一次 trigger 中进入 `channel_context`
 - **THEN** 对应历史记录 SHALL 只包含经过 body 编码的消息正文
-- **AND** 对应历史记录 SHALL NOT 包含 `reply_to`、`your_previous_msg`、sender、uid 或 `msg_id` header
+- **AND** 对应历史记录 SHALL NOT 包含 `reply_to`、`your_previous_msg`、sender、uid 或 `msg_seq` header
 - **AND** Hermes 对当前 trigger 的 reply metadata SHALL 继续使用真实引用字段
 
 #### Scenario: 引用他人时保留真实 reply ID
@@ -160,20 +160,20 @@ group 和 dm body 中的回车和换行也 MUST 编码为字面量 `\\n`。dm bo
 
 - **WHEN** 消息不包含可用 `reply` 目标
 - **THEN** header SHALL NOT 添加 `reply_to your_previous_msg`
-- **AND** 现有 `msg_id` 缺省、省略和转义规则 SHALL 保持不变
+- **AND** 现有 `msg_seq` 缺省、省略和转义规则 SHALL 保持不变
 
 #### Scenario: 普通历史和当前消息分离
 
 - **WHEN** detached batch 包含两条 wait 普通消息，当前 trigger 另有一条消息
 - **THEN** `channel_context` SHALL 只包含两条历史的单行记录
-- **AND** group 历史记录 SHALL 使用既有 `<sender uid ... msg_id ... reply_to ...> body` 格式，dm 历史记录 SHALL 只包含对应的转义正文
+- **AND** group 历史记录 SHALL 使用既有 `<sender uid ... msg_seq ... reply_to ...> body` 格式，dm 历史记录 SHALL 只包含对应的转义正文
 - **AND** 当前 trigger 消息 SHALL 只出现在 `MessageEvent.text`
 
 #### Scenario: 多条历史消息按 FIFO 拼接
 
 - **WHEN** detached batch 依次包含两条历史普通消息
 - **THEN** `channel_context` SHALL 按最早到最新的 ingress sequence 形成单行记录
-- **AND** group 每条记录 SHALL 包含可用的 sender、uid、msg_id 和 reply_to 字段，dm 每条记录 SHALL 只保留对应的转义正文
+- **AND** group 每条记录 SHALL 包含可用的 sender、uid、msg_seq 和 reply_to 字段，dm 每条记录 SHALL 只保留对应的转义正文
 - **AND** SHALL 不包含当前 trigger 消息或额外群 ID
 
 #### Scenario: 系统事件与普通历史按顺序合并

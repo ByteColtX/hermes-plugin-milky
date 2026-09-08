@@ -51,7 +51,7 @@ basename 一致。helper 不可用、下载失败或返回无效本地路径时�
 其他协议字段推断图片相同。
 
 `file` 只属于入站消息，不属于 outgoing message segment。除架构明确允许主消息
-`message_seq` 缺失并进入 `no_stable_message_id` 降级外，规范化 SHALL 不补造 OpenAPI 必填
+`message_seq` 缺失并进入 `no_stable_message_seq` 降级外，规范化 SHALL 不补造 OpenAPI 必填
 字段；reply 的 `message_seq`、`sender_id`、`time` 和 `segments` 缺失时 SHALL 保持 malformed
 诊断。
 

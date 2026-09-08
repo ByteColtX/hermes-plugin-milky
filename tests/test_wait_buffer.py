@@ -26,8 +26,8 @@ class FakeMessage:
     sender_name: str
     sender_id: int
     body: str
-    message_id: str | None = None
-    quote_message_id: str | None = None
+    message_seq: str | None = None
+    quote_message_seq: str | None = None
     quote_target_is_self: bool = False
     raw: dict[str, str] | None = None
 
@@ -38,8 +38,8 @@ def message(
     chat_key: str = "group:300",
     sender_name: str | None = None,
     body: str | None = None,
-    message_id: str | None = None,
-    quote_message_id: str | None = None,
+    message_seq: str | None = None,
+    quote_message_seq: str | None = None,
     quote_target_is_self: bool = False,
 ) -> FakeMessage:
     """构造一条最小的规范化历史消息。"""
@@ -49,8 +49,8 @@ def message(
         sender_name=sender_name or f"sender-{number}",
         sender_id=100 + number,
         body=body or f"body-{number}",
-        message_id=message_id if message_id is not None else str(number),
-        quote_message_id=quote_message_id,
+        message_seq=message_seq if message_seq is not None else str(number),
+        quote_message_seq=quote_message_seq,
         quote_target_is_self=quote_target_is_self,
     )
 
@@ -106,7 +106,7 @@ def test_drain_atomically_detaches_history_and_separates_current_message() -> No
     """drain 清空 buffer 后才返回 detached batch，当前消息不进入历史。"""
 
     buffer = WaitBuffer()
-    history = (message(1), message(2, quote_message_id="1"))
+    history = (message(1), message(2, quote_message_seq="1"))
     for item in history:
         buffer.append("group:300", item)
     current = message(3, sender_name="Carol", body="trigger")
@@ -117,9 +117,11 @@ def test_drain_atomically_detaches_history_and_separates_current_message() -> No
     assert batch.history == history
     assert batch.current == current
     assert batch.channel_context == (
-        "<sender-1 uid 101 msg_id 1> body-1\n<sender-2 uid 102 msg_id 2 reply_to 1> body-2"
+        "<sender-1 uid 101 msg_seq 1> body-1\n<sender-2 uid 102 msg_seq 2 reply_to 1> body-2"
     )
-    assert batch.current_text == "<Carol uid 103 msg_id 3> trigger"
+    assert batch.current_text == "<Carol uid 103 msg_seq 3> trigger"
+    assert "msg_id" not in batch.channel_context
+    assert "msg_id" not in batch.current_text
     assert current not in batch.history
     assert buffer.snapshot("group:300") == ()
 
@@ -132,15 +134,15 @@ def test_dm_context_and_current_text_are_body_only() -> None:
         chat_key="dm:300",
         sender_name="私聊发送者",
         body="历史 <正文>\\路径\r\n下一行",
-        message_id="9001",
-        quote_message_id="8999",
+        message_seq="9001",
+        quote_message_seq="8999",
     )
     current = message(
         2,
         chat_key="dm:300",
         sender_name="私聊发送者",
         body="当前 <正文>\\路径\r\n下一行",
-        message_id="9002",
+        message_seq="9002",
     )
     buffer = WaitBuffer()
     buffer.append("dm:300", history, ingress_sequence=1)
@@ -152,7 +154,7 @@ def test_dm_context_and_current_text_are_body_only() -> None:
     assert render_channel_context((history,)) == batch.channel_context
     assert format_channel_context((history,)) == batch.channel_context
     assert "uid" not in batch.channel_context
-    assert "msg_id" not in batch.channel_context
+    assert "msg_seq" not in batch.channel_context
     assert "reply_to" not in batch.channel_context
 
 
@@ -169,7 +171,7 @@ def test_context_renderer_requires_one_confirmed_chat_namespace() -> None:
     assert render_message_record(dm) == "body-1"
     assert render_message_record(dm, chat_key="dm:300") == "body-1"
     assert render_message_record(group, chat_key="group:300") == (
-        "<sender-2 uid 102 msg_id 2> body-2"
+        "<sender-2 uid 102 msg_seq 2> body-2"
     )
 
     for records in (((1, dm), (2, group)), ((1, message(3, chat_key="invalid")),)):
@@ -230,15 +232,15 @@ def test_renderer_uses_self_quote_label_only_for_explicit_target_fact() -> None:
     """renderer 只接受实际 header 目标的显式归属事实。"""
 
     assert (
-        render_message_record(message(1, quote_message_id="9001", quote_target_is_self=True))
-        == "<sender-1 uid 101 msg_id 1 reply_to your_previous_msg> body-1"
+        render_message_record(message(1, quote_message_seq="9001", quote_target_is_self=True))
+        == "<sender-1 uid 101 msg_seq 1 reply_to your_previous_msg> body-1"
     )
-    assert render_message_record(message(2, quote_message_id="9002")) == (
-        "<sender-2 uid 102 msg_id 2 reply_to 9002> body-2"
+    assert render_message_record(message(2, quote_message_seq="9002")) == (
+        "<sender-2 uid 102 msg_seq 2 reply_to 9002> body-2"
     )
     assert (
         render_message_record(message(3, quote_target_is_self=True))
-        == "<sender-3 uid 103 msg_id 3> body-3"
+        == "<sender-3 uid 103 msg_seq 3> body-3"
     )
 
 
@@ -251,13 +253,14 @@ def test_context_does_not_read_raw_payload() -> None:
         sender_name=candidate.sender_name,
         sender_id=candidate.sender_id,
         body=candidate.body,
-        message_id=candidate.message_id,
+        message_seq=candidate.message_seq,
         raw={"authorization": "Bearer fixture-secret", "token": "fixture-secret"},
     )
 
     rendered = render_message_record(candidate)
 
-    assert rendered == "<sender-1 uid 101 msg_id 1> body-1"
+    assert rendered == "<sender-1 uid 101 msg_seq 1> body-1"
+    assert "msg_id" not in rendered
     assert "fixture-secret" not in rendered
 
 

@@ -81,7 +81,7 @@ class RecordingOutboundClient:
         self.calls.append(("send_group_message", group_id, message))
         if self.error is not None:
             raise self.error
-        return type("Result", (), {"message_id": "fixture-message"})()
+        return type("Result", (), {"message_seq": "fixture-message"})()
 
     async def send_private_message(self, user_id: int, message: list[dict[str, Any]]) -> object:
         """记录私聊消息 Action。"""
@@ -89,7 +89,7 @@ class RecordingOutboundClient:
         self.calls.append(("send_private_message", user_id, message))
         if self.error is not None:
             raise self.error
-        return type("Result", (), {"message_id": "fixture-message"})()
+        return type("Result", (), {"message_seq": "fixture-message"})()
 
 
 @dataclass
