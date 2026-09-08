@@ -4,6 +4,9 @@
 
 detached batch 转换为 `channel_context` 时 MUST 按 ingress sequence 保留其中的普通历史消息
 和已登记的 context-only 系统事件，并根据已确认的 chat 命名空间选择普通历史的展示形式。
+所有产生同一历史上下文的渲染路径 MUST 使用该选择规则，包括 detached batch 的直接上下文
+访问、公开上下文 renderer 和资源解析完成后交给 Hermes 的最终上下文；不同路径不得因渲染
+阶段不同而改变 dm/group 的记录模板。
 group 普通消息每条 MUST 继续使用单行格式：
 
 ~~~text

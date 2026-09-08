@@ -3,7 +3,9 @@
 ### Requirement: Agent-facing 文本区分历史上下文和当前消息
 
 当存在 detached 历史时，适配器 MUST 将历史紧凑记录只放入 `MessageEvent.channel_context`，
-并使用资源解析及 batch 内容去重完成后的历史正文。group 历史记录 MUST 继续使用既有单行
+并使用资源解析及 batch 内容去重完成后的历史正文。用于构造该字段的所有历史 renderer 出口
+MUST 根据同一个已确认 chat namespace 选择模板；资源解析前的直接 batch/helper 结果与最终
+交给 Hermes 的结果不得在 dm/group 记录格式上分叉。group 历史记录 MUST 继续使用既有单行
 header 格式；dm 历史普通消息 MUST 只使用经过 body 编码的正文，不生成普通消息 header。
 当前 trigger 消息 MUST 继续以现有紧凑 header 格式放入 `MessageEvent.text`，并使用与其
 媒体代表一致的图片 basename。适配器 MUST NOT 把 `[New message]` 标记或当前消息复制到
