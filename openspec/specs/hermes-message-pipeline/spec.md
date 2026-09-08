@@ -9,7 +9,7 @@ MessageEvent，同时严格区分历史上下文、当前正文、系统观察�
 
 ### Requirement: friend 和 group 映射到明确 MessageEvent
 
-正常 friend 消息 MUST 映射为 private message，正常 group 消息 MUST 映射为 group message，并保留 sender ID/name、Milky message ID 字符串、`source=milky`、正文、raw、timestamp、reply、已 materialize 的附件路径/MIME、channel_context 和安全 metadata。对于同一次 trigger，`MessageEvent.media_urls`/`media_types` MUST 将 `channel_context` 中历史消息的已 materialize 直接图片与当前 trigger 消息和可见 reply 内容的已 materialize 图片按规定顺序合并；相同图片 bytes 只保留当前 batch 中首次出现的代表，hash 不可用时仅按本地路径去重。历史图片按上下文顺序在前，当前图片按当前消息顺序在后，并同步维护两字段一一对应。原始 `media_resource_references` 与 `file_attachment_references` 不得直接写入 `MessageEvent.media_urls`。会话介绍资料 MUST 通过独立的本地 snapshot store 提供，不得写入 `MessageEvent.text`、`channel_context`、媒体字段或 source 正文。
+正常 friend 消息 MUST 映射为 private message，正常 group 消息 MUST 映射为 group message，并保留 sender ID/name、Milky message ID 字符串、`source=milky`、正文、raw、timestamp、reply、已 materialize 的附件路径/MIME、channel_context 和安全 metadata。对于同一次 trigger，`MessageEvent.media_urls`/`media_types` MUST 将 `channel_context` 中历史消息的已 materialize 直接图片与当前 trigger 消息和可见 reply 内容的已 materialize 图片按规定顺序合并；当前 trigger 中已 materialize 的 `record` 音频也 MUST 按其原始出现顺序加入这两个媒体数组，并与对应 MIME 一一配对。相同图片 bytes 只保留当前 batch 中首次出现的代表，hash 不可用时仅按本地路径去重。历史图片按上下文顺序在前，当前图片和音频按当前消息顺序在后，并同步维护两字段一一对应。原始 `media_resource_references` 与 `file_attachment_references` 不得直接写入 `MessageEvent.media_urls`；未 materialize 的远端引用、resource ID 或猜测路径不得写入媒体数组。纯 `record` 当前消息在至少一个音频成功 materialize 时 MUST 映射为 `MessageType.VOICE`，使 Hermes core 能识别其自动 STT 输入；插件不得在此边界实现或配置 STT。会话介绍资料 MUST 通过独立的本地 snapshot store 提供，不得写入 `MessageEvent.text`、`channel_context`、媒体字段或 source 正文。
 
 #### Scenario: friend 消息交接
 
@@ -30,6 +30,28 @@ MessageEvent，同时严格区分历史上下文、当前正文、系统观察�
 - **THEN** `MessageEvent.media_urls` SHALL 先包含历史图片代表，再包含当前图片代表
 - **AND** `MessageEvent.media_types` SHALL 与 `media_urls` 按相同顺序逐项对应
 - **AND** 当前消息 SHALL 仍只作为正文，历史消息 SHALL 仍只作为 `channel_context`
+
+#### Scenario: 当前 record 音频交给 Hermes core
+
+- **WHEN** 当前 trigger 消息包含一个或多个 `record`，且 Hermes audio helper 为其返回有效本地路径和 audio MIME
+- **THEN** 每个成功的音频 SHALL 按当前消息的 segment 顺序进入 `MessageEvent.media_urls`
+- **AND** `MessageEvent.media_types` SHALL 为每个音频保留对应的 audio MIME
+- **AND** 消息只包含 `record` 时 `message_type` SHALL 为 `MessageType.VOICE`
+- **AND** 插件 SHALL 不调用或配置 STT provider
+
+#### Scenario: 纯 record 的 Hermes 类型不能标为 AUDIO
+
+- **WHEN** 当前消息没有文本、图片、视频或文件等其他受支持内容，且至少一个 `record` 已成功 materialize
+- **THEN** `message_type` SHALL 为 `MessageType.VOICE`
+- **AND** Hermes core SHALL 能按既有语音输入判定读取这些 audio `media_urls`
+- **AND** 插件 SHALL NOT 将该消息映射为 `MessageType.AUDIO`
+
+#### Scenario: record materialization 失败
+
+- **WHEN** 当前 `record` 缺少可用资源引用、Hermes audio helper 不可用、下载失败或返回无效本地路径
+- **THEN** 该 record SHALL 不进入 `MessageEvent.media_urls`
+- **AND** 事件 SHALL 保留既有 `[record:NOT SUPPORTED]` 或等价安全降级及分类诊断
+- **AND** 插件 SHALL 不伪造 STT 结果、远端 URL 或本地路径
 
 #### Scenario: 历史和当前图片路径重复
 
@@ -115,10 +137,14 @@ trigger 的当前消息 MUST 只作为本次正文；已经 drain 的历史 wait
 确认 chat namespace 选择模板：group 历史继续使用既有单行 header，dm 普通历史只使用经过
 body 编码的正文，不生成普通消息 header。当前 trigger 消息 MUST 只进入本次
 `MessageEvent.text`；group 当前消息继续使用现有紧凑 header，dm 当前消息 MUST 只使用经过
-body 编码的正文，不生成普通消息 header，并使用与其媒体代表一致的图片 basename。适配器 MUST NOT 把
-`[New message]` 标记或当前消息复制到 `channel_context`；Hermes 已有的 Agent 输入组装语义
-负责在历史块和当前消息之间加入该标记。没有历史时，适配器 MUST 保持 `channel_context=None`，
-并只交付当前消息正文。
+body 编码的正文，不生成普通消息 header，并使用与其媒体代表一致的图片 basename。对于已经
+成功 materialize 并交给 Hermes core 的当前 `record`，适配器 MUST 从当前 `text` 移除插件生成的
+`[record:NOT SUPPORTED]` 占位，不得重复渲染 STT 成功文本、STT 失败提示或 STT 未启用提示；
+这些提示由 Hermes core 的既有语音处理负责。资源 materialization 失败的当前 `record` MAY 保留
+既有安全失败占位。历史 `record` 暂不自动 materialize 为本次 Agent 输入或自动 STT，历史 renderer
+SHALL 保留既有 record 占位策略。适配器 MUST NOT 把 `[New message]` 标记或当前消息复制到
+`channel_context`；Hermes 已有的 Agent 输入组装语义负责在历史块和当前消息之间加入该标记。
+没有历史时，适配器 MUST 保持 `channel_context=None`，并只交付当前消息正文。
 
 #### Scenario: Agent 收到历史和当前消息
 
@@ -127,6 +153,13 @@ body 编码的正文，不生成普通消息 header，并使用与其媒体代�
 - **AND** `text` SHALL 仅为当前消息记录，并引用 batch 选择的图片代表 basename
 - **AND** Hermes 的有效 Agent 输入 SHALL 在历史块后以空行和 `[New message]` 分隔当前消息
 - **AND** 当前消息 SHALL 不出现在 `channel_context`
+
+#### Scenario: 当前 record 不重复渲染 core 提示
+
+- **WHEN** 当前 `record` 已成功 materialize，并且 Hermes core 会处理该 MessageEvent 的 `media_urls`
+- **THEN** 当前 `MessageEvent.text` SHALL 不包含插件生成的 `[record:NOT SUPPORTED]`
+- **AND** 插件 SHALL 不根据 STT 是否配置、是否失败或是否返回空文本自行追加语音提示
+- **AND** core 产生的转录文本或语音降级提示 SHALL 成为该语音输入的唯一 core-level 提示来源
 
 #### Scenario: 没有历史时交付当前消息
 

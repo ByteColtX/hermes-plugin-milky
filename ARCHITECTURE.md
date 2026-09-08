@@ -225,7 +225,7 @@ normalizer 不做网络 I/O。支持并保留 `text`、`mention`、`mention_all`
 | `face` | `[face:<face_name>]`；启动时从插件目录 catalog 映射非 `emoji 表情` pack 的有效 `qSid`/`qDes`，名称保留原值；目录不可用、未命中或冲突时回退 `face_id` |
 | `mention_all` | `@全体成员` |
 | `image` | 临时 `[img:file_name=<summary/resource_id>]`；成功 materialize 后替换为 helper basename |
-| `record` / `video` | `[record:NOT SUPPORTED]` / `[video:NOT SUPPORTED]` |
+| `record` / `video` | `[record:NOT SUPPORTED]` / `[video:NOT SUPPORTED]`；当前 `record` 成功 materialize 后以 VOICE 媒体交给 Hermes core，不在插件侧配置 STT 或转换格式 |
 | `file` | `[file:file_id=<file_id>,file_name=<file_name>,file_hash=<file_hash>]` |
 | `forward` | `[forward:forward_id=<forward_id>]`；普通 trigger 不自动展开 |
 | `market_face` | `[market_face:summary=<summary>]` |

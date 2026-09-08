@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.6.0] - 2026-09-09
+
+### 新增
+
+- 纯 `record` 语音在成功 materialize 后以 `MessageType.VOICE`、本地音频路径和 MIME
+  交给 Hermes core，由 Hermes core 按宿主配置处理 STT。
+- 新增 `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS`，默认关闭；开启后，已确认 session key 且宿主接受
+  `inject_message` 时，群成员入退群事件可即时触发 Agent turn。
+
+### 变更与边界
+
+- 成功交给 Hermes core 的当前语音不再重复显示插件占位符；插件不读取或配置 STT provider，
+  也不负责音频格式转换。某些 provider 不支持特定音频格式时，当前 Hermes core/provider 链路可能
+  直接失败；格式转换不属于插件职责，插件不增加转码或重试。
+- 群成员通知关闭时继续写入 system context，开启但注入失败或 session 未确认时保留上下文，
+  不猜测 session key、不直接调用 Milky Action。
+
+### 验证与边界
+
+- 完整测试：875 passed，3 skipped；Ruff、格式检查、构建、`git diff --check` 和 OpenSpec strict
+  validate 均通过。
+- 未执行真实 Hermes/Milky 连接、消息发送或真实 STT provider 验证；目标环境仍需自行验证 provider
+  对具体音频格式的支持情况。
+
 ## [1.5.0] - 2026-09-08
 
 ### 新增
