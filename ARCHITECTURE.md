@@ -120,9 +120,13 @@ Gate 不做网络 I/O，Will 不做授权，session 不复制 Hermes 队列；�
 
 ### 注册与连接
 
-`register(ctx)` 是唯一公开入口：读取 context、一次性解析配置，注册 `milky-qq-cq-reference`、`milky-qq-action-tools`、`/milky` 和显式 ToolSpec，登记 `MILKY_HOME_CHANNEL`，组装 client/SSE/MuteTracker/Will/session/pipeline/sender，并调用 Hermes 平台注册接口。`platform_hint` 只包含 `You are chatting on QQ through Hermes's Milky platform.`；宿主提供 `register_system_prompt_section` 时，入口另外登记 `hermes-plugin-milky.qq-platform-guidance` 的 `after_memory` section。
+`register(ctx)` 是唯一公开入口：读取 context、一次性解析配置，注册 `milky-qq-cq-reference`、`milky-qq-action-tools`、`/milky` 和显式 ToolSpec，登记 `MILKY_HOME_CHANNEL`，组装 client/SSE/MuteTracker/Will/session/pipeline/sender，并调用 Hermes 平台注册接口。`platform_hint` 只包含 `You are chatting on QQ through Hermes's Milky platform.`；宿主提供 `register_system_prompt_section` 时，入口另外登记 `hermes-plugin-milky.qq-platform-guidance` 和 `hermes-plugin-milky.qq-session-context` 两个 `after_memory` section。
 
 该 section 使用注册实例共享的进程内身份快照。adapter 在登录、群列表和每个群的 Bot 成员状态同步成功、普通消息入口完成组装后发布已确认的 `self_id` 和 `nickname`；section renderer 只读快照，不访问 Milky client，不读取 session metadata，也不从消息或配置推断身份。未连接、同步失败或 nickname 无法安全规范化时，section 返回空内容，由 Hermes 跳过该 section；缺少宿主 section API 时仍完成只含首句的平台注册。
+
+`hermes-plugin-milky.qq-session-context` 独立负责当前 QQ 会话介绍。每个 `register(ctx)` 创建一个线程安全、有界的本地 snapshot store；pipeline 在 trigger 的资源解析和 MessageEvent mapper 成功后、`handle_message()` 前，以 `dm:<id>`/`group:<id>` 登记经过 canonical 身份校验的最小资料。friend 只保留 `user_id`、`nickname`、`sex`；group 只保留 `group_id`、`group_name`、`member_count`、`description`、`announcement`。快照不写入 MessageEvent、`channel_context`、`platform_hint` 或出站正文，同群不同 Hermes session 共享 group key，不同注册实例隔离。淘汰或资料缺失只使 section 返回空内容，不阻断 handoff。
+
+会话介绍 callback 只读取 task-local `HERMES_SESSION_CHAT_ID` 和本地 snapshot，不执行 Milky Action、HTTP/SSE、文件访问或其他阻塞 I/O。昵称、群名、描述和公告按不可信 metadata 中和控制字符、折叠换行并限制长度；Hermes 已持久化完整 system prompt 时按 Hermes restore 语义保留原 section 字节，显式 prompt rebuild 才重新读取当时可用的本地快照。不提供实时刷新能力。
 
 导入和注册阶段不得联网、建立 SSE、创建长期任务或写入用户全局 skills 目录。配置错误必须在启动时安全失败，不能回显凭证。
 

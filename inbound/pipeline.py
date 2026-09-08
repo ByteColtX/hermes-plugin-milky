@@ -21,10 +21,12 @@ from milky.resources import (
 )
 from session import (
     ChatAdmissionCoordinator,
+    ChatMetadataSnapshotStore,
     ContextOnlyEvent,
     SystemContextBuffer,
     TtlDeduplicator,
     WaitBuffer,
+    build_session_metadata,
     render_ordered_context,
 )
 from will import WillInput
@@ -68,6 +70,7 @@ class InboundPipeline:
         observer: Observer | None = None,
         mute_tracker: object | None = None,
         system_context_buffer: SystemContextBuffer | None = None,
+        session_context_store: ChatMetadataSnapshotStore | None = None,
     ) -> None:
         """创建一次入站 pipeline；不在构造阶段联网或启动任务。"""
 
@@ -86,6 +89,7 @@ class InboundPipeline:
         self._observer = observer
         self._mute_tracker = mute_tracker
         self._system_context = system_context_buffer or SystemContextBuffer(wait_buffer.max_size)
+        self._session_context_store = session_context_store or ChatMetadataSnapshotStore()
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._diagnostics: deque[str] = deque(maxlen=128)
         self._reply_costs = 0
@@ -350,6 +354,7 @@ class InboundPipeline:
                 message_event_cls=self._message_event_cls,
                 message_type_cls=self._message_type_cls,
             )
+            self._register_session_metadata(current)
             handle_message = getattr(self._hermes, "handle_message", None)
             if not callable(handle_message):
                 raise TypeError("Hermes handle_message is unavailable")
@@ -384,6 +389,16 @@ class InboundPipeline:
                     },
                 )
             )
+
+    def _register_session_metadata(self, message: CanonicalMessage) -> None:
+        """在 mapper 成功后登记当前 trigger 的最小会话资料。"""
+
+        try:
+            metadata = build_session_metadata(message)
+            if metadata is not None:
+                self._session_context_store.put(message.chat_key, metadata)
+        except Exception:  # noqa: BLE001 - 旁路快照失败不得阻断既有 handoff
+            self._record("session_context_snapshot_failed")
 
     def _start_detached(self, batch: object) -> None:
         task = asyncio.create_task(self._process_batch(batch))
@@ -566,6 +581,7 @@ class InboundPipeline:
             "observer": self._observer,
             "mute_tracker": self._mute_tracker,
             "system_context_buffer": self._system_context,
+            "session_context_store": self._session_context_store,
         }
         values.update(overrides)
         return type(self)(**values)

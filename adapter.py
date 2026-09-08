@@ -21,7 +21,13 @@ from outbound.materialization import (
     prepare_materialization,
 )
 from outbound.sender import MilkyOutboundSender, OutboundSendResult, parse_outbound_target
-from session import BotIdentitySnapshot, ChatAdmissionCoordinator, TtlDeduplicator, WaitBuffer
+from session import (
+    BotIdentitySnapshot,
+    ChatAdmissionCoordinator,
+    ChatMetadataSnapshotStore,
+    TtlDeduplicator,
+    WaitBuffer,
+)
 from state import MuteTracker
 from will import build_engine
 
@@ -101,6 +107,7 @@ class MilkyAdapter(BasePlatformAdapter):
         hermes_media_helpers: HermesMediaHelpers | None = None,
         slash_command_service: object | None = None,
         identity_snapshot: BotIdentitySnapshot | None = None,
+        session_context_store: ChatMetadataSnapshotStore | None = None,
     ) -> None:
         """组装进程内依赖；构造阶段不建立网络连接或后台任务。"""
 
@@ -146,6 +153,11 @@ class MilkyAdapter(BasePlatformAdapter):
         self._slash_command_service = slash_command_service
         self._identity_snapshot = (
             identity_snapshot if identity_snapshot is not None else BotIdentitySnapshot()
+        )
+        self._session_context_store = (
+            session_context_store
+            if session_context_store is not None
+            else ChatMetadataSnapshotStore()
         )
         self._pipeline = pipeline
         self._self_id: int | None = None
@@ -195,6 +207,12 @@ class MilkyAdapter(BasePlatformAdapter):
         """返回与根入口 system prompt section 共享的身份快照。"""
 
         return self._identity_snapshot
+
+    @property
+    def session_context_store(self) -> ChatMetadataSnapshotStore:
+        """返回当前注册实例绑定的 QQ 会话资料快照 store。"""
+
+        return self._session_context_store
 
     @property
     def diagnostics(self) -> tuple[str, ...]:
@@ -624,6 +642,7 @@ class MilkyAdapter(BasePlatformAdapter):
             admission=self._admission,
             deduplicator=self._deduplicator,
             mute_tracker=self._mute_tracker,
+            session_context_store=self._session_context_store,
         )
 
     async def _run_event_stream(self) -> None:

@@ -40,7 +40,7 @@ Hermes 映射都基于同一份可审计的 canonical message，而不是各自�
 
 ### Requirement: canonical record 包含完整稳定身份
 
-每条可处理消息 MUST 提供 `platform`、`self_id`、`scene`、`chat_key`、`peer_id`、`sender_id`、字符串形式的 `message_id`、Unix 秒时间戳、typed segments、正文、mention/quote 信号、分类后的 `media_resource_references`、`file_attachment_references`、forward/reply references、raw 和安全 metadata。`self_id` SHALL 来自事件的 `self_id` 并与启动时 `get_login_info.data.uin` 的身份一致；Milky `message_seq` 是 canonical `message_id` 的来源。
+每条可处理消息 MUST 提供 `platform`、`self_id`、`scene`、`chat_key`、`peer_id`、`sender_id`、字符串形式的 `message_id`、Unix 秒时间戳、typed segments、正文、mention/quote 信号、分类后的 `media_resource_references`、`file_attachment_references`、forward/reply references、raw 和安全 metadata。`self_id` SHALL 来自事件的 `self_id` 并与启动时 `get_login_info.data.uin` 的身份一致；Milky `message_seq` 是 canonical `message_id` 的来源。通过 friend/group 身份交叉校验后，record MUST 继续携带供会话介绍使用的场景资料；friend 只允许 `user_id`、`nickname`、`sex`，group 只允许 `group_id`、`group_name`、`member_count`、`description`、`announcement`。raw、extras、group member 和未知扩展 MUST NOT 成为会话介绍字段。
 
 #### Scenario: 时间和序号规范化
 
@@ -65,6 +65,18 @@ Hermes 映射都基于同一份可审计的 canonical message，而不是各自�
 - **WHEN** group 消息的 `peer_id`、`group.group_id` 或 `group_member.group_id` 不能相互确认
 - **THEN** 规范化 SHALL 分类拒绝该消息
 - **AND** SHALL NOT 使用其中任意一个字段猜测 chat key
+
+#### Scenario: friend 最小资料沿 canonical 边界保留
+
+- **WHEN** friend 的 `friend.user_id` 与 `peer_id` 一致
+- **THEN** canonical SHALL 保留 `user_id`、`nickname` 和 `sex` 供会话快照使用
+- **AND** SHALL 忽略 `category`、`remark`、raw 和未知扩展
+
+#### Scenario: group 最小资料沿 canonical 边界保留
+
+- **WHEN** group 的 `group.group_id` 与 `peer_id` 一致
+- **THEN** canonical SHALL 保留 `group_id`、`group_name`、`member_count`、`description` 和 `announcement`
+- **AND** SHALL 忽略 group member 身份字段和未知扩展
 
 ### Requirement: sender 显示名按场景使用稳定 fallback
 

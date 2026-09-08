@@ -16,7 +16,7 @@ from inbound.normalizer import (
     normalize_event,
     normalize_message,
 )
-from milky.models import Event, IncomingMessage, Segment
+from milky.models import Event, FriendEntity, GroupEntity, IncomingMessage, Segment
 from session.identity import (
     CanonicalError,
     make_dedup_key,
@@ -61,6 +61,8 @@ class CanonicalMessage:
     will_input: WillInput | None = None
     is_self_quote: bool = False
     quote_target_is_self: bool = False
+    friend: FriendEntity | None = None
+    group: GroupEntity | None = None
 
     @property
     def time(self) -> int:
@@ -223,6 +225,8 @@ def _canonicalize_normalized(
         will_input=normalized.will_input,
         is_self_quote=normalized.is_self_quote,
         quote_target_is_self=normalized.quote_target_is_self,
+        friend=normalized.friend,
+        group=normalized.group,
     )
 
 

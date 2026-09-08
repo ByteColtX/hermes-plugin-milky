@@ -10,7 +10,7 @@ _PLUGIN_ROOT = str(Path(__file__).resolve().parent)
 if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 
-from session.identity import BotIdentitySnapshot
+from session import BotIdentitySnapshot, ChatMetadataSnapshotStore, render_current_session_context
 
 PLATFORM_HINT = "You are chatting on QQ through Hermes's Milky platform."
 
@@ -33,6 +33,7 @@ PLATFORM_GUIDANCE = """
 """
 
 MILKY_PROMPT_SECTION_ID = "hermes-plugin-milky.qq-platform-guidance"
+MILKY_SESSION_CONTEXT_SECTION_ID = "hermes-plugin-milky.qq-session-context"
 
 
 def _render_platform_guidance(identity_snapshot: BotIdentitySnapshot, _session_info: object) -> str:
@@ -56,6 +57,27 @@ def _register_platform_guidance(ctx: Any, identity_snapshot: BotIdentitySnapshot
     register_section(
         id=MILKY_PROMPT_SECTION_ID,
         content=lambda session_info: _render_platform_guidance(identity_snapshot, session_info),
+        position="after_memory",
+    )
+
+
+def _render_session_context(
+    session_context_store: ChatMetadataSnapshotStore, _session_info: object
+) -> str:
+    """只从当前注册实例的本地快照渲染 QQ 会话介绍。"""
+
+    return render_current_session_context(session_context_store)
+
+
+def _register_session_context(ctx: Any, store: ChatMetadataSnapshotStore) -> None:
+    """在宿主支持时登记无网络的 QQ 会话介绍 section。"""
+
+    register_section = getattr(ctx, "register_system_prompt_section", None)
+    if not callable(register_section):
+        return
+    register_section(
+        id=MILKY_SESSION_CONTEXT_SECTION_ID,
+        content=lambda session_info: _render_session_context(store, session_info),
         position="after_memory",
     )
 
@@ -117,7 +139,9 @@ def register(ctx: Any) -> None:
     from .adapter import MilkyAdapter
 
     identity_snapshot = BotIdentitySnapshot()
+    session_context_store = ChatMetadataSnapshotStore()
     _register_platform_guidance(ctx, identity_snapshot)
+    _register_session_context(ctx, session_context_store)
 
     register_platform(
         name="milky",
@@ -127,6 +151,7 @@ def register(ctx: Any) -> None:
             milky_config=milky_config,
             slash_command_service=command_service,
             identity_snapshot=identity_snapshot,
+            session_context_store=session_context_store,
         ),
         check_fn=lambda: True,
         validate_config=lambda _platform_config: True,
