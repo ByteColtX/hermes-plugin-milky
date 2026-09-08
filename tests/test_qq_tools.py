@@ -197,6 +197,28 @@ def test_schema_fixture_matches_all_new_tool_specs_and_is_synthetic() -> None:
         assert forbidden not in contents
 
 
+def test_tool_descriptions_do_not_end_with_punctuation() -> None:
+    """工具和参数描述应简洁且不以标点结尾。"""
+
+    descriptions: list[str] = []
+
+    def collect(value: object) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key == "description" and isinstance(item, str):
+                    descriptions.append(item)
+                else:
+                    collect(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                collect(item)
+
+    collect(TOOL_SPECS)
+
+    assert descriptions
+    assert all(description[-1] not in "。！？；，、,.!?;:" for description in descriptions)
+
+
 def test_query_response_fixtures_keep_minimum_fields_and_unknown_values() -> None:
     """好友资料和其他查询 fixture 应包含最小字段和非敏感未知扩展。"""
 

@@ -25,7 +25,7 @@ logger = logging.getLogger("hermes_plugins.milky.outbound.tools")
 
 SEND_PROFILE_LIKE_SCHEMA = {
     "name": "send_profile_like",
-    "description": "给指定好友发送名片点赞；调用前必须提供合法 QQ 号。",
+    "description": "给好友发送名片点赞",
     "parameters": {
         "type": "object",
         "properties": {
@@ -37,10 +37,10 @@ SEND_PROFILE_LIKE_SCHEMA = {
             },
             "count": {
                 "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991,
-                "nullable": True,
-                "description": "可选点赞数量",
+                "minimum": 1,
+                "maximum": 50,
+                "nullable": False,
+                "description": "点赞数量；通常为10或50次",
             },
         },
         "required": ["user_id"],
@@ -50,7 +50,7 @@ SEND_PROFILE_LIKE_SCHEMA = {
 
 SEND_FRIEND_NUDGE_SCHEMA = {
     "name": "send_friend_nudge",
-    "description": "向指定好友发送戳一戳。",
+    "description": "给好友发送戳一戳",
     "parameters": {
         "type": "object",
         "properties": {
@@ -73,7 +73,7 @@ SEND_FRIEND_NUDGE_SCHEMA = {
 
 GROUP_NUDGE_SCHEMA = {
     "name": "send_group_nudge",
-    "description": "向指定群成员发送戳一戳。",
+    "description": "给群成员发送戳一戳",
     "parameters": {
         "type": "object",
         "properties": {
@@ -87,7 +87,7 @@ GROUP_NUDGE_SCHEMA = {
                 "type": "integer",
                 "minimum": 10001,
                 "maximum": 4294967295,
-                "description": "被戳的群成员 QQ 号",
+                "description": "成员 QQ 号",
             },
         },
         "required": ["group_id", "user_id"],
@@ -97,7 +97,7 @@ GROUP_NUDGE_SCHEMA = {
 
 RECALL_GROUP_MESSAGE_SCHEMA = {
     "name": "recall_group_message",
-    "description": "撤回指定群消息；目标和远端消息序号必须明确提供。",
+    "description": "撤回群消息",
     "parameters": {
         "type": "object",
         "properties": {
@@ -111,7 +111,7 @@ RECALL_GROUP_MESSAGE_SCHEMA = {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991,
-                "description": "Milky 远端消息序号",
+                "description": "消息序号",
             },
         },
         "required": ["group_id", "message_seq"],
@@ -121,7 +121,7 @@ RECALL_GROUP_MESSAGE_SCHEMA = {
 
 GET_GROUP_INFO_SCHEMA = {
     "name": "get_group_info",
-    "description": "获取指定群的信息。",
+    "description": "获取群信息",
     "parameters": {
         "type": "object",
         "properties": {
@@ -134,7 +134,7 @@ GET_GROUP_INFO_SCHEMA = {
             "no_cache": {
                 "type": "boolean",
                 "nullable": True,
-                "description": "是否强制不使用缓存",
+                "description": "是否绕过缓存",
             },
         },
         "required": ["group_id"],
@@ -144,7 +144,7 @@ GET_GROUP_INFO_SCHEMA = {
 
 GET_GROUP_MEMBER_LIST_SCHEMA = {
     "name": "get_group_member_list",
-    "description": "获取指定群的成员列表。",
+    "description": "获取群成员列表",
     "parameters": {
         "type": "object",
         "properties": {
@@ -157,7 +157,7 @@ GET_GROUP_MEMBER_LIST_SCHEMA = {
             "no_cache": {
                 "type": "boolean",
                 "nullable": True,
-                "description": "是否强制不使用缓存",
+                "description": "是否绕过缓存",
             },
         },
         "required": ["group_id"],
@@ -167,7 +167,7 @@ GET_GROUP_MEMBER_LIST_SCHEMA = {
 
 GET_GROUP_MEMBER_INFO_SCHEMA = {
     "name": "get_group_member_info",
-    "description": "获取指定群成员的信息。",
+    "description": "获取群成员信息",
     "parameters": {
         "type": "object",
         "properties": {
@@ -181,12 +181,12 @@ GET_GROUP_MEMBER_INFO_SCHEMA = {
                 "type": "integer",
                 "minimum": 10001,
                 "maximum": 4294967295,
-                "description": "群成员 QQ 号",
+                "description": "成员 QQ 号",
             },
             "no_cache": {
                 "type": "boolean",
                 "nullable": True,
-                "description": "是否强制不使用缓存",
+                "description": "是否绕过缓存",
             },
         },
         "required": ["group_id", "user_id"],
@@ -196,7 +196,7 @@ GET_GROUP_MEMBER_INFO_SCHEMA = {
 
 SET_GROUP_MEMBER_MUTE_SCHEMA = {
     "name": "set_group_member_mute",
-    "description": "设置群成员禁言；duration 为 0 时取消禁言。",
+    "description": "设置群成员禁言，0 表示取消",
     "parameters": {
         "type": "object",
         "properties": {
@@ -210,7 +210,7 @@ SET_GROUP_MEMBER_MUTE_SCHEMA = {
                 "type": "integer",
                 "minimum": 10001,
                 "maximum": 4294967295,
-                "description": "被设置的 QQ 号",
+                "description": "成员 QQ 号",
             },
             "duration": {
                 "type": "integer",
@@ -227,7 +227,7 @@ SET_GROUP_MEMBER_MUTE_SCHEMA = {
 
 SET_GROUP_WHOLE_MUTE_SCHEMA = {
     "name": "set_group_whole_mute",
-    "description": "设置群全员禁言；is_mute 为 false 时取消全员禁言。",
+    "description": "设置全员禁言，false 表示取消",
     "parameters": {
         "type": "object",
         "properties": {
@@ -250,14 +250,14 @@ SET_GROUP_WHOLE_MUTE_SCHEMA = {
 
 GET_FORWARDED_MESSAGES_SCHEMA = {
     "name": "get_forwarded_messages",
-    "description": "查询指定合并转发消息的完整 Milky 结果。",
+    "description": "查询合并转发消息",
     "parameters": {
         "type": "object",
         "properties": {
             "forward_id": {
                 "type": "string",
                 "minLength": 1,
-                "description": "合并转发标识",
+                "description": "合并转发 ID",
             }
         },
         "required": ["forward_id"],
@@ -267,7 +267,7 @@ GET_FORWARDED_MESSAGES_SCHEMA = {
 
 GET_PRIVATE_FILE_DOWNLOAD_URL_SCHEMA = {
     "name": "get_private_file_download_url",
-    "description": "查询私聊文件的下载链接；工具不会下载或缓存文件。",
+    "description": "获取私聊文件下载链接",
     "parameters": {
         "type": "object",
         "properties": {
@@ -300,7 +300,7 @@ GET_PRIVATE_FILE_DOWNLOAD_URL_SCHEMA = {
 
 KICK_GROUP_MEMBER_SCHEMA = {
     "name": "kick_group_member",
-    "description": "将指定 QQ 移出群聊；仅在显式调用时执行。",
+    "description": "将成员移出群聊",
     "parameters": {
         "type": "object",
         "properties": {
@@ -314,12 +314,12 @@ KICK_GROUP_MEMBER_SCHEMA = {
                 "type": "integer",
                 "minimum": 10001,
                 "maximum": 4294967295,
-                "description": "待移出成员 QQ 号",
+                "description": "成员 QQ 号",
             },
             "reject_add_request": {
                 "type": "boolean",
                 "nullable": True,
-                "description": "是否拒绝该成员再次加群申请",
+                "description": "是否拒绝再次加群",
             },
         },
         "required": ["group_id", "user_id"],
@@ -329,7 +329,7 @@ KICK_GROUP_MEMBER_SCHEMA = {
 
 QUIT_GROUP_SCHEMA = {
     "name": "quit_group",
-    "description": "退出指定群聊；仅在显式调用时执行。",
+    "description": "退出群聊",
     "parameters": {
         "type": "object",
         "properties": {
@@ -347,7 +347,7 @@ QUIT_GROUP_SCHEMA = {
 
 DELETE_FRIEND_SCHEMA = {
     "name": "delete_friend",
-    "description": "删除指定好友关系；仅在显式调用时执行。",
+    "description": "删除好友",
     "parameters": {
         "type": "object",
         "properties": {
@@ -365,7 +365,7 @@ DELETE_FRIEND_SCHEMA = {
 
 GET_FRIEND_REQUESTS_SCHEMA = {
     "name": "get_friend_requests",
-    "description": "查询好友请求列表并保留完整 Milky 结果。",
+    "description": "查询好友请求",
     "parameters": {
         "type": "object",
         "properties": {
@@ -374,12 +374,12 @@ GET_FRIEND_REQUESTS_SCHEMA = {
                 "minimum": 0,
                 "maximum": 9007199254740991,
                 "nullable": True,
-                "description": "最多返回的请求数量",
+                "description": "最多返回数量",
             },
             "is_filtered": {
                 "type": "boolean",
                 "nullable": True,
-                "description": "是否只返回过滤后的请求",
+                "description": "是否仅返回过滤结果",
             },
         },
         "required": [],
@@ -389,7 +389,7 @@ GET_FRIEND_REQUESTS_SCHEMA = {
 
 GET_FRIEND_INFO_SCHEMA = {
     "name": "get_friend_info",
-    "description": "查询指定好友资料并保留完整 Milky 结果；资料字段由目标服务定义。",
+    "description": "查询好友资料",
     "parameters": {
         "type": "object",
         "properties": {
@@ -407,19 +407,19 @@ GET_FRIEND_INFO_SCHEMA = {
 
 ACCEPT_FRIEND_REQUEST_SCHEMA = {
     "name": "accept_friend_request",
-    "description": "接受指定好友请求；仅在显式调用时执行。",
+    "description": "接受好友请求",
     "parameters": {
         "type": "object",
         "properties": {
             "initiator_uid": {
                 "type": "string",
                 "minLength": 1,
-                "description": "好友请求发起者 UID",
+                "description": "请求发起者 UID",
             },
             "is_filtered": {
                 "type": "boolean",
                 "nullable": True,
-                "description": "是否按过滤后的请求处理",
+                "description": "是否按过滤结果处理",
             },
         },
         "required": ["initiator_uid"],
@@ -429,19 +429,19 @@ ACCEPT_FRIEND_REQUEST_SCHEMA = {
 
 REJECT_FRIEND_REQUEST_SCHEMA = {
     "name": "reject_friend_request",
-    "description": "拒绝指定好友请求；仅在显式调用时执行。",
+    "description": "拒绝好友请求",
     "parameters": {
         "type": "object",
         "properties": {
             "initiator_uid": {
                 "type": "string",
                 "minLength": 1,
-                "description": "好友请求发起者 UID",
+                "description": "请求发起者 UID",
             },
             "is_filtered": {
                 "type": "boolean",
                 "nullable": True,
-                "description": "是否按过滤后的请求处理",
+                "description": "是否按过滤结果处理",
             },
             "reason": {
                 "type": "string",
@@ -456,7 +456,7 @@ REJECT_FRIEND_REQUEST_SCHEMA = {
 
 GET_GROUP_FILE_DOWNLOAD_URL_SCHEMA = {
     "name": "get_group_file_download_url",
-    "description": "查询群文件的下载链接；工具不会下载或缓存文件。",
+    "description": "获取群文件下载链接",
     "parameters": {
         "type": "object",
         "properties": {
@@ -479,7 +479,7 @@ GET_GROUP_FILE_DOWNLOAD_URL_SCHEMA = {
 
 ACCEPT_GROUP_REQUEST_SCHEMA = {
     "name": "accept_group_request",
-    "description": "接受指定入群请求；仅在显式调用时执行。",
+    "description": "接受入群请求",
     "parameters": {
         "type": "object",
         "properties": {
@@ -487,12 +487,12 @@ ACCEPT_GROUP_REQUEST_SCHEMA = {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991,
-                "description": "入群请求通知序号",
+                "description": "通知序号",
             },
             "notification_type": {
                 "type": "string",
                 "enum": ["join_request", "invited_join_request"],
-                "description": "入群请求类型",
+                "description": "请求类型",
             },
             "group_id": {
                 "type": "integer",
@@ -503,7 +503,7 @@ ACCEPT_GROUP_REQUEST_SCHEMA = {
             "is_filtered": {
                 "type": "boolean",
                 "nullable": True,
-                "description": "是否按过滤后的通知处理",
+                "description": "是否按过滤结果处理",
             },
         },
         "required": ["notification_seq", "notification_type", "group_id"],
@@ -513,7 +513,7 @@ ACCEPT_GROUP_REQUEST_SCHEMA = {
 
 REJECT_GROUP_REQUEST_SCHEMA = {
     "name": "reject_group_request",
-    "description": "拒绝指定入群请求；仅在显式调用时执行。",
+    "description": "拒绝入群请求",
     "parameters": {
         "type": "object",
         "properties": {
@@ -521,12 +521,12 @@ REJECT_GROUP_REQUEST_SCHEMA = {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991,
-                "description": "入群请求通知序号",
+                "description": "通知序号",
             },
             "notification_type": {
                 "type": "string",
                 "enum": ["join_request", "invited_join_request"],
-                "description": "入群请求类型",
+                "description": "请求类型",
             },
             "group_id": {
                 "type": "integer",
@@ -537,7 +537,7 @@ REJECT_GROUP_REQUEST_SCHEMA = {
             "is_filtered": {
                 "type": "boolean",
                 "nullable": True,
-                "description": "是否按过滤后的通知处理",
+                "description": "是否按过滤结果处理",
             },
             "reason": {
                 "type": "string",
@@ -553,7 +553,7 @@ REJECT_GROUP_REQUEST_SCHEMA = {
 
 ACCEPT_GROUP_INVITATION_SCHEMA = {
     "name": "accept_group_invitation",
-    "description": "接受邀请 Bot 入群的通知；仅在显式调用时执行。",
+    "description": "接受入群邀请",
     "parameters": {
         "type": "object",
         "properties": {
@@ -567,7 +567,7 @@ ACCEPT_GROUP_INVITATION_SCHEMA = {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991,
-                "description": "群邀请序号",
+                "description": "邀请序号",
             },
         },
         "required": ["group_id", "invitation_seq"],
@@ -577,7 +577,7 @@ ACCEPT_GROUP_INVITATION_SCHEMA = {
 
 REJECT_GROUP_INVITATION_SCHEMA = {
     "name": "reject_group_invitation",
-    "description": "拒绝邀请 Bot 入群的通知；仅在显式调用时执行。",
+    "description": "拒绝入群邀请",
     "parameters": {
         "type": "object",
         "properties": {
@@ -591,7 +591,7 @@ REJECT_GROUP_INVITATION_SCHEMA = {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991,
-                "description": "群邀请序号",
+                "description": "邀请序号",
             },
         },
         "required": ["group_id", "invitation_seq"],
@@ -601,7 +601,7 @@ REJECT_GROUP_INVITATION_SCHEMA = {
 
 GET_GROUP_FILES_SCHEMA = {
     "name": "get_group_files",
-    "description": "查询群文件和文件夹列表；工具不会下载或缓存文件。",
+    "description": "查询群文件和文件夹",
     "parameters": {
         "type": "object",
         "properties": {
@@ -615,7 +615,7 @@ GET_GROUP_FILES_SCHEMA = {
                 "type": "string",
                 "nullable": True,
                 "minLength": 1,
-                "description": "可选父文件夹 ID",
+                "description": "父文件夹 ID",
             },
         },
         "required": ["group_id"],
@@ -625,7 +625,7 @@ GET_GROUP_FILES_SCHEMA = {
 
 SET_GROUP_MEMBER_SPECIAL_TITLE_SCHEMA = {
     "name": "set_group_member_special_title",
-    "description": "设置群成员专属头衔；仅在显式调用时执行，空字符串按原值传递。",
+    "description": "设置群成员专属头衔；需群主权限",
     "parameters": {
         "type": "object",
         "properties": {
@@ -639,11 +639,11 @@ SET_GROUP_MEMBER_SPECIAL_TITLE_SCHEMA = {
                 "type": "integer",
                 "minimum": 10001,
                 "maximum": 4294967295,
-                "description": "群成员 QQ 号",
+                "description": "成员 QQ 号",
             },
             "special_title": {
                 "type": "string",
-                "description": "专属头衔；空字符串表示按目标服务语义清除或设置为空",
+                "description": "专属头衔，空字符串表示清除",
             },
         },
         "required": ["group_id", "user_id", "special_title"],
