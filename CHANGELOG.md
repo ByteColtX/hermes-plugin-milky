@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.5.0] - 2026-09-08
+
+### 新增
+
+- 新增 `MILKY_LONG_TEXT_FORWARD_THRESHOLD`，支持按可见规范化文本长度将超长文本和有序
+  native `image`/`record`/`video` 批次收纳为单个 `forward`；默认值为 `0`，合法范围为
+  `0..4096`，超过正值阈值才启用。
+- 支持 QQ 会话介绍 system prompt section；在兼容的 Hermes 宿主中，为 friend/group 会话
+  注入经过安全清洗的最小资料快照，不发起实时查询。
+
+### 变更与修复
+
+- 简化私聊历史上下文：普通私聊消息改为只保留正文，不再生成 sender、UID、消息 ID 和
+  reply header；群聊历史继续保留既有 header 语义。
+- 超长文本 forward 在身份不可用时使用固定安全身份 `user_id=10001`、`sender_name=QQ用户`；
+  文档/文件继续使用独立 upload，不猜测分离的 `MEDIA:` 调用属于同一 forward 批次。
+
+### 验证与边界
+
+- 完整测试、Ruff、格式检查、构建、`git diff --check` 和 OpenSpec strict validate 均在发布前执行。
+- 未执行真实 Milky 写入 smoke；真实 Hermes host、Milky 服务和消息发送仍需在目标部署环境中验证。
+
 ## [1.4.0] - 2026-09-07
 
 ### 变更与修复
