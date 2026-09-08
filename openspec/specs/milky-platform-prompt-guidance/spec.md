@@ -82,8 +82,7 @@ Milky system prompt section MUST 从同一插件注册实例创建的 adapter �
 
 ### Requirement: 注册和降级保持 Milky 边界
 
-system prompt section MUST 只由 Milky 根插件注册入口登记，不得修改 Hermes core、全局平台提示
-逻辑或其他平台的注册结果。section 注册阶段 MUST 遵守既有无网络、无 SSE 和无长期任务约束。
+操作指引 section 和独立的 QQ 会话介绍 section MUST 只由 Milky 根插件注册入口登记，不得修改 Hermes core、全局平台提示逻辑或其他平台的注册结果。会话介绍 section 使用 `hermes-plugin-milky.qq-session-context` 稳定 ID，读取通过 trigger handoff 登记的本地 friend/group snapshot；section callback MUST 不执行网络、文件或阻塞 I/O。section 注册阶段 MUST 遵守既有无网络、无 SSE 和无长期任务约束。
 当宿主不提供 section 注册 API 时，插件 MUST 安全跳过 section 登记并继续注册只含首句的
 `platform_hint`，不得因兼容性探测抛出未处理异常。
 

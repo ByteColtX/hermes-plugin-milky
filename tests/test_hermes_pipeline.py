@@ -19,7 +19,7 @@ from milky.resources import (
     ResolvedTriggerBatch,
     ResourceResolver,
 )
-from session import ChatAdmissionCoordinator, TtlDeduplicator, WaitBuffer
+from session import ChatAdmissionCoordinator, ChatMetadataSnapshotStore, TtlDeduplicator, WaitBuffer
 from will import (
     RoutingConfig,
     RoutingWillEngine,
@@ -77,6 +77,7 @@ class FakeSource:
     platform: str
     chat_id: str
     chat_type: str
+    chat_name: str | None
     user_id: str
     user_name: str
     message_id: str | None
@@ -97,6 +98,7 @@ class FakeHermes:
             platform="milky",
             chat_id=values["chat_id"],  # type: ignore[arg-type]
             chat_type=values["chat_type"],  # type: ignore[arg-type]
+            chat_name=values["chat_name"],  # type: ignore[arg-type]
             user_id=values["user_id"],  # type: ignore[arg-type]
             user_name=values["user_name"],  # type: ignore[arg-type]
             message_id=values["message_id"],  # type: ignore[arg-type]
@@ -257,6 +259,7 @@ def make_pipeline(
     routing: RoutingConfig | None = None,
     will_engine: object | None = None,
     buffer_size: int = 20,
+    session_context_store: ChatMetadataSnapshotStore | None = None,
 ) -> InboundPipeline:
     """创建只包含本地 fake 依赖的入站 pipeline。"""
 
@@ -272,6 +275,7 @@ def make_pipeline(
         message_event_cls=FakeMessageEvent,
         message_type_cls=FakeMessageType,
         mute_tracker=FakeMuteTracker(),
+        session_context_store=session_context_store,
     )
 
 
@@ -295,9 +299,73 @@ def test_group_and_friend_triggers_map_to_hermes_with_stable_source() -> None:
     assert [event.message_id for event in events] == ["1001", "1002"]
     assert [event.source.chat_id for event in events] == ["dm:800000001", "group:700000001"]
     assert [event.source.chat_type for event in events] == ["dm", "group"]
+    assert [event.source.chat_name for event in events] == ["合成好友", "合成群组"]
     assert all(event.source.platform == "milky" for event in events)
     assert all(event.allow_gateway_control is False for event in events)
     assert all(event.user_id is not None and event.user_name is not None for event in events)
+    for event in events:
+        assert "Current QQ Conversation Information" not in event.text
+        assert "Current QQ Conversation Information" not in (event.channel_context or "")
+        assert "Current QQ Conversation Information" not in repr(event.metadata)
+
+
+def test_session_snapshot_is_ready_before_handoff_and_skips_non_trigger_paths() -> None:
+    """快照登记位于 mapper 与 Hermes handoff 之间，失败路径不登记。"""
+
+    async def scenario() -> tuple[ChatMetadataSnapshotStore, ChatMetadataSnapshotStore]:
+        store = ChatMetadataSnapshotStore()
+
+        class StoreAwareHermes(FakeHermes):
+            """确认 handle_message 调用前已经存在当前 chat 快照。"""
+
+            async def handle_message(self, event: FakeMessageEvent) -> None:
+                assert event.source is not None
+                assert store.get(event.source.chat_id) is not None
+                await super().handle_message(event)
+
+        hermes = StoreAwareHermes()
+        pipeline = make_pipeline(hermes, FakeResolver(), session_context_store=store)
+        assert (
+            await pipeline.handle_event(load_fixture("events/message_receive.friend.json"))
+        ).classification == "trigger"
+        await pipeline.wait_idle()
+        assert store.get("dm:800000001") is not None
+
+        skipped_store = ChatMetadataSnapshotStore()
+        skipped = make_pipeline(
+            FakeHermes(),
+            FakeResolver(),
+            routing=RoutingConfig(direct="wait", all_message="wait"),
+            session_context_store=skipped_store,
+        )
+        waiting = load_fixture("events/message_receive.friend.json")
+        waiting["data"]["message_seq"] = 1101
+        assert (await skipped.handle_event(waiting)).classification == "wait"
+        assert (
+            await skipped.handle_event(load_fixture("events/message_receive.temp.json"))
+        ).classification == "ignored_temp"
+        assert (
+            await skipped.handle_event(load_fixture("events/system.message_recall.json"))
+        ).classification == "observe_only"
+        denied = load_fixture("events/message_receive.friend.json")
+        denied["data"]["message_seq"] = 1102
+        denied["data"]["sender_id"] = 900000001
+        denied["data"]["peer_id"] = 900000001
+        denied["data"]["friend"]["user_id"] = 900000001
+        assert (await skipped.handle_event(denied)).classification == "denied"
+        await skipped.wait_idle()
+        assert skipped_store.snapshot() == {}
+
+        failed_store = ChatMetadataSnapshotStore()
+        failed = make_pipeline(FakeHermes(), FailingResolver(), session_context_store=failed_store)
+        failed_event = load_fixture("events/message_receive.friend.json")
+        failed_event["data"]["message_seq"] = 1103
+        assert (await failed.handle_event(failed_event)).classification == "trigger"
+        await failed.wait_idle()
+        assert failed_store.snapshot() == {}
+        return store, skipped_store
+
+    asyncio.run(scenario())
 
 
 def test_wait_history_is_context_only_and_current_message_is_not_repeated() -> None:

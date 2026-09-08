@@ -60,6 +60,8 @@ change 和已归档 change 的测试证据见 [openspec/](openspec/)。
 - **多媒体消息：** 接收图片等上下文，并发送文本、@、引用、图片、语音、视频和文件；
 - **QQ 信息能力：** 查询群组、成员、文件和好友/入群请求，并提供部分 QQ 操作；
 - **会话安全边界：** 支持 chat 白名单、禁言状态同步、消息去重和有界历史缓冲。
+- **QQ 会话介绍：** 在支持 system prompt section 的 Hermes 宿主中，首次 Milky friend/group
+  session prompt 可看到当前会话的最小资料；介绍来自入站消息快照，不实时查询 Milky。
 
 运行环境：Python 3.13+、Hermes Gateway、Milky v1.3 服务和 `httpx`。Hermes 负责 Agent
 队列及入站资源的下载、缓存和权限边界；本插件负责 Milky 适配和已声明的 QQ 能力。
@@ -574,6 +576,18 @@ token 或密码，仅应在受控环境中短时使用。
 - `face` segment 的正文占位符对非 `emoji 表情` pack 优先使用随插件发布的本地 catalog 名称；未命中、冲突或目录不可用时回退原 `face_id`，缺失 ID 时使用 `NOT SUPPORTED`；
 - 同一 chat 按顺序处理，`wait` 消息进入有界历史，`trigger` 时再交给 Hermes。
 
+支持 system prompt section 的 Hermes 宿主会额外注册
+`hermes-plugin-milky.qq-session-context`。合法 friend 介绍只包含 `user_id`、`nickname`、
+`sex`；合法 group 介绍只包含 `group_id`、`group_name`、`member_count`、`description`、
+`announcement`。快照在资源解析、MessageEvent mapper 成功后、Hermes `handle_message()` 前登记，
+以 `dm:<id>`/`group:<id>` 隔离并使用有界进程内缓存；不同 Hermes user session 可以共享同一个 group
+介绍。介绍不会写入当前消息正文、历史 `channel_context`、platform hint 或出站正文。
+
+昵称、群名、描述和公告按不可信 metadata 处理：控制字符和换行会被中和并限制长度，未知扩展、
+raw、凭证、媒体 URL、文件路径和敏感正文不会渲染。Gate deny、wait、temp、系统事件、重复消息或
+资源/mapper 失败不登记介绍；缓存淘汰和资料缺失安全返回空 section。Hermes 已持久化 prompt 恢复
+时保留原介绍字节，显式 prompt rebuild 才使用当前本地快照；插件不提供实时刷新。
+
 `message_recall` 的上下文行为如下：
 
 - 只有字段完整且 `message_scene` 为 `friend` 或 `group` 时才登记；friend 写入 `dm:<peer_id>`，group 写入 `group:<peer_id>`，非法场景或 ID 只记录安全诊断；
@@ -659,7 +673,7 @@ malformed 和 unsupported 会保持明确失败分类。缺少消息序号时不
 
 | 对象 | 作用 |
 | --- | --- |
-| `__init__.py::register(ctx)` | 解析启动配置，注册 platform、`/milky`、ToolSpec、standalone sender 和 QQ 指引 section。 |
+| `__init__.py::register(ctx)` | 解析启动配置，注册 platform、`/milky`、ToolSpec、standalone sender、QQ 指引 section 和 QQ 会话介绍 section。 |
 | `__init__.py::register_tools(ctx)` | 委托 `outbound.tools` 注册固定 ToolSpec；注册阶段不联网。 |
 | `MilkyAdapter` | 管理连接、停止、入站交接和出站委托。 |
 | `MilkyOutboundSender` | 校验 `group:/dm:` 目标，格式化消息并调用 Milky Action/upload。 |
@@ -668,6 +682,10 @@ malformed 和 unsupported 会保持明确失败分类。缺少消息序号时不
 支持 `register_system_prompt_section` 的 Hermes 宿主会在 `after_memory` 登记
 `hermes-plugin-milky.qq-platform-guidance`，并在连接完成后使用已确认的 QQ UID 和昵称渲染
 媒体、CQ-compatible、无回复和 bundled skill 指引。旧宿主仍可完成平台注册，但只获得首句提示。
+
+同一宿主还会登记 `hermes-plugin-milky.qq-session-context`；其 callback 只读取当前
+`HERMES_SESSION_CHAT_ID` 对应的本地安全快照，不发起网络或文件 I/O。旧宿主、没有当前 chat
+context、资料缺失或快照已淘汰时不注入会话介绍。
 
 详细的稳定模块边界见 [ARCHITECTURE.md](ARCHITECTURE.md)；可观察行为和测试要求见
 [openspec/](openspec/)。新建的未归档 change 会放在 [openspec/changes/](openspec/changes/)。

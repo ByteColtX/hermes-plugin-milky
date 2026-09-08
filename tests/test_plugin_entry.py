@@ -10,9 +10,12 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
+
+from session import GroupSessionMetadata
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -135,7 +138,7 @@ def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) ->
         hint = context.platforms[0]["platform_hint"]
         assert hint == "You are chatting on QQ through Hermes's Milky platform."
         assert hint == entry.PLATFORM_HINT
-        assert len(context.system_prompt_sections) == 1
+        assert len(context.system_prompt_sections) == 2
         section = context.system_prompt_sections[0]
         assert section["id"] == "hermes-plugin-milky.qq-platform-guidance"
         assert section["position"] == "after_memory"
@@ -156,6 +159,11 @@ def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) ->
         assert "9001" not in hint
         assert "MILKY_ACCESS_TOKEN" not in hint
         assert "https://" not in hint
+        session_section = context.system_prompt_sections[1]
+        assert session_section["id"] == "hermes-plugin-milky.qq-session-context"
+        assert session_section["position"] == "after_memory"
+        assert callable(session_section["content"])
+        assert session_section["content"]({}) == ""
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
@@ -184,6 +192,40 @@ def test_milky_prompt_section_shares_registration_identity_snapshot(monkeypatch)
         assert rendered.split("\n", 1)[1] == entry.PLATFORM_GUIDANCE
         assert rendered.count(entry.PLATFORM_GUIDANCE) == 1
         assert callback({"self_id": 999, "nickname": "changed metadata"}) == rendered
+    finally:
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(f"{module_name}."):
+                sys.modules.pop(name, None)
+
+
+def test_milky_session_section_shares_adapter_snapshot_without_network(monkeypatch) -> None:
+    """会话 section 与 adapter 共享注册级 store，callback 不读取 session_info。"""
+
+    set_valid_environment(monkeypatch)
+    gateway = ModuleType("gateway")
+    session_context = ModuleType("gateway.session_context")
+    session_context.get_session_env = lambda name, default="": (  # type: ignore[attr-defined]
+        "group:700000001" if name == "HERMES_SESSION_CHAT_ID" else default
+    )
+    gateway.session_context = session_context  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "gateway", gateway)
+    monkeypatch.setitem(sys.modules, "gateway.session_context", session_context)
+    entry, module_name = load_plugin_entry()
+    try:
+        context = SkillAndPlatformContext()
+        entry.register(context)
+        adapter = context.platforms[0]["adapter_factory"](object())
+        adapter.session_context_store.put(
+            "group:700000001",
+            GroupSessionMetadata(700000001, "合成群组", 3, "描述", "公告"),
+        )
+
+        callback = context.system_prompt_sections[1]["content"]
+        rendered = callback({"chat_id": "dm:untrusted"})
+
+        assert "group_id: 700000001" in rendered
+        assert "group_name: 合成群组" in rendered
+        assert "dm:untrusted" not in rendered
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
@@ -264,10 +306,11 @@ def test_milky_prompt_registration_isolated_from_other_platform_entries(monkeypa
             "platform_hint": "Other platform hint",
         }
         assert context.system_prompt_sections[0] is other_section
-        assert len(context.system_prompt_sections) == 2
+        assert len(context.system_prompt_sections) == 3
         milky_section = context.system_prompt_sections[1]
         assert milky_section["id"] == "hermes-plugin-milky.qq-platform-guidance"
         assert entry.PLATFORM_GUIDANCE not in other_section["content"]
+        assert context.system_prompt_sections[2]["id"] == "hermes-plugin-milky.qq-session-context"
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
