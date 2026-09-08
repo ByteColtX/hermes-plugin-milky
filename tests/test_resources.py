@@ -17,12 +17,39 @@ from milky.resources import ResourceResolver
 from session import DetachedTriggerBatch
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "protocol"
+RECORD_STT_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "inbound_context" / "record_stt_cases.json"
+)
 
 
 def load_fixture(relative_path: str) -> object:
     """读取脱敏协议 fixture。"""
 
     return json.loads((FIXTURE_ROOT / relative_path).read_text(encoding="utf-8"))
+
+
+def load_record_stt_fixture() -> dict[str, object]:
+    """读取脱敏 record STT 场景 fixture。"""
+
+    value = json.loads(RECORD_STT_FIXTURE.read_text(encoding="utf-8"))
+    assert isinstance(value, dict)
+    return value
+
+
+def make_record_message(case_name: str, message_seq: int) -> object:
+    """从 record 场景 fixture 构造一条脱敏 friend 消息。"""
+
+    fixture = load_record_stt_fixture()
+    cases = fixture["cases"]
+    assert isinstance(cases, list)
+    case = next(item for item in cases if item["name"] == case_name)
+    payload = load_fixture("events/message_receive.friend.json")
+    assert isinstance(payload, dict)
+    data = payload["data"]
+    assert isinstance(data, dict)
+    data["message_seq"] = message_seq
+    data["segments"] = case["segments"]
+    return payload
 
 
 def test_resource_resolver_is_available_for_trigger_batches() -> None:
@@ -37,6 +64,34 @@ def test_resource_resolver_is_available_for_trigger_batches() -> None:
 
     assert resolved.body == "朋友消息"
     assert resolved.hermes_attachment_materializations == ()
+
+
+def test_record_stt_fixture_is_redacted_and_covers_required_shapes() -> None:
+    """record 场景 fixture 只包含合成字段且覆盖当前 change 的输入形状。"""
+
+    contents = RECORD_STT_FIXTURE.read_text(encoding="utf-8")
+    fixture = load_record_stt_fixture()
+    cases = fixture["cases"]
+    assert isinstance(cases, list)
+    assert {case["name"] for case in cases} == {
+        "pure_record",
+        "multiple_records",
+        "record_with_text",
+        "record_with_image",
+        "record_with_file",
+        "record_without_resource",
+    }
+    assert "history_channel_context" in fixture
+    forbidden = (
+        "MILKY_ACCESS_TOKEN",
+        "Authorization",
+        "Bearer ",
+        "http://",
+        "https://",
+        "/Users/",
+        "/tmp/",
+    )
+    assert not any(value in contents for value in forbidden)
 
 
 def test_resolve_batch_logs_completion_and_degradation_without_urls(caplog) -> None:
@@ -206,6 +261,103 @@ def test_trigger_resolves_media_file_and_forward_with_separate_actions() -> None
     assert [name for name, _ in client.calls].count("get_message") == 0
     assert resolved.replies[0].body == "被引用的中性内容"
     assert resolved.forwards[0].messages == ()
+
+
+def test_record_materialization_keeps_audio_pairing_and_removes_current_placeholder() -> None:
+    """成功 record 只生成配对音频，并在当前正文中移除插件占位。"""
+
+    result = canonicalize_event(make_record_message("multiple_records", 4102))
+    assert result.value is not None
+    batch = DetachedTriggerBatch(
+        chat_key="dm:800000001",
+        history=(),
+        current=result.value,
+        trigger_ingress_sequence=4,
+    )
+
+    resolved = asyncio.run(ResourceResolver(make_client(), FakeHermesMedia()).resolve_batch(batch))
+
+    assert resolved.current.body == ""
+    assert [item.kind for item in resolved.current.hermes_attachment_materializations] == [
+        "audio",
+        "audio",
+    ]
+    assert [item.mime_type for item in resolved.current.hermes_attachment_materializations] == [
+        "audio/ogg",
+        "audio/ogg",
+    ]
+    assert len(resolved.current.record_occurrences) == 2
+    assert [
+        (occurrence.body_start, occurrence.body_end)
+        for occurrence in resolved.current.record_occurrences
+    ] == [(0, 22), (22, 44)]
+
+
+def test_record_failure_keeps_only_failed_occurrence_placeholder() -> None:
+    """多 record 中的失败 occurrence 不得被成功 occurrence 的槽位误删。"""
+
+    class MixedRecordHermes(FakeHermesMedia):
+        """让第一个 record 成功、第二个 record 返回无效路径。"""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.paths = iter(("/synthetic/hermes/record-one.ogg", "https://invalid.test/audio"))
+
+        async def cache_audio_from_url(self, url: str, ext: str = ".ogg") -> str:
+            """按 occurrence 顺序返回合成路径。"""
+
+            self.url_calls.append(("audio", url))
+            del ext
+            return next(self.paths)
+
+    result = canonicalize_event(make_record_message("multiple_records", 4103))
+    assert result.value is not None
+    batch = DetachedTriggerBatch(
+        chat_key="dm:800000001",
+        history=(),
+        current=result.value,
+        trigger_ingress_sequence=5,
+    )
+
+    resolved = asyncio.run(
+        ResourceResolver(make_client(), MixedRecordHermes()).resolve_batch(batch)
+    )
+
+    assert resolved.current.body == "[record:NOT SUPPORTED]"
+    assert [item.path for item in resolved.current.hermes_attachment_materializations] == [
+        "/synthetic/hermes/record-one.ogg"
+    ]
+    assert [item.mime_type for item in resolved.current.hermes_attachment_materializations] == [
+        "audio/ogg"
+    ]
+    assert len(resolved.current.record_occurrences) == 1
+    assert any(
+        diagnostic.reference_kind == "record" and diagnostic.classification == "malformed"
+        for diagnostic in resolved.current.diagnostics
+    )
+
+
+def test_history_record_stays_context_only_and_is_not_current_media() -> None:
+    """历史 record 保留占位，当前媒体数组只接收当前 record。"""
+
+    history_result = canonicalize_event(make_record_message("pure_record", 4104))
+    current_result = canonicalize_event(make_record_message("pure_record", 4105))
+    assert history_result.value is not None
+    assert current_result.value is not None
+    batch = DetachedTriggerBatch(
+        chat_key="dm:800000001",
+        history=(history_result.value,),
+        current=current_result.value,
+        trigger_ingress_sequence=7,
+        history_ingress_sequences=(6,),
+    )
+
+    resolved = asyncio.run(ResourceResolver(make_client(), FakeHermesMedia()).resolve_batch(batch))
+
+    assert resolved.history[0].body == "[record:NOT SUPPORTED]"
+    assert len(resolved.history[0].hermes_attachment_materializations) == 1
+    assert resolved.current.body == ""
+    assert len(resolved.current.hermes_attachment_materializations) == 1
 
 
 def test_inline_reply_does_not_query_get_message() -> None:

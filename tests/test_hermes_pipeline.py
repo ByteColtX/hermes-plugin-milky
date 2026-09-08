@@ -42,6 +42,7 @@ class FakeMessageType:
     TEXT = "text"
     PHOTO = "photo"
     AUDIO = "audio"
+    VOICE = "voice"
     VIDEO = "video"
     DOCUMENT = "document"
 
@@ -325,6 +326,126 @@ def test_group_and_friend_triggers_map_to_hermes_with_stable_source() -> None:
         assert "Current QQ Conversation Information" not in event.text
         assert "Current QQ Conversation Information" not in (event.channel_context or "")
         assert "Current QQ Conversation Information" not in repr(event.metadata)
+
+
+def test_record_events_use_voice_only_for_pure_materialized_records() -> None:
+    """fake Hermes 应收到纯 record 的 VOICE 和成对媒体，混合类型保持原规则。"""
+
+    async def scenario() -> list[FakeMessageEvent]:
+        from tests.test_resources import FakeHermesMedia, make_client, make_record_message
+
+        hermes = FakeHermes()
+        resolver = ResourceResolver(make_client(), FakeHermesMedia())
+        pipeline = make_pipeline(hermes, resolver, will_engine=RecordingWill())
+        for index, case_name in enumerate(
+            (
+                "pure_record",
+                "multiple_records",
+                "record_with_text",
+                "record_with_image",
+                "record_with_file",
+            ),
+            start=1,
+        ):
+            result = await pipeline.handle_event(make_record_message(case_name, 4200 + index))
+            assert result.classification == "trigger"
+        await pipeline.wait_idle()
+        return sorted(hermes.events, key=lambda event: event.message_id or "")
+
+    events = asyncio.run(scenario())
+
+    assert [event.message_type for event in events] == [
+        FakeMessageType.VOICE,
+        FakeMessageType.VOICE,
+        FakeMessageType.TEXT,
+        FakeMessageType.TEXT,
+        FakeMessageType.AUDIO,
+    ]
+    assert [event.media_types for event in events] == [
+        ["audio/ogg"],
+        ["audio/ogg", "audio/ogg"],
+        ["audio/ogg"],
+        ["audio/ogg", "image/jpeg"],
+        ["audio/ogg"],
+    ]
+    assert all(len(event.media_urls) == len(event.media_types) for event in events)
+    assert all("[record:NOT SUPPORTED]" not in event.text for event in events)
+    assert events[0].text == ""
+    assert events[1].text == ""
+    assert events[2].text == "合成语音说明"
+
+
+@pytest.mark.parametrize(
+    "stt_state",
+    ("enabled_success", "disabled", "provider_failed", "empty_transcription"),
+)
+def test_record_stt_boundary_leaves_provider_behavior_to_fake_hermes(stt_state: str) -> None:
+    """插件只交接 VOICE 输入，不读取或改写 fake Hermes 的 STT 状态。"""
+
+    async def scenario() -> FakeMessageEvent:
+        from tests.test_resources import FakeHermesMedia, make_client, make_record_message
+
+        hermes = FakeHermes()
+        hermes.stt_state = stt_state
+        hermes.stt_provider = "provider-owned-by-host"
+        pipeline = make_pipeline(
+            hermes,
+            ResourceResolver(make_client(), FakeHermesMedia()),
+            will_engine=RecordingWill(),
+        )
+        result = await pipeline.handle_event(make_record_message("pure_record", 4251))
+        assert result.classification == "trigger"
+        await pipeline.wait_idle()
+        return hermes.events[0]
+
+    event = asyncio.run(scenario())
+
+    assert event.message_type == FakeMessageType.VOICE
+    assert event.media_types == ["audio/ogg"]
+    assert event.text == ""
+
+
+def test_historical_record_stays_in_channel_context_without_stt_media() -> None:
+    """历史 record 保留上下文占位，当前 record 才进入 VOICE 媒体输入。"""
+
+    class SequenceWill(RecordingWill):
+        """按输入顺序返回 wait、trigger，构造 detached 历史。"""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.decisions = iter(("wait", "trigger"))
+
+        def decide(self, input_value: object) -> str:
+            """返回预先配置的 Will 决策。"""
+
+            self.inputs.append(input_value)
+            return next(self.decisions)
+
+    async def scenario() -> FakeMessageEvent:
+        from tests.test_resources import FakeHermesMedia, make_client, make_record_message
+
+        hermes = FakeHermes()
+        pipeline = make_pipeline(
+            hermes,
+            ResourceResolver(make_client(), FakeHermesMedia()),
+            will_engine=SequenceWill(),
+        )
+        assert (
+            await pipeline.handle_event(make_record_message("pure_record", 4261))
+        ).classification == "wait"
+        assert (
+            await pipeline.handle_event(make_record_message("pure_record", 4262))
+        ).classification == "trigger"
+        await pipeline.wait_idle()
+        return hermes.events[0]
+
+    event = asyncio.run(scenario())
+
+    assert event.message_type == FakeMessageType.VOICE
+    assert event.media_types == ["audio/ogg"]
+    assert event.channel_context == "[record:NOT SUPPORTED]"
+    assert event.text == ""
+    assert "[record:NOT SUPPORTED]" not in event.text
 
 
 def test_member_event_notification_injects_with_confirmed_key_and_drains() -> None:

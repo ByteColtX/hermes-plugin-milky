@@ -221,7 +221,9 @@ def extract_segments(
 
         if isinstance(segment, RecordSegment):
             has_supported_content = True
-            body_parts.append("[record:NOT SUPPORTED]")
+            body_start = sum(len(part) for part in body_parts)
+            marker = "[record:NOT SUPPORTED]"
+            body_parts.append(marker)
             if not (_has_text(segment.resource_id) or _has_text(segment.temp_url)):
                 _append_once(diagnostics, "incomplete_media_reference")
             media_resource_references.append(
@@ -232,6 +234,8 @@ def extract_segments(
                     mime_type=_extra_text(segment, "mime_type"),
                     file_size=_extra_nonnegative_int(segment, "file_size"),
                     raw=_safe_mapping(segment.raw),
+                    body_start=body_start,
+                    body_end=body_start + len(marker),
                     segment_index=segment_index,
                 )
             )

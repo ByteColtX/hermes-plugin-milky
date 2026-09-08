@@ -23,6 +23,7 @@ from milky.models import (
 from milky.resources import (
     HermesAttachmentMaterialization,
     ResolvedMessage,
+    ResolvedRecordOccurrence,
     ResourceDiagnostic,
 )
 from session.buffer import render_message_record
@@ -65,7 +66,9 @@ def map_message_event(
     sender_name = _required_text(message, "sender_name")
     sender_id = _required_int(message, "sender_id")
     chat_key = _required_text(message, "chat_key")
-    body = _required_text_value(resolved.body, "resolved body")
+    body = resolved.body
+    if not isinstance(body, str):
+        raise TypeError("resolved body is invalid")
     message_id = _optional_text(message, "message_id")
     quote_id = _optional_text(message, "quote_message_id")
     current_materializations = tuple(resolved.hermes_attachment_materializations)
@@ -82,6 +85,10 @@ def map_message_event(
     ]
     media_urls = [path for path, _mime_type in media_pairs]
     media_types = [mime_type for _path, mime_type in media_pairs]
+    current_body = _remove_materialized_record_placeholders(
+        body,
+        resolved.record_occurrences,
+    )
 
     reply = resolved.replies[0] if resolved.replies else None
     reply_text = reply.body if reply is not None else None
@@ -94,7 +101,7 @@ def map_message_event(
                 chat_key,
                 sender_name,
                 sender_id,
-                body,
+                current_body,
                 message_id,
                 quote_id,
                 getattr(message, "quote_target_is_self", False) is True,
@@ -209,14 +216,28 @@ def _resolve_hermes_types(
 def _message_type(message: object, materializations: tuple[object, ...], type_cls: type) -> object:
     """依据规范化 segment 和已 materialize 附件选择 Hermes 消息类型。"""
 
+    segments = tuple(getattr(message, "segments", ()))
+    if (
+        segments
+        and all(isinstance(segment, RecordSegment) for segment in segments)
+        and any(
+            getattr(item, "kind", None) == "audio"
+            and getattr(item, "reference_kind", None) == "record"
+            for item in materializations
+        )
+    ):
+        voice_type = getattr(type_cls, "VOICE", None)
+        if voice_type is None:
+            raise RuntimeError("Hermes MessageType.VOICE is unavailable")
+        return voice_type
+
     if any(
         isinstance(segment, (TextSegment, MarkdownSegment, MentionSegment, MentionAllSegment))
-        for segment in getattr(message, "segments", ())
+        for segment in segments
     ):
         return type_cls.TEXT
     kinds = {getattr(item, "kind", None) for item in materializations}
     if not kinds:
-        segments = getattr(message, "segments", ())
         if any(isinstance(segment, FileSegment) for segment in segments):
             return type_cls.DOCUMENT
         if any(isinstance(segment, ImageSegment) for segment in segments):
@@ -235,6 +256,26 @@ def _message_type(message: object, materializations: tuple[object, ...], type_cl
     if kinds == {"document"}:
         return type_cls.DOCUMENT
     return type_cls.TEXT
+
+
+def _remove_materialized_record_placeholders(
+    body: str,
+    occurrences: Sequence[ResolvedRecordOccurrence],
+) -> str:
+    """按成功 record 的 typed 槽位删除插件占位符。"""
+
+    replacements = [
+        (occurrence.body_start, occurrence.body_end, "")
+        for occurrence in occurrences
+        if occurrence.body_start is not None
+        and occurrence.body_end is not None
+        and occurrence.body_start < occurrence.body_end <= len(body)
+        and body[occurrence.body_start : occurrence.body_end] == occurrence.body_marker
+    ]
+    rendered = body
+    for start, end, replacement in sorted(replacements, reverse=True):
+        rendered = rendered[:start] + replacement + rendered[end:]
+    return rendered
 
 
 def _event_metadata(
@@ -276,9 +317,12 @@ def _merge_media_materializations(
     seen_paths: set[str] = set()
     for materialization in (*context_image_materializations, *current_materializations):
         path = materialization.path
-        if not _is_local_path(path) or path in seen_paths:
+        if not _is_local_path(path):
             continue
-        seen_paths.add(path)
+        if materialization.kind == "image":
+            if path in seen_paths:
+                continue
+            seen_paths.add(path)
         merged.append(materialization)
     return tuple(merged)
 

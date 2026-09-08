@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "name": "pure_record",
+      "segments": [
+        {"type": "record", "data": {"resource_id": "fixture-record-one", "duration": 1}}
+      ]
+    },
+    {
+      "name": "multiple_records",
+      "segments": [
+        {"type": "record", "data": {"resource_id": "fixture-record-one", "duration": 1}},
+        {"type": "record", "data": {"resource_id": "fixture-record-two", "duration": 2}}
+      ]
+    },
+    {
+      "name": "record_with_text",
+      "segments": [
+        {"type": "record", "data": {"resource_id": "fixture-record-one", "duration": 1}},
+        {"type": "text", "data": {"text": "合成语音说明"}}
+      ]
+    },
+    {
+      "name": "record_with_image",
+      "segments": [
+        {"type": "record", "data": {"resource_id": "fixture-record-one", "duration": 1}},
+        {"type": "image", "data": {"resource_id": "fixture-image-one", "summary": "合成图片"}}
+      ]
+    },
+    {
+      "name": "record_with_file",
+      "segments": [
+        {"type": "record", "data": {"resource_id": "fixture-record-one", "duration": 1}},
+        {
+          "type": "file",
+          "data": {"file_id": "fixture-file-one", "file_name": "fixture.txt"}
+        }
+      ]
+    },
+    {
+      "name": "record_without_resource",
+      "segments": [{"type": "record", "data": {"duration": 1}}]
+    }
+  ],
+  "history_channel_context": {
+    "history": "<合成用户 uid 800000001 msg_id 4101> [record:NOT SUPPORTED]",
+    "current": "<合成用户 uid 800000001 msg_id 4102> [record:NOT SUPPORTED]"
+  }
+}

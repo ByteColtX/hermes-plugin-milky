@@ -132,6 +132,17 @@ class ResolvedImageOccurrence:
 
 
 @dataclass(frozen=True, slots=True)
+class ResolvedRecordOccurrence:
+    """保存成功 materialize 的 record 正文槽位。"""
+
+    materialization: HermesAttachmentMaterialization
+    body_marker: str
+    body_start: int | None = None
+    body_end: int | None = None
+    order: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedReply:
     """保存 inline 或远端补全后的 reply 内容。"""
 
@@ -183,6 +194,7 @@ class ResolvedMessage:
     context_image_materializations: tuple[HermesAttachmentMaterialization, ...] = ()
     body_template: str | None = None
     image_occurrences: tuple[ResolvedImageOccurrence, ...] = ()
+    record_occurrences: tuple[ResolvedRecordOccurrence, ...] = ()
 
     @property
     def media_materializations(self) -> tuple[HermesAttachmentMaterialization, ...]:
@@ -230,6 +242,7 @@ class _ContentResolution:
     diagnostics: tuple[ResourceDiagnostic, ...]
     body_template: str
     image_occurrences: tuple[ResolvedImageOccurrence, ...]
+    record_occurrences: tuple[ResolvedRecordOccurrence, ...]
 
 
 class ResourceResolver:
@@ -265,6 +278,7 @@ class ResourceResolver:
             context_image_materializations=content.context_image_materializations,
             body_template=content.body_template,
             image_occurrences=content.image_occurrences,
+            record_occurrences=content.record_occurrences,
         )
 
     async def resolve_message(self, message: object) -> ResolvedMessage:
@@ -365,6 +379,7 @@ class ResourceResolver:
         materializations: list[HermesAttachmentMaterialization] = []
         context_image_materializations: list[HermesAttachmentMaterialization] = []
         image_occurrences: list[ResolvedImageOccurrence] = []
+        record_occurrences: list[ResolvedRecordOccurrence] = []
         diagnostics: list[ResourceDiagnostic] = []
         replies: list[ResolvedReply] = []
         forwards: list[ResolvedForward] = []
@@ -395,6 +410,17 @@ class ResourceResolver:
                         reference,
                         marker,
                         _image_path_marker(resolved.path),
+                    )
+                elif _field(reference, "kind") == "record":
+                    record_occurrences.append(
+                        ResolvedRecordOccurrence(
+                            materialization=resolved,
+                            body_marker=_available_marker(reference),
+                            body_start=_optional_non_negative_int(reference, "body_start"),
+                            body_end=_optional_non_negative_int(reference, "body_end"),
+                            order=image_order_prefix
+                            + (_reference_index(reference, reference_index), 0),
+                        )
                     )
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
@@ -461,6 +487,7 @@ class ResourceResolver:
             diagnostics=tuple(diagnostics),
             body_template=body_template,
             image_occurrences=tuple(image_occurrences),
+            record_occurrences=tuple(record_occurrences),
         )
 
     async def _resolve_media_reference(
@@ -1059,7 +1086,12 @@ def _finalize_message(
         occurrence_updates.get(id(occurrence), occurrence)
         for occurrence in message.image_occurrences
     )
-    body = _rewrite_resolved_body(message.body, message.body_template, occurrences)
+    body = _rewrite_resolved_body(
+        message.body,
+        message.body_template,
+        occurrences,
+        record_occurrences=message.record_occurrences if is_current else (),
+    )
     replies = message.replies
     materializations = message.hermes_attachment_materializations
     if is_current:
@@ -1116,10 +1148,12 @@ def _rewrite_resolved_body(
     body: str,
     body_template: str | None,
     occurrences: Sequence[ResolvedImageOccurrence],
+    *,
+    record_occurrences: Sequence[ResolvedRecordOccurrence] = (),
 ) -> str:
-    """依据 image occurrence 槽位重建正文，不从 basename 反解析内容。"""
+    """依据 typed occurrence 槽位重建正文，不从展示文本反解析内容。"""
 
-    if not occurrences:
+    if not occurrences and not record_occurrences:
         return body
     if body_template is None:
         rendered = body
@@ -1128,11 +1162,19 @@ def _rewrite_resolved_body(
             new = _image_path_marker(occurrence.path)
             rendered = _replace_first(rendered, old, new)
         return rendered
-    replacements = [
+    replacements: list[tuple[int, int, str]] = [
         (occurrence.body_start, occurrence.body_end, _image_path_marker(occurrence.path))
         for occurrence in occurrences
         if occurrence.body_start is not None and occurrence.body_end is not None
     ]
+    replacements.extend(
+        (occurrence.body_start, occurrence.body_end, "")
+        for occurrence in record_occurrences
+        if occurrence.body_start is not None
+        and occurrence.body_end is not None
+        and occurrence.body_start < occurrence.body_end <= len(body_template)
+        and body_template[occurrence.body_start : occurrence.body_end] == occurrence.body_marker
+    )
     fallback = [
         (occurrence.body_marker, _image_path_marker(occurrence.path))
         for occurrence in occurrences
@@ -1301,6 +1343,7 @@ __all__ = [
     "ResolvedForwardedMessage",
     "ResolvedImageOccurrence",
     "ResolvedMessage",
+    "ResolvedRecordOccurrence",
     "ResolvedReply",
     "ResolvedTriggerBatch",
     "ResourceClient",
