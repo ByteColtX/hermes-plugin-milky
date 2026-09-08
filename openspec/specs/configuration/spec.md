@@ -83,7 +83,8 @@ SHALL 禁用历史缓冲。
 
 插件 manifest MUST 声明必需的 `MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN` 和可选的
 `MILKY_ALLOWED_CHATS`、`MILKY_WILL_POLICY`、`MILKY_SESSION_BUFFER_SIZE`、`MILKY_HOME_CHANNEL`、
-`MILKY_MAX_LOCAL_MEDIA_BYTES`，并声明当前固定的 25 个显式 ToolSpec：
+`MILKY_MAX_LOCAL_MEDIA_BYTES`、`MILKY_LONG_TEXT_FORWARD_THRESHOLD` 和
+`MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS`，并声明当前固定的 25 个显式 ToolSpec：
 `send_profile_like`、`send_friend_nudge`、`send_group_nudge`、`recall_group_message`、
 `get_group_info`、`get_group_member_list`、`get_group_member_info`、`set_group_member_mute`、
 `set_group_whole_mute`、`get_forwarded_messages`、`get_private_file_download_url`、
@@ -100,13 +101,16 @@ Action 工具。
 - **THEN** 它 SHALL 展示新配置契约、token 密码属性、可选的 Milky home channel 和本地出站
   资源大小上限
 - **AND** SHALL 展示 `MILKY_MAX_LOCAL_MEDIA_BYTES` 的默认值为 `33554432` 字节（`32 MiB`）
+- **AND** SHALL 展示 `MILKY_LONG_TEXT_FORWARD_THRESHOLD` 的默认值为 `0`
+- **AND** SHALL 展示 `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` 的默认值为 `false`
 - **AND** SHALL NOT 把任意未纳入显式 ToolSpec 的 Action catalog 展示为支持项
 
 ### Requirement: 启动时解析正式配置契约
 
 适配器 MUST 在启动时一次性解析必需的 `MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN` 和可选的
 `MILKY_ALLOWED_CHATS`、`MILKY_WILL_POLICY`、`MILKY_SESSION_BUFFER_SIZE`、`MILKY_HOME_CHANNEL`、
-`MILKY_MAX_LOCAL_MEDIA_BYTES`；`MILKY_MAX_LOCAL_MEDIA_BYTES` SHALL 是表示字节数的十进制整数，
+`MILKY_MAX_LOCAL_MEDIA_BYTES`、`MILKY_LONG_TEXT_FORWARD_THRESHOLD` 和
+`MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS`；`MILKY_MAX_LOCAL_MEDIA_BYTES` SHALL 是表示字节数的十进制整数，
 取值范围 SHALL 为 `8 MiB` 至 `32 MiB`（含边界），省略时 SHALL 使用 `33554432`；缺失必需值、
 类型错误、范围错误或 home channel 目标格式错误 MUST 使启动失败。
 

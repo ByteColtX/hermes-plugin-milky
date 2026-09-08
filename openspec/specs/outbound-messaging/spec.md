@@ -292,16 +292,17 @@ send message segments，也不得假设远端能访问本地路径。对当前 H
 ### Requirement: 发送结果和不支持能力诚实可观测
 
 成功发送 MUST 使用远端 `data.message_seq` 生成稳定字符串插件侧 `message_seq`；交给 Hermes
-时 SHALL 将同一序号映射为宿主 `SendResult.message_id`。成功文件上传 MUST 使用
+时 SHALL 将同一序号映射为宿主 `SendResult.message_id`，不得把 Hermes 字段名反向扩散为
+Milky/插件侧协议字段名。成功文件上传 MUST 使用
 远端确认的 `file_id` 作为附件结果标识；协议拒绝、传输未知、malformed 和 unsupported
 MUST 分别报告，未实现的编辑、撤回、reaction 等能力 MUST 返回 `unsupported`。
 
 #### Scenario: 发送成功
 
 - **WHEN** send Action 成功并返回 `message_seq`
-- **THEN** 插件侧结果 SHALL 标记成功并使用该序号作为 `message_seq`
+- **THEN** 插件侧结果 SHALL 保留该远端序号为 `message_seq` 的稳定字符串
 - **AND** Hermes SendResult SHALL 在边界处使用同一序号作为 `message_id`
-- **AND** SHALL 不使用本地时间或随机值
+- **AND** SHALL 不使用本地时间、随机值或本地计数器
 
 #### Scenario: 群发送失败
 
