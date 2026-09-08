@@ -8,7 +8,7 @@
 - 当配置为正数且本次规范化文本总长度超过阈值时，系统选择合并转发出站；未超过阈值或配置为 `0` 时继续使用当前普通文本发送路径。
 - 合并转发选择一旦成立，本次原本会产生的每个文本发送单元（包括 `[SPLIT]` 逻辑段和既有长度分块）以及可由 Milky `OutgoingSegment` 表示的 native 图片、语音和视频，都必须按原顺序成为同一个 `forward` segment 内的节点；不得部分作为普通消息发送。
 - 文档/文件不在本 change 范围内，不进入自动合并转发，继续沿用现有独立 file upload 行为。
-- 合并转发节点使用已确认的 Bot 身份字段，完成首个消息 Action 前预检全部节点和结构；远端消息 Action 仍只调用一次。
+- 合并转发节点优先使用已确认的 Bot 身份字段；live 或 standalone 身份缺失、读取失败或昵称不安全时，固定 fallback 到 `user_id=10001`、`sender_name=QQ用户`，并在首个消息 Action 前预检全部节点和结构；远端消息 Action 仍只调用一次。
 - 配置值为空、非十进制整数、负数或大于 `4000` 时启动失败，不静默关闭或截断。
 
 ## Milky 协议入参与出参
@@ -47,14 +47,17 @@
 ```
 
 私聊请求将 `group_id` 替换为 `user_id`。每个 `forward.data.messages[]` 节点 MUST 包含
-`user_id`、`sender_name` 和 `segments`；`segments` 可使用 Milky 已确认的 `text`、`mention`、
+`user_id`、`sender_name` 和 `segments`；节点身份优先使用已确认的 Bot `uin`/昵称。若 live
+连接身份尚未可用，或 standalone 的 `get_login_info({})` 被拒绝、传输未知、响应 malformed，
+或返回的昵称为空/包含控制字符，节点身份 MUST fallback 为固定的 `user_id=10001`、
+`sender_name=QQ用户`；该 fallback 不从正文、历史消息或远端 forward 字段推断。`segments` 可使用 Milky 已确认的 `text`、`mention`、
 `mention_all`、`face`、`reply`、`image`、`record`、`video`、`forward`、`light_app`。`file`
 不属于该集合，因此文档/文件不进入自动 forward；它们继续沿用现有独立 file upload 行为，不由本 change 改写。
 
 成功响应使用标准 Milky envelope：`status=ok`、`retcode=0`，`data.message_seq` 是远端消息
 序号，`data.time` 是服务端时间。插件将 `data.message_seq` 转为单一 `SendResult.message_id`，
-不产生 continuation ID 或独立 `forward_id`。`get_login_info` 使用空对象 `{}` 请求，返回必填的
-`data.uin` 和 `data.nickname`，仅用于确认 forward 节点身份。
+不产生 continuation ID 或独立 `forward_id`。standalone 的 `get_login_info` 使用空对象 `{}`
+请求；成功且身份安全时用于确认 forward 节点身份，失败或身份不安全时使用上述固定 fallback。
 
 ## Capabilities
 

@@ -1,6 +1,6 @@
 ## Context
 
-当前 `MilkyOutboundSender` 对普通字符串先解析 `[SPLIT]`，再按默认 `4000` 个 Python Unicode 字符分块，并逐条调用目标场景对应的消息 Action。普通 `[SPLIT]` 路径最多允许三条顶层文本消息；`outbound/formatter.py` 已能校验 outgoing `forward` segment，但 sender 尚未把文本分块和 native media 转换为 forward 节点。Milky v1.3 的 `send_group_message`/`send_private_message` 接收 `OutgoingSegment[]`，其中 `forward.data.messages[]` 的节点必填 `user_id`、`sender_name`、`segments`；`file` 不在 outgoing segment 集合中。配置目前只在启动阶段解析，live adapter 的初始同步已经确认 Bot 的 `self_id` 和昵称，而 standalone sender 没有复用该同步状态。
+当前 `MilkyOutboundSender` 对普通字符串先解析 `[SPLIT]`，再按默认 `4000` 个 Python Unicode 字符分块，并逐条调用目标场景对应的消息 Action。普通 `[SPLIT]` 路径最多允许三条顶层文本消息；`outbound/formatter.py` 已能校验 outgoing `forward` segment，但 sender 尚未把文本分块和 native media 转换为 forward 节点。Milky v1.3 的 `send_group_message`/`send_private_message` 接收 `OutgoingSegment[]`，其中 `forward.data.messages[]` 的节点必填 `user_id`、`sender_name`、`segments`；`file` 不在 outgoing segment 集合中。配置目前只在启动阶段解析。live adapter 的初始同步已经确认 Bot 的 `self_id` 和昵称，但 sender 尚未设计连接完成后的身份绑定；standalone sender 也没有定义 `get_login_info({})` 的失败和不安全昵称语义。
 
 本 change 的行为契约见 proposal.md 及三个 delta spec。重点约束是：一旦阈值判断选择合并转发，所有文本发送单元都必须进入一个 `forward.messages` 数组，不能先发送部分普通消息再发送 forward。
 
@@ -9,10 +9,10 @@
 **Goals:**
 
 - 增加默认值为 `0`、范围为 `0..4000` 的 `MILKY_LONG_TEXT_FORWARD_THRESHOLD`，并保持未配置部署的行为不变。
-- 在现有文本解析和长度边界基础上生成有序 forward nodes，使普通长文本、任意数量的 `[SPLIT]` 非空逻辑段和同一出站批次中的 native 图片/语音/视频都能由一次消息 Action 发送。
+- 在现有文本解析和长度边界基础上生成有序 forward nodes，使普通长文本、任意数量的 `[SPLIT]` 非空逻辑段和同一出站批次中的 native 图片/语音/视频都能由一次消息 Action 发送，并为节点提供真实身份或固定安全 fallback 身份。
 - 复用已确认的 Milky outgoing forward schema、目标路由、CQ-compatible segment 转换和现有安全失败分类。
 - 在网络访问前完成身份、节点 schema、空内容和本地资源物化前置条件的整体预检，避免产生部分发送。
-- 让 live adapter 和 standalone sender 都能在需要时获得可确认的 Bot `user_id` 与 `sender_name`。
+- 让 live adapter 复用连接后确认的 Bot `user_id`/昵称，让 standalone 在需要时读取 `get_login_info({})`；身份缺失、读取失败或昵称不安全时统一使用固定 `user_id=10001`、`sender_name=QQ用户`。
 
 **Non-Goals:**
 
@@ -61,13 +61,13 @@ forward 路径必须使用解析器提供的全部非空 sections，不调用普
 
 一次 forward 发送成功只产生一个远端 `message_seq`，不生成 continuation IDs。协议拒绝、timeout 或 transport unknown 不触发普通分块 fallback 或重试，因为远端可能已经产生副作用。
 
-### 4. 身份来源按生命周期分层处理
+### 4. 身份来源和 fallback 按生命周期分层处理
 
-- live adapter 的 sender 复用启动初始同步已经确认的 Bot `self_id` 和昵称；不从当前正文、历史消息或 `forward_id` 推断身份。
-- standalone sender 在普通分块路径不增加身份请求；只有阈值触发 forward 且没有可用缓存时，才调用一次已确认的 `get_login_info` 读取身份，再进行本地 forward 预检。
-- 身份 Action 缺失、拒绝、malformed 或 transport unknown 时，forward 预检失败并在任何消息 Action 前返回安全分类；不使用占位 QQ 号或猜测昵称。
+- live adapter 在连接初始同步完成后，将已确认的 Bot `self_id` 和经安全规范化的昵称绑定到 sender；forward 发送不重复调用 `get_login_info`。若连接身份缺失、昵称为空或包含控制字符，则 forward 使用固定 fallback `user_id=10001`、`sender_name=QQ用户`。
+- standalone sender 在普通分块路径不增加身份请求；只有阈值触发 forward 时才调用一次 `get_login_info({})`。成功且 `uin` 与昵称通过相同安全校验时使用真实身份；Action 被拒绝、transport unknown、timeout、malformed，或昵称为空/包含控制字符时，使用固定 fallback。
+- fallback 是明确的协议合法值，不从当前正文、历史消息、`forward_id` 或异常正文推断；仍必须经过 forward formatter 的 ID/非空文本校验。若固定 fallback 自身无法通过 schema 校验，则在任何消息 Action 前返回 `malformed`。
 
-该选择避免 live adapter 因每次发送重复联网，也让 standalone 不依赖一个不存在的长期 session；身份读取属于只读前置条件，不改变现有消息 Action 的“最多一次”副作用约束。
+该选择避免 live adapter 因每次发送重复联网，也让 standalone 不依赖一个不存在的长期 session；身份读取属于只读前置条件。fallback 会让用户侧看到合成身份而非假装是真实 Bot，日志只记录 `identity_source=confirmed|fallback`，不记录昵称原文或响应正文。
 
 ### 5. Native media 进入同一个 forward，文件排除在本 change 外
 
@@ -83,7 +83,7 @@ Milky 的 `OutgoingSegment` 明确允许 `image`、`record`、`video` 作为 `Ou
 
 - [Risk] 一个 forward request 会把多个原本独立的文本 chunk 合并进同一个 HTTP body，Milky/LLBot 或客户端可能存在未确认的总 payload 或节点数量限制。→ 每个节点继续遵守现有文本边界；实现和测试必须在首个 Action 前完成结构校验；交付前使用脱敏 fixture 和受控 smoke 验证真实服务端，未确认边界不得宣称支持无限大小。
 - [Risk] 合并转发的客户端展示方式不同于连续普通消息，用户可能不展开内容。→ 默认值保持 `0`，由部署者显式开启；README 必须说明这是可展开 forward，而非普通消息序列。
-- [Risk] standalone 为 forward 额外读取登录身份会增加一次只读网络请求。→ 仅在阈值触发时执行；失败发生在消息 Action 前；普通发送和关闭配置不增加请求。
+- [Risk] standalone 为 forward 额外读取登录身份会增加一次只读网络请求，且 fallback 可能让转发节点显示为合成用户。→ 仅在阈值触发时执行；失败或不安全身份使用固定 `10001`/`QQ用户`，不阻断合并发送；普通发送和关闭配置不增加请求。
 - [Risk] 文本或 native media 中包含本地 URI 时，嵌套 segment 物化比顶层消息更复杂。→ 复用现有 materialization 安全边界并对 nested image/record/video 做完整预检；任何无法安全物化的节点整体失败，不发送原始本地路径或部分消息。
 - [Risk] 当前 Hermes 可能把 `MEDIA:` 作为独立 adapter 调用，无法和已提交文本合并。→ 只接受明确的有序文本/native media 批次；若 core 没有该契约，记录为前置阻塞，不发送分离附件来宣称满足同一 forward。
 - [Risk] 阈值基于 Unicode 字符长度，而服务端可能按 bytes 或其他规则限制。→ 明确配置语义只控制插件选路；每节点仍沿用当前字符边界，并把服务端更低限制留在受控实机验证范围。
