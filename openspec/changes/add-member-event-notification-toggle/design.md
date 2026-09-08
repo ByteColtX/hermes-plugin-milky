@@ -7,7 +7,8 @@
 创建入站 pipeline。
 
 Hermes 已确认的 `PluginContext.inject_message()` 是会话注入接口：CLI 可直接排队，Gateway
-需要已有 session key、`allow_gateway_injection` 授权和 live gateway；返回 `True` 只代表异步
+需要已有 session key、`allow_gateway_injection` 授权和 live gateway；adapter 可从 Hermes
+持久化 session route 恢复已有 key；返回 `True` 只代表异步
 注入请求被接受。该接口注入的是 synthetic user message，不是 system prompt section，也不
 修改 Hermes core。对应 contract 见 `specs/system-events-and-safety/spec.md`。
 
@@ -60,7 +61,7 @@ system context，按 ingress sequence 渲染为注入内容，并向 Hermes 注�
 user message；注入内容必须保留已渲染的 `<event ...>` 行和 Tip。只有注入接口返回接受后，
 系统才原子 drain 这批 system context，避免拒绝、无 session 或宿主停止时丢失事件。
 
-注入需要由宿主边界提供已确认的 Gateway session key 和授权结果；实现不得把 Milky 的
+注入需要由宿主边界提供已确认或持久化恢复的 Gateway session key 和授权结果；实现不得把 Milky 的
 `group:<id>` 直接当作 Hermes key。注入返回成功后不等待 Agent 完成，也不复制 Hermes 的
 busy/interrupt/follow-up 队列；若 Hermes 当前 turn 正在运行，使用其已定义的 injection 语义。
 

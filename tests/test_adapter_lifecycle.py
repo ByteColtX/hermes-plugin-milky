@@ -466,6 +466,102 @@ def test_adapter_returns_unknown_send_outcome_without_host_fallback() -> None:
     asyncio.run(scenario())
 
 
+def test_member_notification_uses_only_confirmed_hermes_session_key() -> None:
+    """adapter 不从 Milky chat key 猜测 session key，成功后才委托宿主。"""
+
+    class InjectionContext:
+        """记录已授权会话注入调用。"""
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, str]] = []
+
+        def inject_message(self, content: str, role: str, *, session_key: str) -> bool:
+            """记录宿主注入参数并返回接受。"""
+
+            self.calls.append((content, role, session_key))
+            return True
+
+    adapter, _, _, _, _, _ = make_adapter()
+    context = InjectionContext()
+    adapter._plugin_context = context
+
+    assert adapter._resolve_confirmed_session_key("group:700000001") is None
+    assert (
+        adapter.inject_message(
+            "<event group_member_increase> fixture",
+            session_key="group:700000001",
+        )
+        is False
+    )
+    assert context.calls == []
+
+    source = SimpleNamespace(chat_id="group:700000001")
+    event = SimpleNamespace(
+        source=source,
+        metadata={"gateway_session_key": " confirmed-gateway-session "},
+    )
+    adapter._remember_confirmed_session_key(event)
+
+    assert adapter._resolve_confirmed_session_key("group:700000001") == (
+        "confirmed-gateway-session"
+    )
+    assert (
+        adapter.inject_message(
+            "<event group_member_increase> fixture",
+            session_key="confirmed-gateway-session",
+        )
+        is True
+    )
+    assert context.calls == [
+        (
+            "<event group_member_increase> fixture",
+            "user",
+            "confirmed-gateway-session",
+        )
+    ]
+
+
+def test_adapter_restores_persisted_milky_session_keys_before_event_stream() -> None:
+    """adapter 连接时应恢复 Hermes 已持久化的同平台会话路由。"""
+
+    class SessionStore:
+        def list_sessions(self) -> list[object]:
+            """返回脱敏的 Hermes session route。"""
+
+            return [
+                SimpleNamespace(
+                    session_key="restored-gateway-session",
+                    origin=SimpleNamespace(
+                        platform=SimpleNamespace(value="milky"),
+                        chat_id="group:700000001",
+                    ),
+                ),
+                SimpleNamespace(
+                    session_key="other-platform-session",
+                    origin=SimpleNamespace(
+                        platform=SimpleNamespace(value="telegram"),
+                        chat_id="group:700000001",
+                    ),
+                ),
+            ]
+
+    async def scenario() -> None:
+        adapter, _, stream, _, _, _ = make_adapter()
+        adapter.gateway_runner = SimpleNamespace(async_session_store=SessionStore())
+
+        assert await adapter.connect() is True
+        await stream.started.wait()
+
+        assert adapter._resolve_confirmed_session_key("group:700000001") == (
+            "restored-gateway-session"
+        )
+        assert adapter._resolve_confirmed_session_key("dm:700000001") is None
+
+        await adapter.disconnect()
+
+    asyncio.run(scenario())
+
+
 def test_adapter_drops_hermes_implicit_reply_anchor_before_delivery() -> None:
     """adapter 交接不应把 Hermes 当前消息 anchor 传给 Milky sender。"""
 

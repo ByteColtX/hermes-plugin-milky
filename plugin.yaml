@@ -144,3 +144,11 @@ optional_env:
       `sender_name=QQ用户`。文档/文件继续走独立 upload。
     prompt: 超长文本合并转发阈值（字符）
     password: false
+  - name: MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS
+    description: >-
+      可选的群成员变更即时通知开关，默认 `false`。只接受大小写不敏感的
+      `true` 或 `false`；启动时读取。开启后，入群/退群事件会带固定英文 Tip，
+      并仅在 Hermes 提供已确认 session key 且接受 `inject_message` 时立即触发
+      Agent turn；关闭时事件不带 Tip，留在 system context 等待下一次普通消息。
+    prompt: 群成员事件即时通知
+    password: false

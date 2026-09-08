@@ -200,22 +200,22 @@ def test_system_events_render_only_confirmed_fields() -> None:
 
     assert group_nudge.value is not None
     assert group_nudge.value.chat_key == "group:700000001"
-    assert group_nudge.value.body == "uid 800000002 戳了 uid 900000001"
+    assert group_nudge.value.body == "uid 800000002 poked uid 900000001"
     assert friend_nudge.value is not None
     assert friend_nudge.value.chat_key == "dm:800000001"
-    assert friend_nudge.value.body == "uid 800000001 戳了一下"
+    assert friend_nudge.value.body == "uid 800000001 poked once"
     assert increase.value is not None
     assert increase.value.body == (
-        "uid 800000004 加入了群聊 Details: "
+        "uid 800000004 joined the group. Details: "
         '{"group_id": 700000001, "user_id": 800000004, "operator_id": 900000001, "invitor_id": 800000002}'
     )
     assert minimal.value is not None
     assert minimal.value.body == (
-        'uid 800000005 加入了群聊 Details: {"group_id": 700000001, "user_id": 800000005}'
+        'uid 800000005 joined the group. Details: {"group_id": 700000001, "user_id": 800000005}'
     )
     assert decrease.value is not None
     assert decrease.value.body == (
-        'uid 800000004 退出了群聊 Details: {"group_id": 700000001, "user_id": 800000004, "operator_id": 900000001}'
+        'uid 800000004 left the group. Details: {"group_id": 700000001, "user_id": 800000004, "operator_id": 900000001}'
     )
 
     malformed = parse_context_event(
@@ -232,27 +232,27 @@ def test_message_recall_maps_scene_operator_and_filters_extensions() -> None:
         (
             "events/system.message_recall.group.self.json",
             "group:700000001",
-            "uid 800000002 撤回了消息 msg_seq 1001",
+            "uid 800000002 recalled message msg_seq 1001",
         ),
         (
             "events/system.message_recall.group.self.operator.json",
             "group:700000001",
-            "uid 800000002 撤回了消息 msg_seq 1002",
+            "uid 800000002 recalled message msg_seq 1002",
         ),
         (
             "events/system.message_recall.json",
             "group:700000001",
-            "管理员 uid 900000001 撤回了 uid 800000002 的消息 msg_seq 1000",
+            "Admin uid 900000001 recalled uid 800000002's message msg_seq 1000",
         ),
         (
             "events/system.message_recall.friend.json",
             "dm:800000001",
-            "uid 800000001 撤回了消息 msg_seq 2001",
+            "uid 800000001 recalled message msg_seq 2001",
         ),
         (
             "events/system.message_recall.friend.operator.json",
             "dm:800000001",
-            "uid 900000001 撤回了 uid 800000001 的消息 msg_seq 2002",
+            "uid 900000001 recalled uid 800000001's message msg_seq 2002",
         ),
     )
 
@@ -288,6 +288,46 @@ def test_message_recall_invalid_scene_and_ids_fail_closed() -> None:
         result = parse_context_event(parse_event(load_fixture(path)))
         assert result.classification == "unsupported"
         assert result.value is None
+
+
+def test_member_event_notification_tip_is_fixed_and_optional() -> None:
+    """成员事件仅在启用通知时追加固定 Tip，并过滤 payload 扩展。"""
+
+    increase = parse_context_event(
+        parse_event(load_fixture("events/system.group_member_increase.json")),
+        member_event_notifications=True,
+    )
+    decrease = parse_context_event(
+        parse_event(load_fixture("events/system.group_member_decrease.json")),
+        member_event_notifications=True,
+    )
+    disabled = parse_context_event(
+        parse_event(load_fixture("events/system.group_member_increase.json")),
+    )
+
+    assert increase.value is not None
+    assert decrease.value is not None
+    assert disabled.value is not None
+    assert increase.value.body == (
+        "uid 800000004 joined the group. Details: "
+        '{"group_id": 700000001, "user_id": 800000004, "operator_id": 900000001, '
+        '"invitor_id": 800000002}'
+        " Tip: If relevant to the current turn, naturally acknowledge or welcome this new "
+        "member using the current group context. Do not invent their nickname, background, "
+        "or other unconfirmed facts."
+    )
+    assert decrease.value.body == (
+        "uid 800000004 left the group. Details: "
+        '{"group_id": 700000001, "user_id": 800000004, "operator_id": 900000001}'
+        " Tip: If relevant to the current turn, naturally acknowledge the departure or offer "
+        "a brief farewell based only on confirmed shared context. Do not speculate about the "
+        "reason or invent memories."
+    )
+    assert "Tip:" not in disabled.value.body
+    for body in (increase.value.body, decrease.value.body):
+        assert "display" not in body
+        assert "170000" not in body
+        assert "display_action_img_url" not in body
 
 
 def test_nudge_target_fixture_only_marks_protocol_confirmed_self_pokes() -> None:
@@ -411,8 +451,8 @@ def test_pipeline_merges_context_events_by_ingress_and_does_not_create_turn() ->
     event = hermes.events[0]
     assert event.channel_context == (
         "<合成名片 uid 800000002 msg_id 5001> 历史消息\n"
-        "<event group_nudge> uid 800000002 戳了 uid 900000001\n"
-        "<event group_member_increase> uid 800000004 加入了群聊 Details: "
+        "<event group_nudge> uid 800000002 poked uid 900000001\n"
+        "<event group_member_increase> uid 800000004 joined the group. Details: "
         '{"group_id": 700000001, "user_id": 800000004, "operator_id": 900000001, "invitor_id": 800000002}'
     )
     assert "触发消息" in event.text
@@ -478,12 +518,12 @@ def test_pipeline_merges_recall_context_once_and_keeps_scene_namespaces_isolated
     assert len(friend_events) == 1
     assert group_events[0].channel_context == (
         "<合成名片 uid 800000002 msg_id 5101> 历史消息\n"
-        "<event message_recall> uid 800000002 撤回了消息 msg_seq 1001\n"
-        "<event group_nudge> uid 800000002 戳了 uid 900000001"
+        "<event message_recall> uid 800000002 recalled message msg_seq 1001\n"
+        "<event group_nudge> uid 800000002 poked uid 900000001"
     )
     assert group_events[1].channel_context is None
     assert friend_events[0].channel_context == (
-        "<event message_recall> uid 800000001 撤回了消息 msg_seq 2001"
+        "<event message_recall> uid 800000001 recalled message msg_seq 2001"
     )
 
 
@@ -526,8 +566,8 @@ def test_pipeline_recall_context_obeys_bounded_fifo_and_drains_once() -> None:
 
     assert len(hermes.events) == 2
     assert hermes.events[0].channel_context == (
-        "<event message_recall> uid 800000002 撤回了消息 msg_seq 3002\n"
-        "<event message_recall> uid 800000002 撤回了消息 msg_seq 3003"
+        "<event message_recall> uid 800000002 recalled message msg_seq 3002\n"
+        "<event message_recall> uid 800000002 recalled message msg_seq 3003"
     )
     assert hermes.events[1].channel_context is None
     assert pipeline._system_context.diagnostics[-1].reason == "system_context_overflow"

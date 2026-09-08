@@ -88,6 +88,8 @@ class FakeHermes:
 
     def __init__(self) -> None:
         self.events: list[FakeMessageEvent] = []
+        self.inject_calls: list[tuple[str, str, str]] = []
+        self.inject_result: object = True
         self.agent_finished = asyncio.Event()
         self.handle_returned = asyncio.Event()
 
@@ -110,6 +112,18 @@ class FakeHermes:
         self.events.append(event)
         self.handle_returned.set()
         asyncio.create_task(self.agent_finished.wait())
+
+    def inject_message(
+        self,
+        content: str,
+        role: str = "user",
+        *,
+        session_key: str,
+    ) -> object:
+        """记录宿主会话注入，不执行真实 Agent。"""
+
+        self.inject_calls.append((content, role, session_key))
+        return self.inject_result
 
 
 class FakeResolver:
@@ -260,6 +274,8 @@ def make_pipeline(
     will_engine: object | None = None,
     buffer_size: int = 20,
     session_context_store: ChatMetadataSnapshotStore | None = None,
+    member_event_notifications: bool = False,
+    session_key_resolver=None,
 ) -> InboundPipeline:
     """创建只包含本地 fake 依赖的入站 pipeline。"""
 
@@ -276,6 +292,8 @@ def make_pipeline(
         message_type_cls=FakeMessageType,
         mute_tracker=FakeMuteTracker(),
         session_context_store=session_context_store,
+        member_event_notifications=member_event_notifications,
+        session_key_resolver=session_key_resolver,
     )
 
 
@@ -307,6 +325,122 @@ def test_group_and_friend_triggers_map_to_hermes_with_stable_source() -> None:
         assert "Current QQ Conversation Information" not in event.text
         assert "Current QQ Conversation Information" not in (event.channel_context or "")
         assert "Current QQ Conversation Information" not in repr(event.metadata)
+
+
+def test_member_event_notification_injects_with_confirmed_key_and_drains() -> None:
+    """启用通知时只在注入接受后消费成员事件上下文。"""
+
+    async def scenario() -> tuple[FakeHermes, InboundPipeline]:
+        hermes = FakeHermes()
+        pipeline = make_pipeline(
+            hermes,
+            FakeResolver(),
+            member_event_notifications=True,
+            session_key_resolver=lambda chat_key: (
+                "gateway-session-key" if chat_key == "group:700000001" else None
+            ),
+        )
+        for fixture_name in (
+            "events/system.group_member_increase.json",
+            "events/system.group_member_decrease.json",
+        ):
+            result = await pipeline.handle_event(load_fixture(fixture_name))
+            assert result.classification == "observe_only"
+        return hermes, pipeline
+
+    hermes, pipeline = asyncio.run(scenario())
+
+    assert len(hermes.inject_calls) == 2
+    contents = [content for content, role, session_key in hermes.inject_calls]
+    assert all(role == "user" for _content, role, _session_key in hermes.inject_calls)
+    assert all(
+        session_key == "gateway-session-key" for _content, _role, session_key in hermes.inject_calls
+    )
+    assert contents[0].startswith("<event group_member_increase> uid 800000004 joined the group.")
+    assert contents[1].startswith("<event group_member_decrease> uid 800000004 left the group.")
+    assert all("Tip: If relevant to the current turn" in content for content in contents)
+    assert pipeline._system_context.size("group:700000001") == 0
+    assert hermes.events == []
+    assert pipeline.reply_costs == 0
+
+
+def test_member_event_notification_disabled_keeps_context_without_injection() -> None:
+    """关闭通知时成员事件留在 context，且不触发 Hermes 注入。"""
+
+    async def scenario() -> tuple[FakeHermes, InboundPipeline]:
+        hermes = FakeHermes()
+        pipeline = make_pipeline(
+            hermes,
+            FakeResolver(),
+            member_event_notifications=False,
+            session_key_resolver=lambda _chat_key: "must-not-be-used",
+        )
+        result = await pipeline.handle_event(
+            load_fixture("events/system.group_member_increase.json")
+        )
+        assert result.classification == "observe_only"
+        return hermes, pipeline
+
+    hermes, pipeline = asyncio.run(scenario())
+
+    assert hermes.inject_calls == []
+    pending = pipeline._system_context.snapshot("group:700000001")
+    assert len(pending) == 1
+    assert "joined the group" in pending[0].body
+    assert "Tip:" not in pending[0].body
+
+
+def test_rejected_member_event_injection_retains_context_without_retry() -> None:
+    """注入被拒绝时保留带 Tip 的上下文且不重复提交。"""
+
+    async def scenario() -> tuple[FakeHermes, InboundPipeline]:
+        hermes = FakeHermes()
+        hermes.inject_result = False
+        pipeline = make_pipeline(
+            hermes,
+            FakeResolver(),
+            member_event_notifications=True,
+            session_key_resolver=lambda _chat_key: "gateway-session-key",
+        )
+        result = await pipeline.handle_event(
+            load_fixture("events/system.group_member_decrease.json")
+        )
+        assert result.classification == "observe_only"
+        return hermes, pipeline
+
+    hermes, pipeline = asyncio.run(scenario())
+
+    assert len(hermes.inject_calls) == 1
+    assert pipeline._system_context.size("group:700000001") == 1
+    pending = pipeline._system_context.snapshot("group:700000001")[0]
+    assert "left the group" in pending.body
+    assert "Tip:" in pending.body
+    assert "member_event_notification:failed_injection" in pipeline.diagnostics
+
+
+def test_member_toggle_does_not_inject_nudge_or_recall_events() -> None:
+    """成员通知开关不改变 nudge 和 recall 的 context-only 行为。"""
+
+    async def scenario() -> tuple[FakeHermes, InboundPipeline]:
+        hermes = FakeHermes()
+        pipeline = make_pipeline(
+            hermes,
+            FakeResolver(),
+            member_event_notifications=True,
+            session_key_resolver=lambda _chat_key: "gateway-session-key",
+        )
+        for fixture_name in (
+            "events/system.group_nudge.json",
+            "events/system.message_recall.json",
+        ):
+            result = await pipeline.handle_event(load_fixture(fixture_name))
+            assert result.classification == "observe_only"
+        return hermes, pipeline
+
+    hermes, pipeline = asyncio.run(scenario())
+
+    assert hermes.inject_calls == []
+    assert pipeline._system_context.size("group:700000001") == 2
 
 
 def test_session_snapshot_is_ready_before_handoff_and_skips_non_trigger_paths() -> None:
@@ -540,7 +674,7 @@ def test_dm_history_and_system_context_keep_ingress_order() -> None:
     event = asyncio.run(scenario())
 
     assert event.channel_context == (
-        "私聊历史\n<event message_recall> uid 800000001 撤回了消息 msg_seq 2503"
+        "私聊历史\n<event message_recall> uid 800000001 recalled message msg_seq 2503"
     )
     assert event.text == "私聊触发"
 

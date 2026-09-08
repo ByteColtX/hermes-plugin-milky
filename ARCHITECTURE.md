@@ -183,25 +183,34 @@ TTL map 的检查和插入必须原子完成，且早于资源补全、Will 和 
 `message_recall` 只有在 `message_scene` 为 `friend` 或 `group`，且 `peer_id`、`message_seq`、
 `sender_id` 是已确认的非负整数时，才写入对应 chat 的 system context FIFO：friend 使用
 `dm:<peer_id>`，group 使用 `group:<peer_id>`。`operator_id` 缺失或为 null 时，body 为
-`uid <sender_id> 撤回了消息 msg_seq <message_seq>`；群聊仅在操作人存在且
-`operator_id != sender_id` 时为 `管理员 uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`；
+`uid <sender_id> recalled message msg_seq <message_seq>`；群聊仅在操作人存在且
+`operator_id != sender_id` 时为 `Admin uid <operator_id> recalled uid <sender_id>'s message msg_seq <message_seq>`；
 操作人缺失、为 null 或与发送者相同时使用前一文案。好友存在不同操作人时使用
-`uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`，不推断管理员角色。
+`uid <operator_id> recalled uid <sender_id>'s message msg_seq <message_seq>`，不推断管理员角色。
 事件类型前缀由 renderer 统一添加为 `<event message_recall>`。
 
 `group_nudge`、`friend_nudge`、`group_member_increase`、`group_member_decrease` 和合法
-`message_recall` 可写入每 chat 独立、有界、可丢失的 system context FIFO；不创建 canonical、
-dedup、Gate、Will、reply cost 或独立 Hermes turn。group nudge 只有 `receiver_id == self_id` 才产生
-self-poke，friend nudge 只有明确的自身接收方向且无自身发送冲突才产生 self-poke；该特征仍不改变
-nudge 的 observe-only 边界。它们与普通 wait 消息共享 ingress sequence，在下一次同 chat trigger
-中按序合并并原子清除。缺少 chat key、撤回必要字段或撤回场景非法时记录 `malformed`/`unsupported`，
-不创建上下文；其他事件不自动发送或批准。
+`message_recall` 可写入每 chat 独立、有界、可丢失的 system context FIFO；除显式启用且注入被接受
+的成员事件外，不创建 canonical、dedup、Gate、Will、reply cost 或独立 Hermes turn。group nudge
+只有 `receiver_id == self_id` 才产生 self-poke，friend nudge 只有明确的自身接收方向且无自身发送
+冲突才产生 self-poke；该特征仍不改变 nudge 的 observe-only 边界。它们与普通 wait 消息共享 ingress
+sequence，在下一次同 chat trigger 中按序合并并原子清除。缺少 chat key、撤回必要字段或撤回场景非法
+时记录 `malformed`/`unsupported`，不创建上下文；其他事件不自动发送或批准。
 
-正文使用固定格式：`group_nudge` 为 `uid <sender_id> 戳了 uid <receiver_id>`，`friend_nudge` 为
-`uid <user_id> 戳了一下`；成员加入/退出使用“加入了群聊”或“退出了群聊”，并附已确认的 JSON
-Details。缺少 `operator_id` 或 `invitor_id` 时省略，不补空字符串；撤回事件只展示撤回元数据，
-不调用 `get_message`，不恢复被撤回消息正文，也不把 `display_suffix`、动作图片 URL、timestamp、
-raw payload 或未确认扩展字段放入上下文。
+正文使用固定英文格式：`group_nudge` 为 `uid <sender_id> poked uid <receiver_id>`，`friend_nudge`
+为 `uid <user_id> poked once`；成员加入/退出分别为 `uid <user_id> joined the group. Details: {...}`
+和 `uid <user_id> left the group. Details: {...}`，Details 只保留已确认的 group/user/operator/invitor
+字段。缺少 `operator_id` 或 `invitor_id` 时省略，不补空字符串；撤回事件只展示英文撤回元数据，不
+调用 `get_message`，不恢复被撤回消息正文，也不把 `display_suffix`、动作图片 URL、timestamp、raw
+payload 或未确认扩展字段放入上下文。
+
+`MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` 是启动期固定的 `true`/`false` 开关，默认 `false`。关闭时
+成员事件使用无 Tip 的基础英文 body，继续等待下一次普通消息；开启时在 body 末尾追加固定 Tip，并
+在 system context append 后读取该群待处理记录，按 ingress 顺序通过 adapter 的 Hermes
+`inject_message` 交接。只有宿主接受注入后才 drain；session key 必须来自 Hermes 已确认或从其
+持久化 session route 恢复的 gateway 会话，不能由 `group:<id>`、`dm:<id>` 或其他插件 chat key 推导。缺少确认、授权、live gateway 或
+注入被拒绝时保留上下文并记录安全分类，不重试、不直接调用 Milky Action。nudge、recall、request、
+file upload 和其他系统事件不受该开关影响。
 
 ## 7. Segment、资源与 Hermes 映射
 
@@ -487,6 +496,7 @@ context buffer、willingness 状态，以及 MuteTracker 群状态和 TTL 任务
 | `MILKY_HOME_CHANNEL` | 否 | 系统/cron 默认目标；完整 `group:<id>` 或 `dm:<id>` |
 | `MILKY_MAX_LOCAL_MEDIA_BYTES` | 否 | 出站本地资源原始字节数上限；默认 `33554432`（`32 MiB`），范围 `8388608`–`33554432`（`8–32 MiB`） |
 | `MILKY_LONG_TEXT_FORWARD_THRESHOLD` | 否 | 超长文本合并转发阈值；默认 `0`，范围 `0..4096`，严格大于阈值才选择 forward |
+| `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` | 否 | 群成员事件即时通知；默认 `false`，只接受大小写不敏感的 `true`/`false`，启动时读取 |
 
 `MILKY_HOME_CHANNEL` 不参与入站 allowlist；未配置时不猜测 origin、默认频道或私聊目标。已
 连接 adapter 的 live 投递复用普通 sender；standalone cron 每次创建并关闭临时 client，

@@ -136,6 +136,7 @@ MILKY_ALLOWED_CHATS=group:123456789,dm:987654321
 MILKY_SESSION_BUFFER_SIZE=20
 MILKY_HOME_CHANNEL=group:123456789
 # MILKY_MAX_LOCAL_MEDIA_BYTES=33554432
+# MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS=false
 # MILKY_WILL_POLICY=<JSON 字符串，见下方 Will policy>
 ```
 
@@ -151,6 +152,7 @@ MILKY_HOME_CHANNEL=group:123456789
 | `MILKY_HOME_CHANNEL` | 否 | 系统消息和 cron 的默认目标；不参与入站白名单。 |
 | `MILKY_MAX_LOCAL_MEDIA_BYTES` | 否 | 出站本地资源原始字节数上限，默认 `33554432`（`32 MiB`），合法范围 `8388608`（`8 MiB`）至 `33554432`（`32 MiB`）。 |
 | `MILKY_LONG_TEXT_FORWARD_THRESHOLD` | 否 | 超长文本合并转发阈值，默认 `0`（关闭）；只接受 `0..4096` 的十进制整数，只有可见规范化文本长度严格大于正值时才选择一个 `forward`。 |
+| `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` | 否 | 群成员入退群即时通知，默认 `false`；只接受大小写不敏感的 `true`/`false`，只在启动时读取。开启后追加固定英文 Tip，并在 Hermes 已确认或持久化恢复的 session key 且接受注入时立即触发 Agent turn。 |
 
 消息 chat key 只接受 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>`；白名单另支持完整的
 `group:*` 和 `dm:*` 规则，`temp` 会话不会回退到其他目标。
@@ -159,6 +161,10 @@ MILKY_HOME_CHANNEL=group:123456789
 
 下面的配置让群聊共享 session、在 Agent 忙碌时排队，并减少进度消息。请合并到
 `~/.hermes/config.yaml`，保留已有的其他配置：
+
+启用 `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS=true` 时，还必须保留下面的
+`plugins.entries.hermes-plugin-milky.allow_gateway_injection: true`；这是允许成员事件通过
+已有 Gateway session 触发 Agent turn 的插件级授权。
 
 ```yaml
 # 群友共享同一个 group:<群号> 会话
@@ -225,6 +231,12 @@ platforms:
         - "status"
         - "context"
         - "agents"
+
+# 成员入退群即时通知需要允许插件向已有 Gateway session 注入消息
+plugins:
+  entries:
+    hermes-plugin-milky:
+      allow_gateway_injection: true
 
 # 关闭后台自动复盘、自动写入记忆/Skill
 auxiliary:
@@ -592,9 +604,24 @@ raw、凭证、媒体 URL、文件路径和敏感正文不会渲染。Gate deny�
 
 - 只有字段完整且 `message_scene` 为 `friend` 或 `group` 时才登记；friend 写入 `dm:<peer_id>`，group 写入 `group:<peer_id>`，非法场景或 ID 只记录安全诊断；
 - 合法事件进入对应 chat 的有界 system context FIFO，在下一次同 chat `trigger` 的 `channel_context` 中按 ingress 顺序出现一次，格式为 `<event message_recall> ...`；
-- 无 `operator_id` 或 `operator_id == sender_id` 时显示 `uid <sender_id> 撤回了消息 msg_seq <message_seq>`；群聊仅在 `operator_id != sender_id` 时显示 `管理员 uid <operator_id> 撤回了 uid <sender_id> 的消息 msg_seq <message_seq>`，好友有不同操作人时不添加管理员角色；
+- 无 `operator_id` 或 `operator_id == sender_id` 时显示 `uid <sender_id> recalled message msg_seq <message_seq>`；群聊仅在 `operator_id != sender_id` 时显示 `Admin uid <operator_id> recalled uid <sender_id>'s message msg_seq <message_seq>`，好友有不同操作人时不添加管理员角色；
 - 撤回事件不创建普通 Agent turn、不发送回复、不调用主动撤回工具，也不调用 `get_message` 或下载资源；插件只展示撤回元数据，不承诺恢复被撤回消息正文；
 - 该路径仍是 observe-only，不经过普通消息的 Gate/Will，也不扣 reply cost。fixture 和 fake host 测试不代表真实 Milky 服务端能力已被集成验证。
+
+`group_nudge` 和 `friend_nudge` 也只进入对应 chat 的 system context，固定英文 body 分别为
+`uid <sender_id> poked uid <receiver_id>` 和 `uid <user_id> poked once`。成员事件使用以下基础
+英文 body，并由 renderer 统一添加 `<event group_member_increase>` 或
+`<event group_member_decrease>` 前缀：
+
+- `uid <user_id> joined the group. Details: {"group_id": ..., "user_id": ..., "operator_id": ..., "invitor_id": ...}`
+- `uid <user_id> left the group. Details: {"group_id": ..., "user_id": ..., "operator_id": ...}`
+
+缺失或为 null 的 `operator_id`/`invitor_id` 会从 `Details` 省略；display text、URL、timestamp、raw
+扩展和撤回正文不会进入 body。默认 `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS=false` 时，成员事件不
+带 Tip、不即时触发 Agent，保留在 system context 等下一次普通消息。设置为大小写不敏感的 `true`
+后，成员 body 末尾追加固定英文 Tip，并只通过 Hermes 已有的 `inject_message` 交接；没有已确认或持久化恢复的
+session key、没有注入授权、宿主不可用或注入被拒绝时，带 Tip 的上下文保留，不猜测 session key，
+也不直接调用 Milky Action。配置值在启动后不热切换，修改后需要重启 Gateway。
 
 Agent 发送本地媒体时，在回复中写入：
 

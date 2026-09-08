@@ -72,6 +72,7 @@ def test_load_config_derives_prefixed_urls_and_bearer_header() -> None:
     assert config.base_url == "https://localhost:5500/milky"
     assert config.home_channel is None
     assert config.max_local_media_bytes == DEFAULT_MAX_LOCAL_MEDIA_BYTES
+    assert config.group_member_event_notifications is False
     summary = repr(config.redacted_summary())
     assert all(marker not in summary for marker in ("Authorization", "base64://", "/Users/"))
     assert config.action_url("get_group_list") == (
@@ -83,6 +84,42 @@ def test_load_config_derives_prefixed_urls_and_bearer_header() -> None:
     }
     assert "test-token-that-must-not-leak" not in repr(config.redacted_summary())
     assert "test-token-that-must-not-leak" not in repr(config)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, False),
+        ("true", True),
+        ("TRUE", True),
+        ("TrUe", True),
+        ("false", False),
+        ("FALSE", False),
+        (" FaLsE ", False),
+    ],
+)
+def test_load_config_parses_group_member_event_notifications(
+    value: str | None,
+    expected: bool,
+) -> None:
+    """群成员事件通知开关应在启动时按大小写不敏感布尔值解析。"""
+
+    environment = DEFAULT_ENV.copy()
+    if value is not None:
+        environment["MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS"] = value
+
+    config = load_config(environment)
+
+    assert config.group_member_event_notifications is expected
+    assert config.redacted_summary()["group_member_event_notifications"] is expected
+
+
+@pytest.mark.parametrize("value", ["", "yes", "1", "true-ish", "null"])
+def test_load_config_rejects_invalid_group_member_event_notifications(value: str) -> None:
+    """群成员事件通知开关拒绝除 true/false 外的值。"""
+
+    with pytest.raises(ConfigError, match="MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS"):
+        load_config(DEFAULT_ENV | {"MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS": value})
 
 
 @pytest.mark.parametrize("missing", ["MILKY_BASE_URL", "MILKY_ACCESS_TOKEN"])
@@ -402,6 +439,7 @@ def test_manifest_declares_only_the_new_environment_contract_and_tools() -> None
     assert "MILKY_HOME_CHANNEL" in manifest
     assert "MILKY_MAX_LOCAL_MEDIA_BYTES" in manifest
     assert "MILKY_LONG_TEXT_FORWARD_THRESHOLD" in manifest
+    assert "MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS" in manifest
     assert "33554432" in manifest
     assert "provides_tools:" in manifest
     for tool_name in (

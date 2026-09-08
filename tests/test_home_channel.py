@@ -268,6 +268,7 @@ def test_home_config_does_not_change_inbound_allowlist_or_require_readiness() ->
         "has_home_channel": True,
         "max_local_media_bytes": 33554432,
         "long_text_forward_threshold": 0,
+        "group_member_event_notifications": False,
     }
 
 

@@ -185,11 +185,11 @@ uid <user_id> left the group. Details: {"group_id": <group_id>, "user_id": <user
 下一次普通消息触发时消费。该开关 MUST NOT 改变 nudge、message_recall、请求、文件上传或
 其他系统事件的既有 observe-only/context-only 行为。
 
-当该值为 `true` 时，系统 MUST 在成员事件 body 末尾附加固定 `Tip`，并在已确认对应 Hermes
-会话的 session key 且 `inject_message` 被宿主接受时，立即按 ingress 顺序消费该群待处理的
+当该值为 `true` 时，系统 MUST 在成员事件 body 末尾附加固定 `Tip`，并在 Hermes 已确认或持久化
+恢复的对应会话 session key 且 `inject_message` 被宿主接受时，立即按 ingress 顺序消费该群待处理的
 system context，并触发一个 Agent turn。该即时通知 SHALL 使用 Hermes 已有会话注入接口，
 不经过普通 `message_receive` 的 Gate/Will，不扣 reply cost，不直接调用 Milky Action。
-注入失败、权限未授予、宿主不可用或 session key 未确认时，系统 MUST 保留带 `Tip` 的 system
+注入失败、权限未授予、宿主不可用或 session key 未确认或未恢复时，系统 MUST 保留带 `Tip` 的 system
 context，不得丢弃事件；系统 SHALL 记录安全的 unsupported/failed 诊断，并等待下一次普通消息
 触发消费。
 
@@ -214,7 +214,7 @@ context，不得丢弃事件；系统 SHALL 记录安全的 unsupported/failed �
 
 #### Scenario: 即时注入不可用
 
-- **WHEN** `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` 为 `true`，但对应 Hermes session key 未确认、注入权限未授予、宿主没有 live gateway 或 `inject_message` 返回拒绝
+- **WHEN** `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` 为 `true`，但对应 Hermes session key 未确认/未恢复、注入权限未授予、宿主没有 live gateway 或 `inject_message` 返回拒绝
 - **THEN** 系统 SHALL 将带固定 `Tip` 的成员事件保留在对应群 chat 的 system context
 - **AND** 系统 SHALL 记录安全的 unsupported/failed 诊断
 - **AND** 后续普通消息 SHALL 仍可消费该事件，系统 SHALL 不因注入失败丢弃或重复创建即时 turn

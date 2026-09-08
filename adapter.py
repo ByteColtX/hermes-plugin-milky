@@ -27,6 +27,7 @@ from session import (
     ChatMetadataSnapshotStore,
     TtlDeduplicator,
     WaitBuffer,
+    validate_chat_key,
 )
 from state import MuteTracker
 from will import build_engine
@@ -108,6 +109,7 @@ class MilkyAdapter(BasePlatformAdapter):
         slash_command_service: object | None = None,
         identity_snapshot: BotIdentitySnapshot | None = None,
         session_context_store: ChatMetadataSnapshotStore | None = None,
+        plugin_context: object | None = None,
     ) -> None:
         """组装进程内依赖；构造阶段不建立网络连接或后台任务。"""
 
@@ -160,6 +162,8 @@ class MilkyAdapter(BasePlatformAdapter):
             if session_context_store is not None
             else ChatMetadataSnapshotStore()
         )
+        self._plugin_context = plugin_context
+        self._confirmed_session_keys: dict[str, str] = {}
         self._pipeline = pipeline
         self._self_id: int | None = None
         self._event_task: asyncio.Task[None] | None = None
@@ -273,6 +277,7 @@ class MilkyAdapter(BasePlatformAdapter):
             try:
                 if not self._initial_sync_complete:
                     await self._initialize_state()
+                await self._restore_confirmed_session_keys()
                 if self._pipeline is None:
                     self._pipeline = self._build_pipeline()
                 if not self._pipeline_started:
@@ -373,6 +378,62 @@ class MilkyAdapter(BasePlatformAdapter):
                 error_kind="unsupported",
             )
         return await self._outbound.send(chat_id, content, None, metadata)
+
+    async def handle_message(self, event: object) -> None:
+        """记录宿主确认的 session key 后交给 Hermes 普通消息入口。"""
+
+        self._remember_confirmed_session_key(event)
+        result = super().handle_message(event)
+        if inspect.isawaitable(result):
+            await result
+
+    def inject_message(
+        self,
+        content: str,
+        role: str = "user",
+        *,
+        session_key: str | None = None,
+    ) -> bool:
+        """调用 Hermes plugin context 的已授权会话注入接口。"""
+
+        injector = getattr(self._plugin_context, "inject_message", None)
+        if (
+            not callable(injector)
+            or not isinstance(session_key, str)
+            or not session_key.strip()
+            or session_key.strip() not in self._confirmed_session_keys.values()
+        ):
+            return False
+        try:
+            return injector(content, role=role, session_key=session_key.strip()) is True
+        except Exception:  # noqa: BLE001 - 注入失败必须由 pipeline 保留上下文
+            return False
+
+    def _remember_confirmed_session_key(self, event: object) -> None:
+        """只保存 Hermes 提供或其官方 runner 解析出的 session key。"""
+
+        source = getattr(event, "source", None)
+        chat_key = getattr(source, "chat_id", None)
+        if not isinstance(chat_key, str) or not chat_key:
+            return
+        metadata = getattr(event, "metadata", None)
+        session_key = metadata.get("gateway_session_key") if isinstance(metadata, dict) else None
+        if not isinstance(session_key, str) or not session_key.strip():
+            runner = getattr(self, "gateway_runner", None)
+            resolver = getattr(runner, "_session_key_for_source", None)
+            if not callable(resolver):
+                return
+            try:
+                session_key = resolver(source)
+            except Exception:  # noqa: BLE001 - 未确认 key 不得推断
+                return
+        if isinstance(session_key, str) and session_key.strip():
+            self._confirmed_session_keys[chat_key] = session_key.strip()
+
+    def _resolve_confirmed_session_key(self, chat_key: str) -> str | None:
+        """返回已经从 Hermes 入站交接确认的 session key。"""
+
+        return self._confirmed_session_keys.get(chat_key)
 
     async def send_image(
         self,
@@ -647,6 +708,59 @@ class MilkyAdapter(BasePlatformAdapter):
             deduplicator=self._deduplicator,
             mute_tracker=self._mute_tracker,
             session_context_store=self._session_context_store,
+            member_event_notifications=self._config.group_member_event_notifications,
+            session_key_resolver=self._resolve_confirmed_session_key,
+        )
+
+    async def _restore_confirmed_session_keys(self) -> None:
+        """从 Hermes 已持久化的 session route 恢复可注入会话。"""
+
+        runner = getattr(self, "gateway_runner", None)
+        session_store = getattr(runner, "async_session_store", None)
+        list_sessions = getattr(session_store, "list_sessions", None)
+        if not callable(list_sessions):
+            return
+        try:
+            entries = list_sessions()
+            if inspect.isawaitable(entries):
+                entries = await entries
+        except Exception:  # noqa: BLE001 - 恢复失败不应阻断 Milky 连接
+            self._record("session_key_restore_failed")
+            return
+        if not isinstance(entries, (list, tuple)):
+            self._record("session_key_restore_malformed")
+            return
+
+        restored = 0
+        for entry in entries:
+            session_key = getattr(entry, "session_key", None)
+            origin = getattr(entry, "origin", None)
+            platform_value = getattr(origin, "platform", None)
+            platform = getattr(platform_value, "value", platform_value)
+            raw_chat_key = getattr(origin, "chat_id", None)
+            if (
+                platform != self.PLATFORM_NAME
+                or not isinstance(session_key, str)
+                or not session_key.strip()
+                or not isinstance(raw_chat_key, str)
+            ):
+                continue
+            try:
+                chat_key = validate_chat_key(raw_chat_key)
+            except ValueError:
+                continue
+            if chat_key in self._confirmed_session_keys:
+                continue
+            self._confirmed_session_keys[chat_key] = session_key.strip()
+            restored += 1
+        logger.info(
+            render_event(
+                "milky.lifecycle",
+                stage="session",
+                operation="restored",
+                classification="accepted",
+                session_count=restored,
+            )
         )
 
     async def _run_event_stream(self) -> None:

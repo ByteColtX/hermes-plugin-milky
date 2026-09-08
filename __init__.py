@@ -150,6 +150,7 @@ def register(ctx: Any) -> None:
         adapter_factory=lambda platform_config: MilkyAdapter(
             platform_config,
             milky_config=milky_config,
+            plugin_context=ctx,
             slash_command_service=command_service,
             identity_snapshot=identity_snapshot,
             session_context_store=session_context_store,

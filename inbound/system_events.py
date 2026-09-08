@@ -21,6 +21,16 @@ _CONTEXT_EVENT_TYPES = frozenset(
     }
 )
 _MISSING = object()
+_GROUP_MEMBER_INCREASE_TIP = (
+    " Tip: If relevant to the current turn, naturally acknowledge or welcome this new member "
+    "using the current group context. Do not invent their nickname, background, or other "
+    "unconfirmed facts."
+)
+_GROUP_MEMBER_DECREASE_TIP = (
+    " Tip: If relevant to the current turn, naturally acknowledge the departure or offer a "
+    "brief farewell based only on confirmed shared context. Do not speculate about the reason "
+    "or invent memories."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +42,11 @@ class ContextEventResult:
     reason: str | None = None
 
 
-def parse_context_event(event: Event) -> ContextEventResult:
+def parse_context_event(
+    event: Event,
+    *,
+    member_event_notifications: bool = False,
+) -> ContextEventResult:
     """校验并渲染允许注入的系统事件，不执行网络或 Agent 操作。"""
 
     if not isinstance(event, Event):
@@ -48,14 +62,14 @@ def parse_context_event(event: Event) -> ContextEventResult:
             sender_id = _required_id(event.data, "sender_id")
             receiver_id = _required_id(event.data, "receiver_id")
             chat_key = normalize_chat_key("group", group_id)
-            body = f"uid {sender_id} 戳了 uid {receiver_id}"
+            body = f"uid {sender_id} poked uid {receiver_id}"
             is_self_poke = receiver_id == event.self_id
         elif event.event_type == "friend_nudge":
             user_id = _required_id(event.data, "user_id")
             is_self_send = _required_bool(event.data, "is_self_send")
             is_self_receive = _required_bool(event.data, "is_self_receive")
             chat_key = normalize_chat_key("friend", user_id)
-            body = f"uid {user_id} 戳了一下"
+            body = f"uid {user_id} poked once"
             is_self_poke = is_self_receive and not is_self_send
             sender_id = event.self_id if is_self_send else user_id
             receiver_id = user_id if is_self_send else event.self_id
@@ -64,13 +78,17 @@ def parse_context_event(event: Event) -> ContextEventResult:
             user_id = _required_id(event.data, "user_id")
             details = _details(event.data, ("group_id", "user_id", "operator_id", "invitor_id"))
             chat_key = normalize_chat_key("group", group_id)
-            body = f"uid {user_id} 加入了群聊 Details: {_dump_details(details)}"
+            body = f"uid {user_id} joined the group. Details: {_dump_details(details)}"
+            if member_event_notifications:
+                body += _GROUP_MEMBER_INCREASE_TIP
         elif event.event_type == "group_member_decrease":
             group_id = _required_id(event.data, "group_id")
             user_id = _required_id(event.data, "user_id")
             details = _details(event.data, ("group_id", "user_id", "operator_id"))
             chat_key = normalize_chat_key("group", group_id)
-            body = f"uid {user_id} 退出了群聊 Details: {_dump_details(details)}"
+            body = f"uid {user_id} left the group. Details: {_dump_details(details)}"
+            if member_event_notifications:
+                body += _GROUP_MEMBER_DECREASE_TIP
         else:
             message_scene = event.data.get("message_scene", _MISSING)
             if message_scene is _MISSING or not isinstance(message_scene, str):
@@ -83,13 +101,11 @@ def parse_context_event(event: Event) -> ContextEventResult:
             operator_id = _optional_id(event.data, "operator_id")
             chat_key = normalize_chat_key(message_scene, peer_id)
             if operator_id is None or operator_id == sender_id:
-                body = f"uid {sender_id} 撤回了消息 msg_seq {message_seq}"
+                body = f"uid {sender_id} recalled message msg_seq {message_seq}"
             elif message_scene == "group":
-                body = (
-                    f"管理员 uid {operator_id} 撤回了 uid {sender_id} 的消息 msg_seq {message_seq}"
-                )
+                body = f"Admin uid {operator_id} recalled uid {sender_id}'s message msg_seq {message_seq}"
             else:
-                body = f"uid {operator_id} 撤回了 uid {sender_id} 的消息 msg_seq {message_seq}"
+                body = f"uid {operator_id} recalled uid {sender_id}'s message msg_seq {message_seq}"
     except (CanonicalError, TypeError, ValueError) as error:
         return ContextEventResult("malformed", None, _safe_reason(error))
 

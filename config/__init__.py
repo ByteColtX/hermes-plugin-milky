@@ -82,6 +82,7 @@ class MilkyConfig:
     home_channel: str | None = field(default=None, repr=False)
     max_local_media_bytes: int = DEFAULT_MAX_LOCAL_MEDIA_BYTES
     long_text_forward_threshold: int = DEFAULT_LONG_TEXT_FORWARD_THRESHOLD
+    group_member_event_notifications: bool = False
 
     @property
     def event_url(self) -> str:
@@ -114,6 +115,7 @@ class MilkyConfig:
             "has_home_channel": self.home_channel is not None,
             "max_local_media_bytes": self.max_local_media_bytes,
             "long_text_forward_threshold": self.long_text_forward_threshold,
+            "group_member_event_notifications": self.group_member_event_notifications,
         }
 
 
@@ -144,6 +146,10 @@ def load_config(environment: Mapping[str, str] | None = None) -> MilkyConfig:
             str(DEFAULT_LONG_TEXT_FORWARD_THRESHOLD),
         )
     )
+    group_member_event_notifications = _parse_boolean(
+        values.get("MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS", "false"),
+        "MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS",
+    )
     return MilkyConfig(
         base_url=base_url,
         access_token=access_token,
@@ -153,6 +159,7 @@ def load_config(environment: Mapping[str, str] | None = None) -> MilkyConfig:
         home_channel=home_channel,
         max_local_media_bytes=max_local_media_bytes,
         long_text_forward_threshold=long_text_forward_threshold,
+        group_member_event_notifications=group_member_event_notifications,
     )
 
 
@@ -393,6 +400,19 @@ def _parse_non_negative_integer(value: object, name: str) -> int:
     if not isinstance(value, str) or not _INTEGER_PATTERN.fullmatch(value.strip()):
         raise ConfigError(f"{name} must be a non-negative integer")
     return int(value)
+
+
+def _parse_boolean(value: object, name: str) -> bool:
+    """解析大小写不敏感的布尔配置。"""
+
+    if not isinstance(value, str):
+        raise ConfigError(f"{name} must be true or false")
+    normalized = value.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ConfigError(f"{name} must be true or false")
 
 
 def _parse_max_local_media_bytes(value: object) -> int:

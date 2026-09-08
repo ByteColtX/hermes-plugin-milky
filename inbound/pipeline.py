@@ -37,6 +37,7 @@ from .hermes_mapper import build_source, map_command_event, map_message_event
 from .system_events import parse_context_event
 
 Observer = Callable[[Event], Awaitable[object] | object]
+SessionKeyResolver = Callable[[str], str | None]
 
 logger = logging.getLogger("hermes_plugins.milky.inbound.pipeline")
 
@@ -71,6 +72,8 @@ class InboundPipeline:
         mute_tracker: object | None = None,
         system_context_buffer: SystemContextBuffer | None = None,
         session_context_store: ChatMetadataSnapshotStore | None = None,
+        member_event_notifications: bool = False,
+        session_key_resolver: SessionKeyResolver | None = None,
     ) -> None:
         """创建一次入站 pipeline；不在构造阶段联网或启动任务。"""
 
@@ -90,6 +93,8 @@ class InboundPipeline:
         self._mute_tracker = mute_tracker
         self._system_context = system_context_buffer or SystemContextBuffer(wait_buffer.max_size)
         self._session_context_store = session_context_store or ChatMetadataSnapshotStore()
+        self._member_event_notifications = member_event_notifications
+        self._session_key_resolver = session_key_resolver
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._diagnostics: deque[str] = deque(maxlen=128)
         self._reply_costs = 0
@@ -154,7 +159,10 @@ class InboundPipeline:
             return PipelineResult(error.classification, reason=error.reason)
 
         if parsed_event.event_type != "message_receive":
-            context_result = parse_context_event(parsed_event)
+            context_result = parse_context_event(
+                parsed_event,
+                member_event_notifications=self._member_event_notifications,
+            )
             if context_result.value is not None:
                 await self._store_context_event(context_result.value)
             elif context_result.classification in {"malformed", "unsupported"}:
@@ -562,6 +570,66 @@ class InboundPipeline:
                     reason=reason,
                 )
             )
+            if result.accepted and self._should_notify_member_event(event):
+                await self._notify_member_event(event.chat_key)
+
+    def _should_notify_member_event(self, event: ContextOnlyEvent) -> bool:
+        """返回是否需要对成员事件尝试一次即时注入。"""
+
+        return self._member_event_notifications and event.event_type in {
+            "group_member_increase",
+            "group_member_decrease",
+        }
+
+    async def _notify_member_event(self, chat_key: str) -> None:
+        """通过已确认的 Hermes session 注入系统上下文并成功后 drain。"""
+
+        if self._session_key_resolver is None:
+            self._record("member_event_notification:unsupported_session_key")
+            return
+        try:
+            session_key = self._session_key_resolver(chat_key)
+        except Exception:  # noqa: BLE001 - 宿主边界失败必须保留上下文
+            self._record("member_event_notification:failed_session_key")
+            return
+        if not isinstance(session_key, str) or not session_key.strip():
+            self._record("member_event_notification:unsupported_session_key")
+            return
+
+        pending = self._system_context.snapshot(chat_key)
+        content = render_ordered_context(
+            tuple((event.ingress_sequence or 0, event) for event in pending),
+            chat_key=chat_key,
+        )
+        if not content:
+            self._record("member_event_notification:unsupported_context")
+            return
+        inject_message = getattr(self._hermes, "inject_message", None)
+        if not callable(inject_message):
+            self._record("member_event_notification:unsupported_injection")
+            return
+        try:
+            accepted = inject_message(content, role="user", session_key=session_key.strip())
+            if inspect.isawaitable(accepted):
+                accepted = await accepted
+        except Exception:  # noqa: BLE001 - injection refusal must retain context
+            self._record("member_event_notification:failed_injection")
+            return
+        if accepted is not True:
+            self._record("member_event_notification:failed_injection")
+            return
+        drained = self._system_context.drain(chat_key)
+        logger.info(
+            render_event(
+                "milky.inbound",
+                stage="handoff",
+                operation="member_event_injection",
+                chat_key=chat_key,
+                event_count=len(drained),
+                classification="accepted",
+                reason="context_drained",
+            )
+        )
 
     def _record(self, reason: str) -> None:
         self._diagnostics.append(reason)
@@ -582,6 +650,8 @@ class InboundPipeline:
             "mute_tracker": self._mute_tracker,
             "system_context_buffer": self._system_context,
             "session_context_store": self._session_context_store,
+            "member_event_notifications": self._member_event_notifications,
+            "session_key_resolver": self._session_key_resolver,
         }
         values.update(overrides)
         return type(self)(**values)
