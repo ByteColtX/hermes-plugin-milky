@@ -13,7 +13,7 @@
 | 协议 | Milky v1.3；HTTP Action + SSE `GET /event` |
 | 公开入口 | 根目录 `__init__.py::register(ctx)` |
 | 仓库 | [ByteColtX/hermes-plugin-milky](https://github.com/ByteColtX/hermes-plugin-milky) |
-| 更新日期 | 2026-09-07 |
+| 更新日期 | 2026-09-09 |
 
 边界以本文和 `AGENTS.md` 为准；可观察行为、测试要求和 change 进度以 `openspec/` 为准，安装与配置以 `README.md` 为准，代码与测试提供当前实现证据。单次本地测试、fake host、OpenAPI 文档清单或 fixture 不能证明真实 Hermes 宿主和 Milky 服务已经支持某项能力。
 
@@ -377,6 +377,8 @@ Milky 能访问 plugin 的本地路径。每个可能有副作用的 Action 最�
 
 ### 受限 CQ-compatible 语法
 
+`CQ` 前缀大小写不敏感；`[CQ:...]`、`[cq:...]` 和其他大小写变体共用以下解析、ID 校验和
+fallback 规则。该兼容性只作用于前缀，不扩大已确认的 CQ 类型、字段或 Milky segment 映射。
 普通 Agent 文本可使用：
 
 - `[CQ:at,qq=<uid>]` -> native `mention`；

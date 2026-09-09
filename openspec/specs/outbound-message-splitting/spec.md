@@ -10,7 +10,7 @@
 
 Milky 出站文本 MUST 识别内容恰好为 [SPLIT] 的整行，以及普通正文行中未转义、大小写严格匹配的 [SPLIT] 标记。整行标记仍不得包含前导或尾随空格；行中标记所在行除标记外 MUST 至少包含一个非空白字符，只有空白包围的标记行仍作为普通文本保留。有效标记 MUST 从用户可见文本中删除，其他大小写变体 MUST 原样保留。行中标记两侧的非标记空白、普通换行和非空段内容 MUST 保持原样，不得自动 trim。
 
-分段扫描 MUST 尊重语法完整的 CQ-compatible 候选边界（包括未知 type），并将该候选按既有规则交给结构化转换或原始文本 fallback；合法 CQ 参数不会原样包含方括号形式的 [SPLIT]。缺少闭合括号、参数包含原始方括号或基础语法无效的 malformed CQ-like 内容不属于受保护候选，其中的 [SPLIT] MUST 按普通文本控制语法处理。未转义的 [SPLIT] 作为控制语法后，发送方 MUST 支持使用 [[SPLIT]] 输出字面量 [SPLIT]，且该转义形式不得触发分段。
+分段扫描 MUST 尊重语法完整的 CQ-compatible 候选边界（包括未知 type），且候选的 `CQ` 前缀大小写不敏感；扫描 MUST 将该候选按既有规则交给结构化转换或原始文本 fallback。合法 CQ 参数不会原样包含方括号形式的 [SPLIT]。缺少闭合括号、参数包含原始方括号或基础语法无效的 malformed CQ-like 内容不属于受保护候选，其中的 [SPLIT] MUST 按普通文本控制语法处理。未转义的 [SPLIT] 作为控制语法后，发送方 MUST 支持使用 [[SPLIT]] 输出字面量 [SPLIT]，且该转义形式不得触发分段。
 
 #### Scenario: 识别独立成行的有效标记
 
@@ -38,7 +38,7 @@ Milky 出站文本 MUST 识别内容恰好为 [SPLIT] 的整行，以及普通�
 
 #### Scenario: 完整 CQ 候选后的标记
 
-- **WHEN** 回复包含一个语法完整的 CQ-compatible 或 unknown type CQ 候选，后面紧邻未转义 [SPLIT]
+- **WHEN** 回复包含一个 `CQ` 前缀大小写任意、语法完整的 CQ-compatible 或 unknown type CQ 候选，后面紧邻未转义 [SPLIT]
 - **THEN** 系统 SHALL 在 CQ 候选闭合后识别该 [SPLIT] 并形成分段
 - **AND** CQ 候选 SHALL 按既有结构化转换或原始文本 fallback 规则保留
 
@@ -46,7 +46,7 @@ Milky 出站文本 MUST 识别内容恰好为 [SPLIT] 的整行，以及普通�
 
 - **WHEN** 回复包含缺少闭合括号、参数含原始方括号或基础语法无效的 malformed CQ-like 内容，且其中出现 [SPLIT]
 - **THEN** 系统 SHALL 按普通文本规则识别该 [SPLIT] 并形成分段
-- **AND** SHALL 不因未闭合或无效的 `[CQ:` 前缀保护后续正文
+- **AND** SHALL 不因未闭合或无效的 CQ-compatible 前缀保护后续正文
 
 #### Scenario: 标记不是完整独立行
 

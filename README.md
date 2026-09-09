@@ -640,8 +640,9 @@ plugin 不单独解析它。
 正文行中。独立行标记及其分隔边界会被删除，行中标记只删除自身；空段不发送，文本按原顺序
 最多发送三条。超过三段时尾部合并到第三段，每个文本单元仍遵守既有长度边界，若实际文本消息
 会超过三条，则在网络访问前整体拒绝。需要显示字面量 `[SPLIT]` 时使用 `[[SPLIT]]`；语法完整的
-CQ-compatible 或 unknown type CQ 候选中的标记不触发分段，malformed 或未闭合 CQ-like 内容中的标记
-按普通文本规则处理。普通长文本没有有效 `[SPLIT]` 时继续使用原有长度分块。
+CQ-compatible 或 unknown type CQ 候选中的标记不触发分段；候选的 `CQ` 前缀大小写不敏感，但
+malformed 或未闭合 CQ-like 内容中的标记按普通文本规则处理。普通长文本没有有效 `[SPLIT]` 时
+继续使用原有长度分块。
 
 回复同时包含文本分段和 `MEDIA:` 附件时，Hermes 先投递全部文本，再按提取顺序投递图片、语音、
 视频和文档；当前不支持文本段与附件交错，`[SPLIT]` 不改变 `MEDIA:` 的独立交接。
@@ -658,7 +659,8 @@ CQ image 仅用于本地 `file://` URI 的 sticker，例如：
 [CQ:image,file=file:///path/to/sticker.ext,type=sticker]
 ```
 
-普通图片请使用 `MEDIA:<local_path>`。sticker 会在发送前转换为 `base64://`。
+`CQ` 前缀大小写不敏感，但 type、字段和真实 ID 仍按既有规则校验；未知或转换失败的 CQ
+控制码保留完整原文。普通图片请使用 `MEDIA:<local_path>`。sticker 会在发送前转换为 `base64://`。
 
 本地路径、`Path` 和 `file://localhost` 只在 plugin 边界读取一次并受上述本地字节上限约束；
 格式合法的 `http(s)://` 和显式 `base64://` 会原样传递，plugin 不下载、读取或解码，也不应用
