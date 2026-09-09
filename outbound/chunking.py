@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .formatter import _CQ_PREFIX, _find_cq_start
+
 DEFAULT_TEXT_LENGTH = 4096
 
 
@@ -50,10 +52,10 @@ def _cq_spans(text: str) -> tuple[tuple[int, int], ...]:
     spans: list[tuple[int, int]] = []
     position = 0
     while True:
-        start = text.find("[CQ:", position)
+        start = _find_cq_start(text, position)
         if start < 0:
             break
-        end = text.find("]", start + 4)
+        end = text.find("]", start + len(_CQ_PREFIX))
         if end < 0:
             spans.append((start, len(text)))
             break

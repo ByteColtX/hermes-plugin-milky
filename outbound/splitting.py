@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .formatter import parse_cq_code
+from .formatter import _CQ_PREFIX, _find_cq_start, parse_cq_code
 
 _SPLIT_MARKER = "[SPLIT]"
 _LITERAL_MARKER = "[[SPLIT]]"
@@ -164,19 +164,19 @@ def _valid_cq_spans(text: str) -> tuple[tuple[int, int], ...]:
     spans: list[tuple[int, int]] = []
     position = 0
     while True:
-        start = text.find("[CQ:", position)
+        start = _find_cq_start(text, position)
         if start < 0:
             return tuple(spans)
-        end = text.find("]", start + len("[CQ:"))
+        end = text.find("]", start + len(_CQ_PREFIX))
         if end < 0:
-            position = start + len("[CQ:")
+            position = start + len(_CQ_PREFIX)
             continue
         raw = text[start : end + 1]
         if parse_cq_code(raw) is not None:
             spans.append((start, end + 1))
             position = end + 1
         else:
-            position = start + len("[CQ:")
+            position = start + len(_CQ_PREFIX)
 
 
 def _escaped_literal_spans(

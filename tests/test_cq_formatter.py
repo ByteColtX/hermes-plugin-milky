@@ -86,6 +86,32 @@ def test_confirmed_cq_types_convert_to_native_segments(
     assert format_message(content) == expected
 
 
+@pytest.mark.parametrize("prefix", ["CQ", "cq", "Cq", "cQ"])
+@pytest.mark.parametrize(
+    ("suffix", "expected"),
+    [
+        (
+            "at,qq=10001",
+            {"type": "mention", "data": {"user_id": 10001}},
+        ),
+        (
+            "reply,id=9001",
+            {"type": "reply", "data": {"message_seq": 9001}},
+        ),
+        (
+            "image,file=base64://fixture-sticker,type=sticker",
+            {"type": "image", "data": {"uri": "base64://fixture-sticker", "sub_type": "sticker"}},
+        ),
+    ],
+)
+def test_cq_prefix_case_variants_convert_to_the_same_native_segments(
+    prefix: str, suffix: str, expected: dict[str, object]
+) -> None:
+    """CQ 前缀大小写变体应复用既有 native 转换。"""
+
+    assert format_message(f"[{prefix}:{suffix}]") == [expected]
+
+
 def test_cq_parser_decodes_values_but_fallback_keeps_raw_text() -> None:
     """参数实体只影响 native 转换，fallback 必须保留原始控制码。"""
 
@@ -95,6 +121,26 @@ def test_cq_parser_decodes_values_but_fallback_keeps_raw_text() -> None:
     ]
     raw = "[CQ:location,lat=1&#44;2,lon=3]"
     assert format_message(raw) == [{"type": "text", "data": {"text": raw}}]
+
+
+@pytest.mark.parametrize("prefix", ["CQ", "cq", "Cq", "cQ"])
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "future,z=first,a=second",
+        "at,qq=not-a-number",
+        "at,qq=10001,broken",
+    ],
+)
+def test_cq_prefix_case_variants_keep_fallback_text_verbatim(prefix: str, suffix: str) -> None:
+    """未知或非法大小写变体必须保留完整原始 CQ 文本。"""
+
+    raw = f"[{prefix}:{suffix}]"
+    assert format_message(f"前文{raw}后文") == [
+        {"type": "text", "data": {"text": "前文"}},
+        {"type": "text", "data": {"text": raw}},
+        {"type": "text", "data": {"text": "后文"}},
+    ]
 
 
 @pytest.mark.parametrize(
@@ -131,10 +177,11 @@ def test_malformed_cq_is_preserved_without_blocking_message(raw: str) -> None:
     ]
 
 
-def test_unclosed_cq_keeps_the_remaining_raw_text() -> None:
+@pytest.mark.parametrize("prefix", ["CQ", "cq", "Cq", "cQ"])
+def test_unclosed_cq_keeps_the_remaining_raw_text(prefix: str) -> None:
     """无法确认闭合边界时应保留从控制码起的全部原文。"""
 
-    raw = "[CQ:at,qq=10001"
+    raw = f"[{prefix}:at,qq=10001"
     assert format_message(f"前文{raw}后文") == [
         {"type": "text", "data": {"text": "前文"}},
         {"type": "text", "data": {"text": f"{raw}后文"}},
@@ -145,6 +192,16 @@ def test_combined_cq_controls_keep_order_and_do_not_add_implicit_reply() -> None
     """@ 和引用组合应保留顺序，格式化器不接管隐式 reply。"""
 
     assert format_message("[CQ:reply,id=9001][CQ:at,qq=10001]答复") == [
+        {"type": "reply", "data": {"message_seq": 9001}},
+        {"type": "mention", "data": {"user_id": 10001}},
+        {"type": "text", "data": {"text": "答复"}},
+    ]
+
+
+def test_mixed_case_combined_cq_controls_keep_order() -> None:
+    """混合大小写 CQ 控制码组合仍按原始顺序转换。"""
+
+    assert format_message("[cQ:reply,id=9001][cq:at,qq=10001]答复") == [
         {"type": "reply", "data": {"message_seq": 9001}},
         {"type": "mention", "data": {"user_id": 10001}},
         {"type": "text", "data": {"text": "答复"}},
@@ -165,7 +222,7 @@ def test_structured_text_segment_also_uses_cq_parser() -> None:
     assert format_message(
         [
             {"type": "text", "data": {"text": "前"}},
-            {"type": "text", "data": {"text": "[CQ:at,qq=10001]后"}},
+            {"type": "text", "data": {"text": "[cQ:at,qq=10001]后"}},
         ]
     ) == [
         {"type": "text", "data": {"text": "前"}},
@@ -197,3 +254,13 @@ def test_chunking_never_splits_a_cq_control_code() -> None:
 
     assert "".join(chunks) == content
     assert chunks == ("前", "[CQ:at,qq=10001]", "后")
+
+
+def test_chunking_never_splits_a_mixed_case_cq_control_code() -> None:
+    """长文本分块也应保护大小写变体的完整 CQ 控制码。"""
+
+    content = "前[cQ:at,qq=10001]后"
+    chunks = chunk_text(content, max_length=10)
+
+    assert "".join(chunks) == content
+    assert chunks == ("前", "[cQ:at,qq=10001]", "后")

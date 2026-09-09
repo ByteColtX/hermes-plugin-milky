@@ -26,6 +26,8 @@ _SEGMENT_TYPES = frozenset(
 )
 _CQ_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 _CQ_KEY_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+_CQ_PREFIX = "[CQ:"
+_CQ_PREFIX_PATTERN = re.compile(re.escape(_CQ_PREFIX), re.IGNORECASE)
 _CQ_TYPES = (
     "text",
     "face",
@@ -83,12 +85,23 @@ class _CqCode:
         self.raw = raw
 
 
+def _find_cq_start(content: str, position: int = 0) -> int:
+    """查找大小写不敏感的 CQ-compatible 前缀。"""
+
+    match = _CQ_PREFIX_PATTERN.search(content, position)
+    return -1 if match is None else match.start()
+
+
 def parse_cq_code(raw: object) -> tuple[str, dict[str, str]] | None:
     """解析一个完整 CQ 片段，并解码参数而不改变 fallback 原文。"""
 
-    if not isinstance(raw, str) or not raw.startswith("[CQ:") or not raw.endswith("]"):
+    if (
+        not isinstance(raw, str)
+        or raw[: len(_CQ_PREFIX)].casefold() != _CQ_PREFIX.casefold()
+        or not raw.endswith("]")
+    ):
         return None
-    body = raw[4:-1]
+    body = raw[len(_CQ_PREFIX) : -1]
     if not body:
         return None
     name, separator, parameter_text = body.partition(",")
@@ -118,12 +131,12 @@ def format_cq_message(content: str) -> list[dict[str, Any]]:
     segments: list[dict[str, Any]] = []
     position = 0
     while position < len(content):
-        start = content.find("[CQ:", position)
+        start = _find_cq_start(content, position)
         if start < 0:
             _append_text(segments, content[position:])
             break
         _append_text(segments, content[position:start])
-        end = content.find("]", start + 4)
+        end = content.find("]", start + len(_CQ_PREFIX))
         if end < 0:
             _append_text(segments, content[start:])
             break

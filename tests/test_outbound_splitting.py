@@ -211,6 +211,25 @@ def test_sender_splits_after_valid_unknown_cq_candidate() -> None:
     ]
 
 
+@pytest.mark.parametrize("prefix", ["cq", "Cq", "cQ"])
+def test_sender_splits_after_case_variant_unknown_cq_candidate(prefix: str) -> None:
+    """大小写变体的完整 unknown CQ 仍保护候选并识别后续标记。"""
+
+    client = SplitClient()
+    sender = MilkyOutboundSender(client)
+
+    result = asyncio.run(sender.send("dm:800000001", f"前[{prefix}:future,x=y][SPLIT]后"))
+
+    assert result.success is True
+    assert [body["message"] for _, body in client.calls] == [
+        [
+            {"type": "text", "data": {"text": "前"}},
+            {"type": "text", "data": {"text": f"[{prefix}:future,x=y]"}},
+        ],
+        [{"type": "text", "data": {"text": "后"}}],
+    ]
+
+
 def test_sender_splits_inside_malformed_cq_like_text() -> None:
     """malformed CQ-like 文本中的标记按普通控制语法处理。"""
 
@@ -224,6 +243,24 @@ def test_sender_splits_inside_malformed_cq_like_text() -> None:
         [
             {"type": "text", "data": {"text": "前"}},
             {"type": "text", "data": {"text": "[CQ:at,qq="}},
+        ],
+        [{"type": "text", "data": {"text": "后"}}],
+    ]
+
+
+def test_sender_splits_inside_mixed_case_malformed_cq_like_text() -> None:
+    """大小写变体的 malformed CQ-like 文本不得保护其中的标记。"""
+
+    client = SplitClient()
+    sender = MilkyOutboundSender(client)
+
+    result = asyncio.run(sender.send("dm:800000001", "前[cQ:at,qq=[SPLIT]后"))
+
+    assert result.success is True
+    assert [body["message"] for _, body in client.calls] == [
+        [
+            {"type": "text", "data": {"text": "前"}},
+            {"type": "text", "data": {"text": "[cQ:at,qq="}},
         ],
         [{"type": "text", "data": {"text": "后"}}],
     ]

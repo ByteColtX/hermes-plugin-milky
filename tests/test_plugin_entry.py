@@ -148,9 +148,10 @@ def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) ->
         assert "NO_REPLY" not in entry.PLATFORM_GUIDANCE
         assert "[SILENT]" in entry.PLATFORM_GUIDANCE
         assert "[SPLIT]" in entry.PLATFORM_GUIDANCE
-        assert "up to 3 sequential messages" in entry.PLATFORM_GUIDANCE
-        assert "on its own line or inline" in entry.PLATFORM_GUIDANCE
-        assert "no message is sent outbound" in entry.PLATFORM_GUIDANCE
+        assert "up to 3 sequential outbound messages" in entry.PLATFORM_GUIDANCE
+        assert "message boundary marker" in entry.PLATFORM_GUIDANCE
+        assert "nothing is sent outbound" in entry.PLATFORM_GUIDANCE
+        assert "valid user IDs and message sequence IDs" in entry.PLATFORM_GUIDANCE
         assert "101" not in hint
         assert "9001" not in hint
         assert "MILKY_ACCESS_TOKEN" not in hint

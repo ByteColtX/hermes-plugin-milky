@@ -62,9 +62,25 @@ SPLIT_TEXT_CASES = {
         "value": "前[CQ:future,x=y][SPLIT]后",
         "sections": ("前[CQ:future,x=y]", "后"),
     },
+    "lowercase_unknown_cq_before_split": {
+        "value": "前[cq:future,x=y][SPLIT]后",
+        "sections": ("前[cq:future,x=y]", "后"),
+    },
+    "mixed_case_unknown_cq_before_split": {
+        "value": "前[Cq:future,x=y][SPLIT]后",
+        "sections": ("前[Cq:future,x=y]", "后"),
+    },
+    "mixed_lower_case_unknown_cq_before_split": {
+        "value": "前[cQ:future,x=y][SPLIT]后",
+        "sections": ("前[cQ:future,x=y]", "后"),
+    },
     "malformed_cq_with_bracket": {
         "value": "前[CQ:at,qq=[SPLIT]后",
         "sections": ("前[CQ:at,qq=", "后"),
+    },
+    "mixed_case_malformed_cq_with_bracket": {
+        "value": "前[cQ:at,qq=[SPLIT]后",
+        "sections": ("前[cQ:at,qq=", "后"),
     },
     "malformed_cq_unclosed": {
         "value": "前[CQ:future,key=value\n第一[SPLIT]第二",

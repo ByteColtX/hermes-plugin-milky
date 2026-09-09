@@ -15,19 +15,16 @@ from session import BotIdentitySnapshot, ChatMetadataSnapshotStore, render_curre
 PLATFORM_HINT = "You are chatting on QQ through Hermes's Milky platform."
 
 PLATFORM_GUIDANCE = """
-- You can send files natively: write MEDIA:/absolute/path/to/file in your response.
-- Images, audio, video, and documents all go through Milky's native media/file upload — `MEDIA:` is separate from the fixed QQ ToolSpec list.
-- A raw local path exits as plain text, not media — never report media as unsupported before the send actually fails at the entry point.
-
-- Reply with only `[SILENT]` to suppress the reply entirely — no message is sent outbound.
-- Place a case-sensitive, unescaped `[SPLIT]` alone on its own line or inline between text sections to split the reply into up to 3 sequential messages when long-text forwarding is disabled; the marker is stripped on outbound delivery.
-
-- Mention a user with `[CQ:at,qq=<uid>]`.
-- Quote a message with `[CQ:reply,id=<msg_seq>]`.
-- Only use real IDs drawn from the current message or channel context.
-
-- CQ code details: view skill `hermes-plugin-milky:milky-qq-cq-reference`.
-- QQ action tool list: view skill `hermes-plugin-milky:milky-qq-action-tools`.
+* Files can be sent natively with `MEDIA:/absolute/path/to/file`.
+* Images, audio, video, and documents are handled through Milky's native media/file upload. `MEDIA:` is separate from the static QQ ToolSpec.
+* A local filesystem path is emitted as plain text, not media. Do not claim media is unsupported until the native send operation actually fails.
+* Reply with only `[SILENT]` to suppress the response entirely; nothing is sent outbound.
+* Use `[SPLIT]` as a message boundary marker to partition a reply into up to 3 sequential outbound messages, preserving a natural conversational flow; the marker is removed before delivery.
+* Mention a user with `[CQ:at,qq=<uid>]`. Literal `@sender_name` is not parsed as a valid mention.
+* Quote a message with `[CQ:reply,id=<msg_seq>]`.
+* Only use valid user IDs and message sequence IDs from the conversation or channel context.
+* For CQ syntax details, view skill `hermes-plugin-milky:milky-qq-cq-reference`.
+* For QQ action tools, view skill `hermes-plugin-milky:milky-qq-action-tools`.
 """
 
 MILKY_PROMPT_SECTION_ID = "hermes-plugin-milky.qq-platform-guidance"
