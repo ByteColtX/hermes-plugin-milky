@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.0] - 2026-09-09
+
+### 变更与修复
+
+- 出站 CQ-compatible 控制码的 `CQ` 前缀改为大小写不敏感；类型、字段、真实 ID 校验和未知/非法
+  控制码的原文 fallback 保持不变，`[SPLIT]` 边界也使用同一规则。
+- 统一插件内部 Milky 消息序号的 `message_seq` 命名；群聊 Agent-facing header 使用 `msg_seq`，
+  Hermes 交接仍保留宿主要求的 `message_id` 映射。
+
+### 验证与边界
+
+- 发布前已通过完整测试、Ruff、格式检查、构建、`git diff --check` 和 OpenSpec strict validate。
+- 未执行真实 Hermes host、Milky 服务、消息发送或文件上传；真实部署环境仍需单独验证。
+
 ## [1.6.0] - 2026-09-09
 
 ### 新增
