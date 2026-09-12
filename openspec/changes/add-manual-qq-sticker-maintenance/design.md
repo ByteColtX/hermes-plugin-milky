@@ -11,7 +11,7 @@ Hermes core 已提供 `plugin_data_dir("hermes-plugin-milky")` 和 `plugin_db("h
 - 为 `/milky sticker` 提供固定、可审计、可重复执行的人工维护命令。
 - 让操作者把图片放入固定持久目录后，以确定性的格式、大小、可读性和内容 hash 规则入库。
 - 在确定性筛选和去重之后，用 Hermes core 的辅助视觉能力批量生成一个固定枚举的单选主情绪、2–5 个中文情绪/场景标签、20 字以内的内容描述和严格布尔 `is_sticker`；情绪、标签和描述是元数据建议，`is_sticker=true` 是图片移入贴纸库的语义门槛，`is_sticker=false` 的原文件移入 `junk/`。
-- 提供操作者对已入库视觉元数据的显式修正和重新打标能力，修正或重新打标不改变图片 bytes、content hash 或 sticker ID。
+- 提供操作者对已入库视觉元数据的显式修正和重新打标能力，修正或重新打标不改变图片 bytes、file_sha256 或 sticker ID。
 - 让文件写入和元数据提交可恢复，重复导入不产生重复条目，删除和清理只回收数据库确认无引用的库文件。
 - 使用 Hermes core 的插件持久化接口；授权来源边界暂不由本 change 提供，所有维护失败都与普通 Hermes 消息流程隔离。
 
@@ -37,9 +37,11 @@ Hermes core 已提供 `plugin_data_dir("hermes-plugin-milky")` 和 `plugin_db("h
 └── stickers.db                # 贴纸元数据和索引
 ```
 
-实际路径由 Hermes `plugin_data_dir()` 决定，设计文档不硬编码 Hermes home。库文件名只由 SHA-256 派生，例如按 digest 前缀分片后保存完整 digest 和规范化扩展名；不使用命令参数或远端 URL 作为库路径。数据库使用两类记录：`sticker_entries` 保存可见贴纸，至少包含随机不透明 `sticker_id`、唯一 `content_hash`、`created_at`、视觉基线字段 `vision_emotion`/`vision_tags`/`vision_description`/`vision_is_sticker`、当前生效字段 `emotion`/`tags`/`description`，以及字段级 `emotion_source`/`tags_source`/`description_source`；可见条目的 `vision_is_sticker` 必须为 `true`。`sticker_files` 保存由库目录重建的技术索引，至少包含唯一 `content_hash`、唯一 `library_relpath`、MIME、字节数和 `verified_at`。`sticker_entries.content_hash` 的唯一约束保证同一 bytes 最多对应一个可见 `sticker_id`；本 change 不建立多个可见条目共享同一库文件的关系。
+实际路径由 Hermes `plugin_data_dir()` 决定，设计文档不硬编码 Hermes home。库文件名只由 SHA-256 派生，例如按 digest 前缀分片后保存完整 digest 和规范化扩展名；不使用命令参数或远端 URL 作为库路径。数据库使用两类记录：`sticker_items` 保存可见贴纸，至少包含随机不透明 `sticker_id`、唯一 `file_sha256`、`detected_emotion`/`detected_tags_json`/`detected_description`、当前生效字段 `emotion`/`tags_json`/`description`、字段级 `emotion_source`/`tags_source`/`description_source`、`created_at`、`updated_at` 和 `detected_at`。`is_sticker=true` 只是新增候选的入库门槛，不作为可见条目的冗余列持久化。`sticker_files` 保存由库目录重建的技术索引，至少包含唯一 `sha256`、唯一 `relative_path`、`mime_type`、`size_bytes` 和 `verified_at`。`sticker_items.file_sha256` 与 `sticker_files.sha256` 的唯一约束保证同一 bytes 最多对应一个可见 `sticker_id`；本 change 不建立多个可见条目共享同一库文件的关系。
 
-视觉基线在首次成功且 `is_sticker=true` 的 add 时写入，当前生效字段初始复制基线，三个可编辑字段来源均为 `vision`。`edit` 只更新指定字段的当前生效值和对应字段来源；`is_sticker` 是入库判定结果，不提供 edit 覆盖。清除人工覆盖时从对应视觉基线恢复，并将该字段来源改回 `vision`。列表中的行级 `source` 不单独持久化，而是派生为“任一字段来源为 `manual` 则为 `manual`，否则为 `vision`”；同时返回 `field_sources` 让维护者知道具体哪些字段被人工改过。Agent 只使用当前生效字段，不需要理解视觉基线和来源字段。
+`sticker_items` 还包含 `use_count INTEGER NOT NULL DEFAULT 0` 和 `last_used_at TIMESTAMP NULL`。新增条目初始化为 `0`/`NULL`；`add`、`edit`、`reanalyze`、`del`、`cleanup`、`reindex` 和 `sticker_search` 不修改它们。后续 `sticker_send` 在有效贴纸已解析并发起发送调用时，立即执行一次原子更新：`use_count = use_count + 1`、`last_used_at = 当前 UTC 时间`；Milky Action 随后的成功、失败或未知状态均不回滚该计数；计数写入失败时不得重发已被接受的消息，也不能把计数成功描述为用户已实际看到消息。
+
+检测基线在首次成功且 `is_sticker=true` 的 add 时写入，当前生效字段初始复制检测基线，三个可编辑字段来源均为 `vision`。`edit` 只更新指定字段的当前生效值和对应字段来源；`is_sticker` 是入库判定结果，不提供 edit 覆盖。清除人工覆盖时从对应 `detected_*` 基线恢复，并将该字段来源改回 `vision`。列表中的行级 `source` 不单独持久化，而是派生为“任一字段来源为 `manual` 则为 `manual`，否则为 `vision`”；同时返回 `field_sources` 让维护者知道具体哪些字段被人工改过。数据库内部使用 `tags_json`/`detected_tags_json` 保存 JSON 数组，命令和 Agent 输出仍使用逻辑字段名 `tags`。Agent 只使用当前生效字段，不需要理解检测基线和来源字段。
 
 选择独立 `stickers.db` 而不是 Hermes session DB、JSON 或全局 state：SQLite 事务能把条目可见性和去重约束放在同一持久边界；独立文件避免污染 session schema；content-addressed 文件避免复制同一 bytes。JSON 和单独状态对象无法可靠处理重复命令、删除引用和重载恢复。
 
@@ -47,17 +49,17 @@ Hermes core 已提供 `plugin_data_dir("hermes-plugin-milky")` 和 `plugin_db("h
 
 根 `register(ctx)` 只注册 command handler、静态配置和必要的生命周期绑定，不调用 `plugin_data_dir()`，不打开数据库，不扫描文件。有效的贴纸子命令到达后才创建目录并打开数据库；一次命令结束在 `finally` 中提交或回滚并关闭连接。
 
-这样可以同时满足懒加载、插件重载和多 adapter 场景：不会留下持有旧 profile 路径的长期连接，也不需要未经 core 确认的 `on_unload` API。插件创建的视觉调用在当前显式命令的 task group 内最多并发 10 个，不主动创建脱离 handler 的持久化后台队列；core 对已发出调用的超时和回收语义不由本 change 承诺。数据库写入使用短临界区和单条事务；视觉等待期间不持有数据库事务，提交前重新检查 content hash 和唯一约束。事件流、普通消息和 Milky client 不会把视觉结果交给主 Agent turn。
+这样可以同时满足懒加载、插件重载和多 adapter 场景：不会留下持有旧 profile 路径的长期连接，也不需要未经 core 确认的 `on_unload` API。插件创建的视觉调用在当前显式命令的 task group 内最多并发 10 个，不主动创建脱离 handler 的持久化后台队列；core 对已发出调用的超时和回收语义不由本 change 承诺。数据库写入使用短临界区和单条事务；视觉等待期间不持有数据库事务，提交前重新检查 file_sha256 和唯一约束。事件流、普通消息和 Milky client 不会把视觉结果交给主 Agent turn。
 
 ### 3. add 采用“先校验去重、再视觉打标、再原子文件、后元数据可见”的顺序
 
 `add` 只接受固定 inbox 的 regular file，并通过 `lstat`/root containment 检查拒绝符号链接和越界路径。每个候选文件以流式方式读取，限制在 `10 MiB` 内，检查非空、图片 magic/header、结构完整性和 PNG/JPEG/GIF/WebP 格式；不以扩展名单独信任类型。读取过程中计算 SHA-256，避免重复读取同一输入。
 
-同一批次内和库中已经存在的 content hash 先去重，duplicate 不调用视觉模型；确认库中已有完整同 hash 文件后，add SHALL 报告 `duplicate` 并移除 inbox 冗余副本，不覆盖已有视觉基线或人工字段。按照稳定扫描顺序，剩余唯一候选最多取前 50 张进入当前命令的视觉队列；第 51 张及以后不调用视觉并报告 `batch_deferred`，继续留在 inbox。队列由最多 10 个并发 worker 调用 Hermes core 的 `vision_analyze_tool`，传入 inbox 内受控本地路径和固定 JSON 输出提示词；一个调用完成并释放槽位后，立即补入下一候选。正常完成时命令等待本批次候选进入成功移动入库、`junk`、重复、固定失败或 `batch_deferred` 状态；每个成功入库候选独立提交，不要求整批事务。宿主超时或取消时，插件只保证已完成提交的条目保持可见，尚未完成移动或提交的候选留在 inbox；core 是否能回收已发出的底层调用不由本 change 承诺。每次视觉调用返回后，维护 service SHALL 先按 core 的外层 JSON envelope 解析，再读取其中的 `analysis` 字符串；只有外层 `success=true` 且内层 `analysis` 解析为单个 JSON 对象后，才进入字段 schema 校验。要求内层对象严格包含一个固定枚举的 `emotion`、有界 `tags` 数组、短 `description` 和严格布尔 `is_sticker`；`true` 才移动入库，`false` 移入 `junk/`。
+同一批次内和库中已经存在的 file_sha256 先去重，duplicate 不调用视觉模型；确认库中已有完整同 hash 文件后，add SHALL 报告 `duplicate` 并移除 inbox 冗余副本，不覆盖已有视觉基线或人工字段。按照稳定扫描顺序，剩余唯一候选最多取前 50 张进入当前命令的视觉队列；第 51 张及以后不调用视觉并报告 `batch_deferred`，继续留在 inbox。队列由最多 10 个并发 worker 调用 Hermes core 的 `vision_analyze_tool`，传入 inbox 内受控本地路径和固定 JSON 输出提示词；一个调用完成并释放槽位后，立即补入下一候选。正常完成时命令等待本批次候选进入成功移动入库、`junk`、重复、固定失败或 `batch_deferred` 状态；每个成功入库候选独立提交，不要求整批事务。宿主超时或取消时，插件只保证已完成提交的条目保持可见，尚未完成移动或提交的候选留在 inbox；core 是否能回收已发出的底层调用不由本 change 承诺。每次视觉调用返回后，维护 service SHALL 先按 core 的外层 JSON envelope 解析，再读取其中的 `analysis` 字符串；只有外层 `success=true` 且内层 `analysis` 解析为单个 JSON 对象后，才进入字段 schema 校验。要求内层对象严格包含一个固定枚举的 `emotion`、有界 `tags` 数组、短 `description` 和严格布尔 `is_sticker`；`true` 才移动入库，`false` 移入 `junk/`。
 
 `--dry-run` 执行同样的确定性校验、去重和最多 10 个并发的视觉分析，但插件不移动或删除任何文件，不写入库文件、数据库或待确认状态，并返回每个候选的主情绪、中文检索标签、20 字以内描述和 `is_sticker` 判定；`true` 报告 `would_add`，`false` 报告 `would_move_to_junk`。正式 `add` 会重新扫描并重新分析候选，以避免使用过期的预览结果；core 视觉 helper 的临时处理仍由 Hermes core 自己管理。视觉 provider 不可用、超时、返回错误或结构无法解析时，本次不移动文件、不创建库文件或可见条目，候选继续留在 inbox，并在下一次 `add` 中按 hash 增量重试。正式 add 中每个成功候选独立完成原子移动和元数据提交，不等待其他候选。情绪、标签和描述只作为已接收条目的元数据，不改变文件 bytes 或 sticker ID 的去重语义。
 
-对通过确定性文件校验、尚未重复且视觉分析成功并返回 `is_sticker=true` 的新内容，使用同一插件持久目录内的原子移动，将 inbox 原文件移动为 content-addressed library 文件；随后在同一数据库事务中写入 `sticker_files` 技术记录和 `sticker_entries` 可见记录，并将视觉基线、生效字段、`vision_is_sticker=true` 和字段来源一起写入。移动或数据库提交失败时不得创建可见 entry；移动失败时源文件仍在 inbox，数据库失败时已移动的完整库文件由 cleanup/reindex 识别为 orphan，不伪造成功结果。对结构合法且 `is_sticker=false` 的候选，使用同一持久目录内的原子移动将文件移入 `junk/`，不写入贴纸数据库；移动失败时源文件仍在 inbox 并报告 `storage_error`。对视觉失败、envelope/JSON/schema 非法的候选不移动文件，继续留在 inbox。`junk/` 不由 add 自动扫描；操作者需要再次处理时可手动移回 inbox，除此之外不提供额外处理流程。
+对通过确定性文件校验、尚未重复且视觉分析成功并返回 `is_sticker=true` 的新内容，使用同一插件持久目录内的原子移动，将 inbox 原文件移动为 content-addressed library 文件；随后在同一数据库事务中写入 `sticker_files` 技术记录和 `sticker_items` 可见记录，并将检测基线、生效字段、字段来源、`created_at`、`updated_at` 和 `detected_at` 一起写入。移动或数据库提交失败时不得创建可见 item；移动失败时源文件仍在 inbox，数据库失败时已移动的完整库文件由 cleanup/reindex 识别为 orphan，不伪造成功结果。对结构合法且 `is_sticker=false` 的候选，使用同一持久目录内的原子移动将文件移入 `junk/`，不写入贴纸数据库；移动失败时源文件仍在 inbox 并报告 `storage_error`。对视觉失败、envelope/JSON/schema 非法的候选不移动文件，继续留在 inbox。`junk/` 不由 add 自动扫描；操作者需要再次处理时可手动移回 inbox，除此之外不提供额外处理流程。
 
 ### 4. edit 使用字段级部分更新和人工覆盖重置
 
@@ -67,13 +69,13 @@ Hermes core 已提供 `plugin_data_dir("hermes-plugin-milky")` 和 `plugin_db("h
 /milky sticker edit <sticker_id> [--emotion=<enum>] [--tags=<tag1>,<tag2>,...] [--description=<text>] [--clear=<emotion|tags|description>[,<field>...]]
 ```
 
-每个 option 都是单个 `--name=value` raw-args token，option 最多出现一次；`--description=<text>` 的值不跨空白 token，命令不依赖 shell quoting；未出现的字段保持不变；至少要有一个 set 或 clear option；同一字段同时 set 和 clear、未知字段、空值、非法枚举、重复标签、标签不在 2–5 个范围内或描述超过 20 个字符时，整条命令返回 `invalid_input` 且不写入任何字段。`--clear` 清除的是人工覆盖：系统从相应 `vision_*` 基线恢复当前值，并把对应字段来源恢复为 `vision`，不写入空标签或空情绪。所有字段校验通过后，在一个数据库事务中更新当前生效值和字段级来源；图片文件、hash、技术索引和 `sticker_id` 不变。
+每个 option 都是单个 `--name=value` raw-args token，option 最多出现一次；`--description=<text>` 的值不跨空白 token，命令不依赖 shell quoting；未出现的字段保持不变；至少要有一个 set 或 clear option；同一字段同时 set 和 clear、未知字段、空值、非法枚举、重复标签、标签不在 2–5 个范围内或描述超过 20 个字符时，整条命令返回 `invalid_input` 且不写入任何字段。`--clear` 清除的是人工覆盖：系统从相应 `detected_*` 基线恢复当前值，并把对应字段来源恢复为 `vision`，不写入空标签或空情绪。所有字段校验通过后，在一个数据库事务中更新当前生效值、字段级来源和 `updated_at`；图片文件、`file_sha256`、技术索引和 `sticker_id` 不变。
 
-行级 `source` 只作为列表输出的派生摘要，字段级 `*_source` 才是持久化事实。视觉成功入库时三项字段来源都是 `vision`；人工设置某字段后只将该字段标记为 `manual`；清除该字段覆盖后恢复为 `vision`。重复 `add` 按 content hash 返回 `duplicate`，不得重新视觉分析或覆盖已有基线及人工字段。
+行级 `source` 只作为列表输出的派生摘要，字段级 `*_source` 才是持久化事实。视觉成功入库时三项字段来源都是 `vision`；人工设置某字段后只将该字段标记为 `manual`；清除该字段覆盖后恢复为 `vision`。重复 `add` 按 `file_sha256` 返回 `duplicate`，不得重新视觉分析或覆盖已有基线及人工字段。
 
 ### 5. reanalyze 只更新已入库条目的视觉基线
 
-`/milky sticker reanalyze <sticker_id>` 只接受当前可见的 `sticker_id`，读取对应 library 文件并调用与 `add` 完全相同的固定 prompt、视觉 envelope 解析和字段 schema 校验。只有返回合法且 `is_sticker=true` 的结果，才在一个数据库事务中替换该条目的 `vision_emotion`、`vision_tags`、`vision_description` 和视觉状态；字段来源为 `vision` 的当前生效字段随新基线更新，来源为 `manual` 的当前生效字段保持不变。图片文件、content hash、library 路径、技术索引和 sticker ID 不变。
+`/milky sticker reanalyze <sticker_id>` 只接受当前可见的 `sticker_id`，读取对应 library 文件并调用与 `add` 完全相同的固定 prompt、视觉 envelope 解析和字段 schema 校验。只有返回合法且 `is_sticker=true` 的结果，才在一个数据库事务中替换该条目的 `detected_emotion`、`detected_tags_json`、`detected_description` ，并更新 `detected_at` 和 `updated_at`；字段来源为 `vision` 的当前生效字段随新基线更新，来源为 `manual` 的当前生效字段保持不变。图片文件、`file_sha256`、library 路径、技术索引和 sticker ID 不变。
 
 视觉失败、envelope/JSON/schema 非法或返回合法 `is_sticker=false` 时，`reanalyze` SHALL 保持原条目的所有基线、生效字段、来源和文件不变，并返回 `visual_unavailable` 或 `not_sticker`。`reanalyze` 不把已入库文件移动到 `junk/`，也不创建新条目；提交失败返回 `storage_error` 并回滚整条元数据更新。
 
@@ -157,7 +159,7 @@ Output format:
   -> 返回固定摘要/分类
 ```
 
-`list` 使用稳定的 created-at + `sticker_id` 顺序并限制 20/100 条；返回受限的当前生效 `emotion`、`tags`、`description`、派生 `source=vision|manual` 和字段级 `field_sources`，不返回绝对路径、原始文件名、URL 或 bytes。`edit` 只接受 list 产生的 ID 和固定 set/clear option，不触碰图片文件或 `is_sticker` 判定；`--clear` 恢复视觉基线。`reanalyze` 只接受 list 产生的 ID，成功时只刷新视觉字段基线并让非人工字段跟随，不移动图片；`del` 只接受 list 产生的 ID，并在删除事务中检查唯一 hash 引用。`cleanup` 的 dry-run 先完成同样的扫描和引用分析但不提交删除；`cleanup` 不删除 `junk/` 中的文件；`reindex` 只处理已在 library 目录内且能通过受控格式/hash 校验的内容，不把 inbox 或 `junk/` 当作隐式输入。
+`list` 使用稳定的 created-at + `sticker_id` 顺序并限制 20/100 条；返回受限的当前生效 `emotion`、`tags`、`description`、派生 `source=vision|manual`、字段级 `field_sources`、`use_count` 和可空的 `last_used_at`，不返回绝对路径、原始文件名、URL 或 bytes。`edit` 只接受 list 产生的 ID 和固定 set/clear option，不触碰图片文件或 `is_sticker` 判定；`--clear` 恢复视觉基线。`reanalyze` 只接受 list 产生的 ID，成功时只刷新视觉字段基线并让非人工字段跟随，不移动图片；`del` 只接受 list 产生的 ID，并在删除事务中检查唯一 hash 引用。`cleanup` 的 dry-run 先完成同样的扫描和引用分析但不提交删除；`cleanup` 不删除 `junk/` 中的文件；`reindex` 只处理已在 library 目录内且能通过受控格式/hash 校验的内容，不把 inbox 或 `junk/` 当作隐式输入。
 
 贴纸路径不需要 Milky Action，也不在 handler 内验证命令是否来自 Milky friend/group、其他平台或 CLI。无参数路径仍必须有唯一已绑定 client 才能调用 `get_impl_info`；贴纸路径不会为了本地操作创建旁路 client。
 
@@ -177,7 +179,7 @@ reindex 的扫描、索引替换、缺失引用和 orphan 语义详见第 10 节
 
 `reindex` 只扫描 `stickers/library/` 下的 regular file，不扫描 inbox、不调用视觉、不创建 `sticker_id`，也不从图片 bytes 推断情绪、标签或描述。每个文件必须通过受控相对路径、content-addressed 文件名、PNG/JPEG/GIF/WebP 结构、非空和 `10 MiB` 上限校验，并由流式 SHA-256 确认文件名 digest 与实际 bytes 一致；不满足条件的文件报告 `reindex_skipped`，不进入技术索引。
 
-实现时先在内存或临时 staging 表中形成全部有效 `sticker_files` 记录，再开启一个数据库事务原子替换 `sticker_files` 索引；事务失败时回滚并保留旧索引。`sticker_entries` 不因 reindex 被创建、删除或改写：可见条目对应文件缺失时保留其元数据并报告 `missing_file`；合法但没有可见条目引用的库文件可以登记为技术索引中的 orphan，后续由 `cleanup` 按“无可见引用”规则回收。reindex 本身不删除任何库文件，`--dry-run` 也不需要额外语义。
+实现时先在内存或临时 staging 表中形成全部有效 `sticker_files` 记录，再开启一个数据库事务原子替换 `sticker_files` 索引；事务失败时回滚并保留旧索引。`sticker_items` 不因 reindex 被创建、删除或改写：可见条目对应文件缺失时保留其元数据并报告 `missing_file`；合法但没有可见条目引用的库文件可以登记为技术索引中的 orphan，后续由 `cleanup` 按“无可见引用”规则回收。reindex 本身不删除任何库文件，`--dry-run` 也不需要额外语义。
 
 ### 11. 失败分类和普通消息隔离
 
