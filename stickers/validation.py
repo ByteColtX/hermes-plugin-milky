@@ -114,6 +114,13 @@ def _detect_format(data: bytes) -> tuple[str, str] | None:
 def validate_image_file(path: Path, inbox: Path) -> ImageCandidate:
     """验证 inbox 图片并返回流式 hash 结果。"""
 
+    candidate, _data = read_validated_image_file(path, inbox)
+    return candidate
+
+
+def read_validated_image_file(path: Path, inbox: Path) -> tuple[ImageCandidate, bytes]:
+    """验证图片并返回与 hash 校验使用的同一份文件内容。"""
+
     path = Path(path)
     inbox = Path(inbox)
     ensure_regular_image_path(path, inbox)
@@ -123,7 +130,7 @@ def validate_image_file(path: Path, inbox: Path) -> ImageCandidate:
     expected = _FORMAT_BY_SUFFIX.get(suffix)
     if image_format is None or expected is None or expected != image_format:
         raise ValueError("image format is unsupported or extension mismatches content")
-    return ImageCandidate(path, file_sha256, image_format[0], image_format[1], size_bytes)
+    return ImageCandidate(path, file_sha256, image_format[0], image_format[1], size_bytes), data
 
 
 def validate_library_name(path: Path, library: Path) -> tuple[str, str] | None:
@@ -149,6 +156,7 @@ __all__ = [
     "MAX_IMAGE_BYTES",
     "ImageCandidate",
     "ensure_regular_image_path",
+    "read_validated_image_file",
     "validate_image_file",
     "validate_library_name",
 ]

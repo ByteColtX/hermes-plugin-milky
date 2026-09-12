@@ -65,8 +65,11 @@ change 和已归档 change 的测试证据见 [openspec/](openspec/)。
   session prompt 可看到当前会话的最小资料；介绍来自入站消息快照，不实时查询 Milky。
 - **人工贴纸维护：** 通过显式 `/milky sticker` 命令维护插件持久目录中的图片库；普通消息、入站图片、
   关键词、Will 和 Agent 输出不会自动收集贴纸。
+- **Agent 贴纸发送：** 插件运行时依赖 `jieba` 且库中存在可用条目时，`sticker_send` 依据当前 Milky 会话和意图发送一张贴纸；
+  Agent 不能指定目标、贴纸 ID、路径或 URL。
 
-运行环境：Python 3.13+、Hermes Gateway、Milky v1.3 服务和 `httpx`。Hermes 负责 Agent
+运行环境：Python 3.13+、Hermes Gateway、Milky v1.3 服务以及插件声明的 `httpx`、Pillow、`jieba`。
+Hermes 负责 Agent
 队列及入站资源的下载、缓存和权限边界；本插件负责 Milky 适配和已声明的 QQ 能力。
 
 ## 安装
@@ -702,9 +705,19 @@ CQ image 仅用于本地 `file://` URI 的 sticker，例如：
 `MILKY_STICKER_OPERATOR_IDS` 等插件授权配置。贴纸维护不创建旁路 Milky client、Agent Tool、主 Agent
 transcript、普通消息 handoff 或脱离命令生命周期的后台视觉任务。
 
+`sticker_send` 是独立的语义 Tool，不是任意 Milky Action。插件通过 `plugin.yaml` 的 `python_dependencies`
+和项目运行时依赖声明提供 `Pillow>=12.3.0`、`jieba>=0.42.1`；它只在库中有可用条目时进入 Agent
+definitions，空库时隐藏，不按需导入或检查可选 tokenizer，也不影响维护命令和其他
+Tool。参数只允许 `intent`、`emotion`、`tags`，目标来自当前 task-local `HERMES_SESSION_PLATFORM=milky` 和
+`HERMES_SESSION_CHAT_ID`。检索只使用当前 `emotion`、`tags`、`description`，以完整短语/全部 token/部分 token
+固定层级比较；没有 `sticker_search`，也不使用远程模型、embedding 或数值阈值。只有完全并列候选才按当前 chat
+软轮换，发送前校验 library 文件和双索引 SHA-256，单次调用只发一张 `sub_type=sticker` 图片。结果使用
+`sent`、`no_match`、`invalid_input`、`missing_session_context`、`unsupported`、`missing_file`、
+`storage_error`、`rejected`、`http_error`、`malformed` 和 `transport_unknown` 等固定分类。
+
 ### QQ ToolSpec
 
-插件固定提供 25 个 QQ ToolSpec，覆盖：
+插件固定提供 25 个与 Milky operationId 对齐的 QQ Action ToolSpec，另提供一个受限的语义 `sticker_send`：
 
 - 群组和成员查询；
 - 文件、转发消息和私聊文件链接查询；
@@ -713,6 +726,9 @@ transcript、普通消息 handoff 或脱离命令生命周期的后台视觉任�
 
 请求/邀请的接受和拒绝不会由通知、普通正文、关键词或 Will 自动触发，必须由 Agent 显式提供
 完整参数。未知执行结果返回 `transport_unknown`，不自动重试或更新本地状态。
+
+`sticker_send` 不属于上述 Action catalog；它不接受 `sticker_id`、`chat_id`、`session_id`、路径或 URL，
+也不限制 Agent 在不同调用中重复请求。它的 target、库读取、统计 claim 和单次发送由独立的贴纸 service 管理。
 
 入站文件只显示为安全占位符，例如
 `[file:file_id=<file_id>,file_name=<file_name>,file_hash=<file_hash>]`；它不会被当作本地路径
@@ -739,7 +755,7 @@ malformed 和 unsupported 会保持明确失败分类。缺少消息序号时不
 | `MilkyAdapter` | 管理连接、停止、入站交接和出站委托。 |
 | `MilkyOutboundSender` | 校验 `group:/dm:` 目标，格式化消息并调用 Milky Action/upload。 |
 | `SlashCommandService` | 管理活动 Milky client，处理 `/milky` 和显式贴纸维护命令。 |
-| `stickers/` | 懒加载独立 `stickers.db`，校验 inbox 图片，执行 add/list/edit/reanalyze/del/cleanup/reindex。 |
+| `stickers/` | 懒加载独立 `stickers.db`，校验 inbox 图片，执行维护命令以及受限 `sticker_send` 检索/claim；`jieba` 由插件运行时依赖提供。 |
 
 支持 `register_system_prompt_section` 的 Hermes 宿主会在 `after_memory` 登记
 `hermes-plugin-milky.qq-platform-guidance`，并在连接完成后使用已确认的 QQ UID 和昵称渲染

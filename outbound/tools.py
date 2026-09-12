@@ -13,6 +13,11 @@ from typing import Any
 from milky.client import ActionError
 from milky.logging import render_event
 from milky.models import MilkyEnvelope
+from stickers.sending import (
+    StickerSendService,
+    parse_sticker_query,
+    validate_sticker_chat_key,
+)
 
 from .sender import (
     MilkyOutboundSender,
@@ -20,7 +25,23 @@ from .sender import (
 )
 
 _ACTIVE_SENDER: MilkyOutboundSender | None = None
+_ACTIVE_STICKER_SERVICE: StickerSendService | None = None
 _MISSING = object()
+_STICKER_RESULT_STATUSES = frozenset(
+    {
+        "sent",
+        "no_match",
+        "invalid_input",
+        "missing_session_context",
+        "unsupported",
+        "missing_file",
+        "storage_error",
+        "rejected",
+        "http_error",
+        "malformed",
+        "transport_unknown",
+    }
+)
 logger = logging.getLogger("hermes_plugins.milky.outbound.tools")
 
 SEND_PROFILE_LIKE_SCHEMA = {
@@ -651,6 +672,49 @@ SET_GROUP_MEMBER_SPECIAL_TITLE_SCHEMA = {
     },
 }
 
+STICKER_SEND_SCHEMA = {
+    "name": "sticker_send",
+    "description": "根据当前 QQ 对话意图发送一张贴纸",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "intent": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "description": "简短的贴纸使用意图",
+            },
+            "emotion": {
+                "type": "string",
+                "enum": [
+                    "joy",
+                    "sadness",
+                    "anger",
+                    "surprise",
+                    "fear",
+                    "disgust",
+                    "love",
+                    "approval",
+                    "confusion",
+                    "neutral",
+                    "mixed",
+                    "unknown",
+                ],
+                "description": "贴纸情绪筛选条件",
+            },
+            "tags": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "items": {"type": "string", "minLength": 1, "maxLength": 16},
+                "description": "贴纸标签筛选条件",
+            },
+        },
+        "required": [],
+        "additionalProperties": False,
+    },
+}
+
 TOOL_SPECS = (
     SEND_PROFILE_LIKE_SCHEMA,
     SEND_FRIEND_NUDGE_SCHEMA,
@@ -677,6 +741,7 @@ TOOL_SPECS = (
     GET_GROUP_FILES_SCHEMA,
     GET_FRIEND_INFO_SCHEMA,
     SET_GROUP_MEMBER_SPECIAL_TITLE_SCHEMA,
+    STICKER_SEND_SCHEMA,
 )
 
 
@@ -697,7 +762,10 @@ def unbind_sender() -> None:
 
 
 def register_tools(ctx: Any) -> None:
-    """向 Hermes 注册与 Milky operationId 对齐的二十五个异步 ToolSpec。"""
+    """向 Hermes 注册固定 Milky ToolSpec 和受限的 sticker_send。"""
+
+    global _ACTIVE_STICKER_SERVICE
+    _ACTIVE_STICKER_SERVICE = StickerSendService(plugin_context=ctx)
 
     register_tool = getattr(ctx, "register_tool", None)
     if not callable(register_tool):
@@ -728,6 +796,7 @@ def register_tools(ctx: Any) -> None:
         _handle_get_group_files,
         _handle_get_friend_info,
         _handle_set_group_member_special_title,
+        _handle_sticker_send,
     )
     for spec, handler in zip(TOOL_SPECS, handlers, strict=True):
         register_tool(
@@ -735,7 +804,9 @@ def register_tools(ctx: Any) -> None:
             toolset="milky",
             schema=spec,
             handler=handler,
-            check_fn=_tools_available,
+            check_fn=(
+                _sticker_tools_available if spec["name"] == "sticker_send" else _tools_available
+            ),
             is_async=True,
             description=spec["description"],
             emoji="🪶",
@@ -1363,6 +1434,95 @@ async def _handle_set_group_member_special_title(args: object, **kwargs: Any) ->
     )
 
 
+async def _handle_sticker_send(args: object, **kwargs: Any) -> str:
+    """校验当前 Milky session 并发送一张受控贴纸。"""
+
+    del kwargs
+    started = time.perf_counter()
+    try:
+        query = parse_sticker_query(args)
+    except (TypeError, ValueError):
+        return _sticker_finish({"status": "invalid_input"}, started)
+
+    chat_key, context_status = _sticker_session_chat_key()
+    if chat_key is None:
+        return _sticker_finish({"status": context_status}, started)
+    sender = _ACTIVE_SENDER
+    service = _ACTIVE_STICKER_SERVICE
+    if sender is None or service is None:
+        return _sticker_finish({"status": "unsupported"}, started)
+    try:
+        result = await service.send(query, chat_key, sender)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - Tool 边界不泄漏底层错误
+        result = {"status": "storage_error"}
+    return _sticker_finish(result, started)
+
+
+def _sticker_session_chat_key() -> tuple[str | None, str]:
+    """读取并校验 task-local Milky 会话目标。"""
+
+    try:
+        from gateway.session_context import get_session_env
+    except ImportError:
+        return None, "missing_session_context"
+    try:
+        platform = get_session_env("HERMES_SESSION_PLATFORM", "")
+        chat_value = get_session_env("HERMES_SESSION_CHAT_ID", "")
+    except Exception:  # noqa: BLE001 - 宿主上下文异常只能安全失败
+        return None, "missing_session_context"
+    if not isinstance(platform, str) or not platform:
+        return None, "missing_session_context"
+    if platform != "milky":
+        return None, "unsupported"
+    try:
+        return validate_sticker_chat_key(chat_value), ""
+    except ValueError:
+        return None, "unsupported"
+
+
+def _sticker_tools_available() -> bool:
+    """仅在现有库条目可用时暴露贴纸 Tool。"""
+
+    service = _ACTIVE_STICKER_SERVICE
+    return service is not None and service.is_available()
+
+
+def _sticker_error(status: str) -> str:
+    """创建不回显查询或底层细节的贴纸错误结果。"""
+
+    return json.dumps({"status": status}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _sticker_result(result: Mapping[str, object]) -> str:
+    """只序列化贴纸 Tool 的固定安全结果字段。"""
+
+    allowed = {"status", "message_id"}
+    status = result.get("status")
+    if not isinstance(status, str) or status not in _STICKER_RESULT_STATUSES:
+        return _sticker_error("malformed")
+    safe = {key: value for key, value in result.items() if key in allowed}
+    if status == "sent":
+        if not isinstance(safe.get("message_id"), str) or not safe["message_id"]:
+            return _sticker_error("malformed")
+    elif set(safe) != {"status"}:
+        return _sticker_error("malformed")
+    return json.dumps(safe, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _sticker_finish(result: Mapping[str, object], started: float) -> str:
+    """记录固定结果分类并返回安全的贴纸 Tool 回执。"""
+
+    status = result.get("status")
+    classification = (
+        status if isinstance(status, str) and status in _STICKER_RESULT_STATUSES else "malformed"
+    )
+    response = _sticker_result(result)
+    _log_tool_call("sticker_send", classification, started)
+    return response
+
+
 def _valid_group_request_values(values: Mapping[str, object], *, allow_reason: bool) -> bool:
     """校验群请求工具的公共字段。"""
 
@@ -1583,6 +1743,7 @@ __all__ = [
     "SET_GROUP_MEMBER_MUTE_SCHEMA",
     "SET_GROUP_MEMBER_SPECIAL_TITLE_SCHEMA",
     "SET_GROUP_WHOLE_MUTE_SCHEMA",
+    "STICKER_SEND_SCHEMA",
     "TOOL_SPECS",
     "bind_sender",
     "register_tools",

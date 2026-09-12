@@ -5,32 +5,25 @@
 
 ## ADDED Requirements
 
-### Requirement: `sticker_send` 只在贴纸库可用且 tokenizer 可用时暴露
+### Requirement: `sticker_send` 只在贴纸库可用时暴露
 
-插件 MUST 将中文 tokenizer 声明为可选依赖，而不是基础运行时的必装依赖。Agent 可见的 Tool
-definitions MUST 只有在既有贴纸 store 中至少存在一个当前可见、具备有效 `sticker_files` 关联且
-library 文件可用的条目，并且可选 `jieba` 可以导入时，才包含 `sticker_send`。可用性探测 MUST
-不得创建目录或数据库；贴纸库为空、缺失或没有可用条目时 MUST 在导入 `jieba` 前返回不可用。
-`jieba` 不可导入时 MUST 隐藏 `sticker_send`，但 MUST 不影响其他 Tool 或贴纸维护命令。
+插件 MUST 通过 manifest 的 `python_dependencies` 和项目运行时依赖声明提供 `Pillow>=12.3.0` 与
+`jieba>=0.42.1`，且不得把 `jieba` 作为 optional extra 或按需导入。Agent 可见的 Tool definitions
+MUST 只有在既有贴纸 store 中至少存在一个当前可见、具备有效 `sticker_files` 关联且 library 文件
+可用的条目时，才包含 `sticker_send`。可用性探测 MUST 不得创建目录或数据库。
 内部已登记但当前不可用的 ToolSpec 不得出现在 Agent 可调用列表中；过期 definition 触发 handler
 时也 MUST fail closed。
 
-#### Scenario: 贴纸库为空时不要求 tokenizer
+#### Scenario: 贴纸库为空时隐藏工具
 
 - **WHEN** 贴纸 store 缺失、为空，或没有当前可见且文件索引有效的条目
-- **THEN** 系统 SHALL 不导入或要求 `jieba`
+- **THEN** 系统 SHALL 不创建目录或数据库
 - **AND** Agent 可见 Tool definitions SHALL 不包含 `sticker_send`
 - **AND** 其他 Tool 与贴纸维护命令 SHALL 继续可用
 
-#### Scenario: 贴纸库非空但可选 tokenizer 不可用
+#### Scenario: 贴纸库有可用条目
 
-- **WHEN** 贴纸库存在至少一个可用条目，但运行环境无法导入可选 `jieba`
-- **THEN** Agent 可见 Tool definitions SHALL 不包含 `sticker_send`
-- **AND** 系统 SHALL 不因该依赖缺失而影响其他 Tool 或贴纸维护命令
-
-#### Scenario: 贴纸库和 tokenizer 都可用
-
-- **WHEN** 贴纸库存在至少一个可用条目且 `jieba` 可以导入
+- **WHEN** 贴纸库存在至少一个可用条目
 - **THEN** Agent 可见 Tool definitions SHALL 包含 `sticker_send`
 - **AND** 工具 SHALL 使用同一 tokenizer 执行查询和元数据匹配
 
@@ -42,8 +35,8 @@ library 文件可用的条目，并且可选 `jieba` 可以导入时，才包含
 中的一个值；`intent` MUST 是不超过 64 个字符的非空短字符串；`tags` MUST 是包含 1 至 5 个非空
 字符串的数组，每个 tag 归一化后不得超过 16 个字符，重复的归一化 tag MUST 返回 `invalid_input`。
 Tool MUST 拒绝 `sticker_id`、`emoji_id`、`face_id`、`chat_id`、`session_id`、文件路径、远端媒体
-URL 以及其他未声明字段，并在任何 Milky Action 或文件读取前返回 `invalid_input`。成功回执可以
-返回被选中的不透明 `sticker_id`，但 Agent 不得指定该 ID。
+URL 以及其他未声明字段，并在任何 Milky Action 或文件读取前返回 `invalid_input`。成功回执不得
+返回内部 `sticker_id`，Agent 也不得指定或读取该 ID。
 
 #### Scenario: Agent 只提供一个查询参数
 
@@ -236,8 +229,8 @@ Tool 可以被 Agent 在不同调用中重复调用，不得设置 Agent turn �
 
 ### Requirement: 工具结果和诊断必须使用固定安全分类
 
-Tool 成功时 MUST 返回至少 `status=sent`、选定的不透明 `sticker_id` 和 Milky 返回的
-`message_id`；无候选时返回 `status=no_match`。缺少可信上下文、参数非法、文件缺失、存储
+Tool 成功时 MUST 返回 `status=sent` 和 Milky 返回的 `message_id`，且不得返回内部
+`sticker_id`；无候选时返回 `status=no_match`。缺少可信上下文、参数非法、文件缺失、存储
 失败、Milky 协议拒绝、HTTP 错误、malformed 和 transport unknown MUST 使用固定机器可读
 分类，不得把 HTTP 200、Action 调用完成或统计更新成功单独描述为用户已看到消息。日志和
 异常 MUST 不包含 token、Authorization、完整参数、媒体 URL、本地路径、图片 bytes、完整远端
@@ -246,7 +239,8 @@ Tool 成功时 MUST 返回至少 `status=sent`、选定的不透明 `sticker_id`
 #### Scenario: 成功结果
 
 - **WHEN** Milky 返回可确认的成功消息序列
-- **THEN** Tool SHALL 返回 `status=sent`、不透明 `sticker_id` 和 `message_id`
+- **THEN** Tool SHALL 返回 `status=sent` 和 `message_id`
+- **AND** SHALL 不返回内部 `sticker_id`
 - **AND** SHALL 不把原始响应 body 写入日志
 
 #### Scenario: 本地或远端失败

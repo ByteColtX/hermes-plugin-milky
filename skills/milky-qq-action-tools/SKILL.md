@@ -1,6 +1,6 @@
 ---
 name: milky-qq-action-tools
-description: Reference for Milky QQ Agent's 25 fixed Action ToolSpecs and parameter rules.
+description: Reference for Milky QQ Agent's 25 fixed Action ToolSpecs and the separate sticker_send semantic tool.
 metadata:
   short-description: Milky QQ 工具入参与权限
   keywords: "Milky, QQ, Hermes, ToolSpec, operationId, 好友, 好友资料, 好友请求, 合并转发, 私聊文件, 群聊, 群成员, 群文件, 专属头衔, 入群请求, 群邀请, group_id, user_id, special_title, initiator_uid, forward_id, file_hash, message_seq, notification_seq, invitation_seq, download_url"
@@ -8,9 +8,14 @@ metadata:
 
 # Milky QQ action tools
 
-这份 skill 只说明当前注册的 25 个 Hermes Action ToolSpec。工具名对应 Milky 的 `operationId`，
+这份 skill 说明当前注册的 25 个 Hermes Action ToolSpec。工具名对应 Milky 的 `operationId`，
 请求为 `POST /api/{operationId}`；未列出的 Action、别名和任意 Action catalog 均不可调用。
 文字说明不注册工具，不执行也不扩大工具能力。
+
+`sticker_send` 是独立的语义 Tool，不属于这 25 个 Action。它只在当前 Milky task-local session 有效、
+贴纸库有可用文件时出现；`jieba>=0.42.1` 由插件运行时依赖提供，不按需导入。它只接受 `intent`、`emotion`、`tags`，不接受
+目标、贴纸 ID、路径或 URL。它依据当前生效元数据选择一张贴纸并只发送一个 `image` sticker segment；
+不存在 `sticker_search` 或任意 Action catalog。
 
 最终能力和参数校验以实际 ToolSpec、handler 和 Milky 契约为准。
 

@@ -774,6 +774,7 @@ def test_root_register_assembles_platform_without_network_or_background_task(
             "get_group_files",
             "get_friend_info",
             "set_group_member_special_title",
+            "sticker_send",
         ]
         adapter = registration["adapter_factory"](SimpleNamespace())
         assert adapter.__class__.__name__ == "MilkyAdapter"

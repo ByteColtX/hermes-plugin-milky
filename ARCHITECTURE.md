@@ -25,7 +25,7 @@ hermes-plugin-milky/
 ├── __init__.py                 # 唯一公开入口：register(ctx)
 ├── adapter.py                  # BasePlatformAdapter 生命周期和边界委托
 ├── slash_commands.py           # /milky 命令
-├── stickers/                   # 显式人工贴纸维护、独立 store 和图片校验
+├── stickers/                   # 显式人工贴纸维护、发送检索、独立 store 和图片校验
 ├── config/                     # 启动配置、URL、Will policy
 ├── milky/                      # DTO、解析、HTTP Action、SSE、资源和日志
 ├── inbound/                    # normalizer、canonical、pipeline、mapper、系统事件
@@ -122,6 +122,8 @@ Gate 不做网络 I/O，Will 不做授权，session 不复制 Hermes 队列；�
 
 ### 注册与连接
 
+`register(ctx)` 同时登记 25 个与 Milky operationId 对齐的 Action ToolSpec 和一个独立的语义 `sticker_send`；后者只保存 schema、handler 和只读可用性检查，不打开贴纸 store 或联网。`jieba` 作为插件运行时依赖由 manifest 和项目依赖声明提供，并随正常模块导入加载。
+
 `register(ctx)` 是唯一公开入口：读取 context、一次性解析配置，注册 `milky-qq-cq-reference`、`milky-qq-action-tools`、`/milky` 和显式 ToolSpec，登记 `MILKY_HOME_CHANNEL`，组装 client/SSE/MuteTracker/Will/session/pipeline/sender，并调用 Hermes 平台注册接口。`platform_hint` 只包含 `You are chatting on QQ through Hermes's Milky platform.`；宿主提供 `register_system_prompt_section` 时，入口另外登记 `hermes-plugin-milky.qq-platform-guidance` 和 `hermes-plugin-milky.qq-session-context` 两个 `after_memory` section。
 
 该 section 使用注册实例共享的进程内身份快照。adapter 在登录、群列表和每个群的 Bot 成员状态同步成功、普通消息入口完成组装后发布已确认的 `self_id` 和 `nickname`；section renderer 只读快照，不访问 Milky client，不读取 session metadata，也不从消息或配置推断身份。未连接、同步失败或 nickname 无法安全规范化时，section 返回空内容，由 Hermes 跳过该 section；缺少宿主 section API 时仍完成只含首句的平台注册。
@@ -169,6 +171,13 @@ library 并逐条提交，false 原文件原子移动到 junk，失败留在 inb
 `edit` 的 set/clear 是字段级事务更新，`reanalyze` 只替换视觉基线并让 vision 字段跟随，人工字段保持。
 `del` 只接受可见不透明 ID；提交后由 cleanup 回收无引用文件。`cleanup` 保留缺失引用元数据且不触及
 junk，`reindex` 只扫描 library 并原子重建 `sticker_files`，不创建 `sticker_id`。
+
+`sticker_send` 只在 definitions discovery 发现有效 library 条目时可见。它从
+task-local `HERMES_SESSION_PLATFORM`/`HERMES_SESSION_CHAT_ID` 获取当前 `dm:`/`group:` 目标，只读取当前生效
+`emotion`、`tags`、`description` 和有效文件索引；使用无数值分数的完整短语、全部 token、部分 token 层级，
+并只在完全并列时按 chat 使用记录软轮换。发送前完成 containment、图片格式、双索引 SHA-256 和一次性
+`base64://` materialization，claim 全局及 per-chat 统计后只调用一次对应消息 Action。发送结果未知不重试，
+不文本 fallback，不把内部匹配层级写入 Tool 回执；空库、无 context 或过期 sender 均 fail closed。
 
 当前 Hermes command handler 只提供 `raw_args`，因此本 change 不声明 Milky friend/group 或 operator 授权，
 不读取或新增 `MILKY_STICKER_OPERATOR_IDS` 等配置。贴纸失败压缩为 `invalid_input`、`rejected`、
@@ -426,7 +435,7 @@ WebSocket RPC。
 范围、额外字段和目标；入站正文、mention、allowlist 或 Will 分数不能授予工具权限。状态
 变更只能由显式调用触发，不能由 friend request、群通知、关键词或普通消息自动触发。
 
-当前 manifest 公开 25 个固定 ToolSpec：
+当前 manifest 公开 25 个固定 Action ToolSpec，另有独立的 `sticker_send` 语义 Tool：
 
 ```text
 send_profile_like, send_friend_nudge, send_group_nudge, recall_group_message,
@@ -456,6 +465,13 @@ Milky v1.3 文档未声明该 operation，因此不把好友资料字段写入 `
 目标服务不支持时按远端错误边界返回。`set_group_member_special_title` 只接受
 `group_id`、`user_id`、`special_title`，空字符串原样传递，成功只接受空 object；超时、连接或
 读写失败返回 `transport_unknown`，只提交一次且不更新本地群成员状态。
+
+`sticker_send` 不是 Milky operationId，definitions discovery 会单独执行只读可用性检查。它只接受
+`intent`、`emotion`、`tags`，不接受任何 target、ID、路径或 URL；目标只能来自当前 Milky task-local context。
+`jieba>=0.42.1` 和 `Pillow>=12.3.0` 通过 `pyproject.toml` 运行时依赖及 manifest 的 `python_dependencies`
+声明提供，不设置上限，也不做按需导入；无可用条目时不暴露工具。结果只允许 `sent`、`no_match`、`invalid_input`、`missing_session_context`、
+`unsupported`、`missing_file`、`storage_error`、`rejected`、`http_error`、`malformed` 和
+`transport_unknown`，并且一次调用最多一个 sticker message Action。
 
 ## 11. 所有权、安全与配置
 
@@ -554,9 +570,9 @@ ToolSpec schema/显式调用/最小响应校验及日志输入边界。
 
 当前存在未归档 change 时，`openspec/changes/` 同时包含进行中的规划与已完成 change 的归档历史。
 已有主规范继续覆盖入站 context/图片合并、出站附件/native media/文件上传、固定 QQ ToolSpec
-和标准 logger 日志边界；当前工具清单为 25 项，完成项以主规范和归档 change 的 `tasks.md`、evidence
+和标准 logger 日志边界；当前清单为 25 个 Action ToolSpec 加 1 个语义贴纸 Tool，完成项以主规范和归档 change 的 `tasks.md`、evidence
 ledger 为准。
-Hermes 扩展点、Milky Action 支持/错误 envelope，以及 25 个 ToolSpec 的 operationId、参数和
+Hermes 扩展点、Milky Action 支持/错误 envelope，以及 25 个 Action ToolSpec 和 `sticker_send` 的参数与
 最小 response 结构，仍需与真实宿主、manifest、OpenSpec 和 Milky OpenAPI 持续对齐。
 
 v0.1 不做：OneBot v11 入站协议/Action/echo/CQ 入站兼容、WebHook、WebSocket fallback、自动

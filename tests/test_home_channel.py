@@ -237,6 +237,7 @@ def test_register_exposes_fixed_home_metadata_and_cron_hooks_without_network(mon
             "get_group_files",
             "get_friend_info",
             "set_group_member_special_title",
+            "sticker_send",
         ]
         enablement = registration["env_enablement_fn"]
         assert enablement() == {

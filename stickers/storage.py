@@ -12,7 +12,7 @@ from .errors import StickerStorageError, StickerUnsupportedError
 
 PLUGIN_NAME = "hermes-plugin-milky"
 STICKER_DB_FILENAME = "stickers.db"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +100,7 @@ class StickerStore:
             if read_only and not (self.paths.root / STICKER_DB_FILENAME).is_file():
                 return self
             if self._db_factory is None:
-                if self._data_dir is not None:
+                if self._data_dir is not None or self._data_dir_factory is not None:
                     self.connection = sqlite3.connect(
                         self.paths.root / STICKER_DB_FILENAME, check_same_thread=False
                     )
@@ -183,6 +183,17 @@ class StickerStore:
                     size_bytes INTEGER NOT NULL,
                     verified_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS sticker_send_usage (
+                    chat_key TEXT NOT NULL,
+                    sticker_id TEXT NOT NULL,
+                    last_used_at TEXT NOT NULL,
+                    use_count INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (chat_key, sticker_id),
+                    FOREIGN KEY (sticker_id) REFERENCES sticker_items(sticker_id)
+                        ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_sticker_send_usage_chat_last_used
+                    ON sticker_send_usage(chat_key, last_used_at);
                 """
             )
             connection.execute(
@@ -195,19 +206,65 @@ class StickerStore:
             version = int(row[0])
         except (TypeError, ValueError) as error:
             raise StickerUnsupportedError("invalid schema version") from error
-        if version == 1:
-            connection.execute(
-                "ALTER TABLE sticker_items ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0"
-            )
-            connection.execute("ALTER TABLE sticker_items ADD COLUMN last_used_at TEXT NULL")
+        if version not in {1, 2, SCHEMA_VERSION}:
+            raise StickerUnsupportedError("unsupported schema version")
+
+        try:
+            connection.execute("BEGIN")
+            if version == 1:
+                connection.execute(
+                    "ALTER TABLE sticker_items ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0"
+                )
+                connection.execute("ALTER TABLE sticker_items ADD COLUMN last_used_at TEXT NULL")
+                version = 2
+            if version == 2:
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS sticker_send_usage (
+                        chat_key TEXT NOT NULL,
+                        sticker_id TEXT NOT NULL,
+                        last_used_at TEXT NOT NULL,
+                        use_count INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY (chat_key, sticker_id),
+                        FOREIGN KEY (sticker_id) REFERENCES sticker_items(sticker_id)
+                            ON DELETE CASCADE
+                    )
+                    """
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_sticker_send_usage_chat_last_used "
+                    "ON sticker_send_usage(chat_key, last_used_at)"
+                )
+                version = SCHEMA_VERSION
             connection.execute(
                 "UPDATE sticker_schema_meta SET value = ? WHERE key = 'schema_version'",
-                (str(SCHEMA_VERSION),),
+                (str(version),),
             )
             connection.commit()
-            return
+        except Exception as error:
+            connection.rollback()
+            raise StickerStorageError("schema migration failed") from error
+
         if version != SCHEMA_VERSION:
             raise StickerUnsupportedError("unsupported schema version")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sticker_send_usage (
+                chat_key TEXT NOT NULL,
+                sticker_id TEXT NOT NULL,
+                last_used_at TEXT NOT NULL,
+                use_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (chat_key, sticker_id),
+                FOREIGN KEY (sticker_id) REFERENCES sticker_items(sticker_id)
+                    ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sticker_send_usage_chat_last_used "
+            "ON sticker_send_usage(chat_key, last_used_at)"
+        )
+        connection.commit()
         required = {
             "sticker_items": {
                 "sticker_id",
@@ -231,6 +288,7 @@ class StickerStore:
                 "last_used_at",
             },
             "sticker_files": {"sha256", "relative_path", "mime_type", "size_bytes", "verified_at"},
+            "sticker_send_usage": {"chat_key", "sticker_id", "last_used_at", "use_count"},
         }
         for table, columns in required.items():
             actual = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}

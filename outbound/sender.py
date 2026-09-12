@@ -293,6 +293,16 @@ class MilkyOutboundSender:
             return _failure(error.classification, _safe_reason(error))
         return await self._send_media(chat_id, media, caption=caption, reply_to=reply_to)
 
+    async def send_sticker(self, chat_id: object, uri: object) -> OutboundSendResult:
+        """发送一张已经完成受控 materialization 的 sticker image。"""
+
+        try:
+            target = parse_outbound_target(chat_id)
+            media = image_segment(uri, sub_type="sticker")
+        except (OutboundFormatError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+        return await self._send_segments(target, [media])
+
     async def send_voice(
         self,
         chat_id: str,

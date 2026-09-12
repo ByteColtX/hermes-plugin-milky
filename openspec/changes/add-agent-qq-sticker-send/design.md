@@ -14,7 +14,7 @@ Action catalog。它需要把 Agent 查询、当前 task-local session context�
 
 **Goals:**
 
-- 为 Agent 提供不接受目标和贴纸 ID 入参的单一贴纸发送入口；成功回执可以返回被选中的不透明贴纸 ID。
+- 为 Agent 提供不接受目标和贴纸 ID 入参的单一贴纸发送入口；成功回执只返回发送状态和远端消息 ID，不暴露内部贴纸 ID。
 - 以当前生效元数据为唯一匹配输入，让文本相关性优先于曝光轮换。
 - 在相关性接近时使用当前 chat 的历史进行软轮换，同时允许最近使用的贴纸在它明显更匹配时再次发送。
 - 复用现有严格的 Milky 目标路由、image materialization、Action 错误分类和日志脱敏边界。
@@ -34,18 +34,18 @@ Action catalog。它需要把 Agent 查询、当前 task-local session context�
 
 在现有 `outbound/tools.py` 的显式注册入口增加独立 `sticker_send` ToolSpec 和 handler。它不
 绑定一个 Milky operationId，而是调用插件自己的贴纸发送 service；注册调用只登记 schema、
-handler 和可用性检查，不导入可选的 `jieba`、不创建或打开贴纸 store、不读取 library、不建立
-网络连接。
+handler 和可用性检查，不创建或打开贴纸 store、不读取 library、不建立网络连接。`jieba` 由
+`plugin.yaml` 的 `python_dependencies` 和项目运行时依赖声明提供，按普通模块在插件导入时加载，
+不使用按需导入或可选依赖缺失分支。
 
 Hermes 构建 Agent 可见 Tool definitions 时通过该 ToolSpec 的 `check_fn` 执行只读可用性探测：
 
 - 先确认既有 store 中至少有一个当前可见、关联有效 `sticker_files` 且 library 文件可用的条目；
-  store 缺失、为空或没有可用条目时直接返回不可用，不导入 `jieba`，不创建目录或数据库。
-- 只有确认存在可用条目后，才延迟导入可选 `jieba`；导入失败时返回不可用，不向 Agent 暴露
-  `sticker_send`，但不影响其他 Tool 或贴纸维护命令。
-- 条目可用且 `jieba` 可导入时才把 `sticker_send` 放入 Agent 可见 definitions。内部可以保留
-  ToolSpec 登记，但不可用时不得出现在 Agent 可调用列表中；handler 对过期 definition 仍需
-  fail closed。
+  store 缺失、为空或没有可用条目时直接返回不可用，不创建目录或数据库。
+- `jieba` 是正常插件运行时依赖，模块加载失败属于宿主依赖配置错误，不在 Tool discovery 中按需
+  导入、隐藏或转化为 `unsupported`。
+- 条目可用时把 `sticker_send` 放入 Agent 可见 definitions。内部可以保留 ToolSpec 登记，但不可用
+  时不得出现在 Agent 可调用列表中；handler 对过期 definition 仍需 fail closed。
 
 该探测只在 Tool discovery 的可用性检查边界执行，不在插件 import、`register()`、connect、SSE
 或普通 Agent 输出阶段打开 store。维护命令新增第一个可用条目后，下一次 definitions discovery
@@ -63,8 +63,8 @@ Agent 不能把贴纸发到另一个会话，也不会因当前 context 缺失�
 ### 2. 查询规范化和相关性排序
 
 查询和库字段使用同一个本地 `jieba` tokenizer。`jieba` 不是 Python 内置库，也不是 Hermes
-core 依赖；它通过本插件的可选 extra 和 lockfile 管理，而不是基础运行时必装依赖，并在
-Python 3.13 环境验证导入和分词结果。选择 `jieba` 是因为它适合当前小规模中文 metadata、
+core 依赖；它通过插件 manifest 的 `python_dependencies` 和项目运行时依赖声明提供，使用
+`jieba>=0.42.1`，不设置上限，也不做按需加载，并在 Python 3.13 环境验证导入和分词结果。选择 `jieba` 是因为它适合当前小规模中文 metadata、
 无需模型服务且部署边界简单；不引入需要额外模型资源或远程服务的分词方案。归一化只做 Unicode NFKC、大小写折叠、
 空白/标点边界处理和分词，不调用模型或远程服务。`intent` 的 Tool 文档约束为简短意图短语，
 不把 Agent 长篇正文当作查询。
@@ -163,7 +163,7 @@ Tool 只返回固定机器可读分类：`sent`、`no_match`、`invalid_input`�
 
 ## Migration Plan
 
-1. 在实现前锁定中文 tokenizer 依赖并补充数据库 schema migration；旧版没有发送 Tool 时继续
+1. 在实现前声明中文 tokenizer 运行时依赖并补充数据库 schema migration；旧版没有发送 Tool 时继续
    正常执行既有维护命令。
 2. 发布后，只有明确注册且 context 合法的 `sticker_send` 调用会读取既有 library；不会自动
    扫描 inbox、导入新图片或发送历史条目。
