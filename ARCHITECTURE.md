@@ -13,7 +13,7 @@
 | 协议 | Milky v1.3；HTTP Action + SSE `GET /event` |
 | 公开入口 | 根目录 `__init__.py::register(ctx)` |
 | 仓库 | [ByteColtX/hermes-plugin-milky](https://github.com/ByteColtX/hermes-plugin-milky) |
-| 更新日期 | 2026-09-09 |
+| 更新日期 | 2026-09-13 |
 
 边界以本文和 `AGENTS.md` 为准；可观察行为、测试要求和 change 进度以 `openspec/` 为准，安装与配置以 `README.md` 为准，代码与测试提供当前实现证据。单次本地测试、fake host、OpenAPI 文档清单或 fixture 不能证明真实 Hermes 宿主和 Milky 服务已经支持某项能力。
 

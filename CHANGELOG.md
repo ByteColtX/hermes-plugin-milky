@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.8.0] - 2026-09-13
+
+### 新增
+
+- 增加显式 `/milky sticker` 人工维护闭环：支持导入、预览、列举、编辑、重新分析、删除、清理和重建索引。
+- 增加受限的 `sticker_send` Agent Tool：根据当前 Milky 会话和贴纸元数据选择并发送一张贴纸。
+
+### 变更与边界
+
+- 贴纸库使用独立 plugin-data 存储，支持图片格式与 SHA-256 校验、字段级人工修正、发送统计和安全错误分类。
+- `sticker_send` 只在存在可用库条目时暴露，不接受 Agent 指定目标、贴纸 ID、路径或 URL；一次调用最多执行一次发送 Action。
+- 新增运行时依赖 `Pillow>=12.3.0` 和 `jieba>=0.42.1`；未执行真实 Milky 发送或上传 smoke。
+
+### 验证
+
+- `951 passed, 3 skipped`；跳过项为当前环境缺少 Hermes host 或需要显式开启的真实 Hermes 集成。
+- Ruff、格式检查、`uv build`、`uv lock --check`、`git diff --check` 和 OpenSpec strict validate 均通过。
+
 ## [1.7.0] - 2026-09-09
 
 ### 变更与修复
