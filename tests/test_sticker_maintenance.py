@@ -22,6 +22,9 @@ from stickers.validation import validate_image_file
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
+_GIF = base64.b64decode(
+    "R0lGODlhAgACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQAAgAAACwAAAAAAgACAAAIBgABCAQQEAAh+QQAAgAAACwAAAAAAgACAIEAAP8AAAAAAAAAAAAIBgABCAQQEAA7"
+)
 
 
 def _vision(*, is_sticker: bool = True, emotion: str = "joy") -> str:
@@ -252,13 +255,35 @@ def test_fresh_dry_run_does_not_create_database_or_move_file(tmp_path: Path) -> 
     assert not (tmp_path / "stickers.db").exists()
 
 
-def test_image_validation_keeps_png_hash_and_rejects_text(tmp_path: Path) -> None:
+def test_image_validation_accepts_gif_and_keeps_png_hash(tmp_path: Path) -> None:
     inbox = tmp_path / "inbox"
     inbox.mkdir()
     good = inbox / "good.png"
     good.write_bytes(_PNG)
     candidate = validate_image_file(good, inbox)
     assert candidate.image_format == "png"
+    gif = inbox / "animated.gif"
+    gif.write_bytes(_GIF)
+    assert validate_image_file(gif, inbox).image_format == "gif"
+
+
+def test_gif_add_preserves_original_bytes(tmp_path: Path) -> None:
+    inbox = tmp_path / "stickers" / "inbox"
+    inbox.mkdir(parents=True)
+    source = inbox / "animated.gif"
+    source.write_bytes(_GIF)
+
+    service = StickerMaintenanceService(
+        data_dir=tmp_path, vision_analyzer=lambda *_args, **_kwargs: _vision()
+    )
+    assert json.loads(asyncio.run(service.handle("sticker add")))["created"] == 1
+    library_file = next((tmp_path / "stickers" / "library").rglob("*.gif"))
+    assert library_file.read_bytes() == _GIF
+
+
+def test_image_validation_rejects_text(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
     bad = inbox / "bad.png"
     bad.write_text("not an image", encoding="utf-8")
     try:

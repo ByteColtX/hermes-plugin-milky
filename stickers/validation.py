@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import re
-import zlib
 from dataclasses import dataclass
 from pathlib import Path
+
+from PIL import Image
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
@@ -17,6 +19,12 @@ _FORMAT_BY_SUFFIX = {
     ".jpeg": ("jpeg", "image/jpeg"),
     ".gif": ("gif", "image/gif"),
     ".webp": ("webp", "image/webp"),
+}
+_FORMAT_BY_PIL_FORMAT = {
+    "PNG": ("png", "image/png"),
+    "JPEG": ("jpeg", "image/jpeg"),
+    "GIF": ("gif", "image/gif"),
+    "WEBP": ("webp", "image/webp"),
 }
 _CANONICAL_SUFFIX = {"png": ".png", "jpeg": ".jpg", "gif": ".gif", "webp": ".webp"}
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -72,201 +80,35 @@ def _read_limited(path: Path) -> tuple[bytes, str, int]:
     """流式读取并计算 hash，拒绝空文件和超过上限的文件。"""
 
     digest = hashlib.sha256()
-    prefix = bytearray()
+    payload = bytearray()
     total = 0
     with path.open("rb") as handle:
         while True:
             chunk = handle.read(1024 * 1024)
             if not chunk:
                 break
-            if len(prefix) < 512:
-                prefix.extend(chunk[: 512 - len(prefix)])
             total += len(chunk)
             if total > MAX_IMAGE_BYTES:
                 raise ValueError("image exceeds size limit")
             digest.update(chunk)
+            payload.extend(chunk)
     if total == 0:
         raise ValueError("image is empty")
-    return bytes(prefix), digest.hexdigest(), total
+    return bytes(payload), digest.hexdigest(), total
 
 
-def _png_valid(data: bytes) -> bool:
-    if not data.startswith(b"\x89PNG\r\n\x1a\n") or len(data) < 33:
-        return False
-    offset = 8
-    saw_ihdr = False
-    saw_idat = False
-    while offset + 12 <= len(data):
-        length = int.from_bytes(data[offset : offset + 4], "big")
-        kind = data[offset + 4 : offset + 8]
-        end = offset + 12 + length
-        if end > len(data):
-            return False
-        expected_crc = int.from_bytes(data[end - 4 : end], "big")
-        actual_crc = zlib.crc32(data[offset + 4 : offset + 8 + length]) & 0xFFFFFFFF
-        if expected_crc != actual_crc:
-            return False
-        if not saw_ihdr:
-            if kind != b"IHDR" or length != 13:
-                return False
-            width = int.from_bytes(data[offset + 8 : offset + 12], "big")
-            height = int.from_bytes(data[offset + 12 : offset + 16], "big")
-            if width == 0 or height == 0:
-                return False
-            saw_ihdr = True
-        elif kind == b"IDAT":
-            saw_idat = True
-        if kind == b"IEND":
-            return saw_ihdr and saw_idat and length == 0 and end == len(data)
-        offset = end
-    return False
+def _detect_format(data: bytes) -> tuple[str, str] | None:
+    """使用 Pillow 验证图片结构并返回内部格式和 MIME。"""
 
-
-def _jpeg_valid(data: bytes) -> bool:
-    if not data.startswith(b"\xff\xd8") or len(data) < 4:
-        return False
-    index = 2
-    saw_frame = False
-    while index < len(data):
-        if data[index] != 0xFF:
-            return False
-        while index < len(data) and data[index] == 0xFF:
-            index += 1
-        if index >= len(data):
-            return False
-        marker = data[index]
-        index += 1
-        if marker == 0xD9:
-            return saw_frame
-        if marker in (0xD8,):
-            continue
-        if marker == 0xDA:
-            if index + 2 > len(data):
-                return False
-            length = int.from_bytes(data[index : index + 2], "big")
-            if length < 2 or index + length > len(data):
-                return False
-            index += length
-            end = data.find(b"\xff\xd9", index)
-            return saw_frame and end >= 0 and end + 2 == len(data)
-        if marker == 0x00 or 0xD0 <= marker <= 0xD7:
-            return False
-        if index + 2 > len(data):
-            return False
-        length = int.from_bytes(data[index : index + 2], "big")
-        if length < 2 or index + length > len(data):
-            return False
-        if 0xC0 <= marker <= 0xC3 or 0xC5 <= marker <= 0xC7 or 0xC9 <= marker <= 0xCB:
-            if length < 7:
-                return False
-            height = int.from_bytes(data[index + 3 : index + 5], "big")
-            width = int.from_bytes(data[index + 5 : index + 7], "big")
-            if width == 0 or height == 0:
-                return False
-            saw_frame = True
-        index += length
-    return False
-
-
-def _gif_valid(data: bytes) -> bool:
-    if len(data) < 13 or data[:6] not in (b"GIF87a", b"GIF89a"):
-        return False
-    width = int.from_bytes(data[6:8], "little")
-    height = int.from_bytes(data[8:10], "little")
-    if width == 0 or height == 0:
-        return False
-    packed = data[10]
-    index = 13
-    if packed & 0x80:
-        index += 3 * (2 ** ((packed & 0x07) + 1))
-    if index > len(data):
-        return False
-    saw_image = False
-    while index < len(data):
-        marker = data[index]
-        index += 1
-        if marker == 0x3B:
-            return saw_image and index == len(data)
-        if marker == 0x21:
-            if index >= len(data):
-                return False
-            index += 1
-            while True:
-                if index >= len(data):
-                    return False
-                size = data[index]
-                index += 1
-                if size == 0:
-                    break
-                index += size
-                if index > len(data):
-                    return False
-            continue
-        if marker != 0x2C or index + 9 > len(data):
-            return False
-        image_width = int.from_bytes(data[index + 5 : index + 7], "little")
-        image_height = int.from_bytes(data[index + 7 : index + 9], "little")
-        if image_width == 0 or image_height == 0:
-            return False
-        image_packed = data[index + 9]
-        index += 10
-        if image_packed & 0x80:
-            index += 3 * (2 ** ((image_packed & 0x07) + 1))
-        if index >= len(data):
-            return False
-        index += 1
-        while True:
-            if index >= len(data):
-                return False
-            size = data[index]
-            index += 1
-            if size == 0:
-                break
-            index += size
-            if index > len(data):
-                return False
-        saw_image = True
-    return False
-
-
-def _webp_valid(data: bytes) -> bool:
-    if len(data) < 16 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
-        return False
-    riff_size = int.from_bytes(data[4:8], "little")
-    if riff_size + 8 != len(data):
-        return False
-    index = 12
-    saw_image = False
-    while index + 8 <= len(data):
-        chunk_type = data[index : index + 4]
-        size = int.from_bytes(data[index + 4 : index + 8], "little")
-        end = index + 8 + size + (size & 1)
-        if end > len(data):
-            return False
-        payload = data[index + 8 : index + 8 + size]
-        if (chunk_type == b"VP8 " and len(payload) >= 10 and payload[6:9] == b"\x9d\x01\x2a") or (
-            chunk_type == b"VP8L" and len(payload) >= 5 and payload[0] == 0x2F
-        ):
-            saw_image = True
-        elif chunk_type == b"VP8X" and len(payload) >= 10:
-            width = 1 + int.from_bytes(payload[4:7], "little")
-            height = 1 + int.from_bytes(payload[7:10], "little")
-            saw_image = width > 0 and height > 0
-        index = end
-    return saw_image and index == len(data)
-
-
-def _detect_format(prefix: bytes, data: bytes) -> str | None:
-    if _png_valid(data):
-        return "png"
-    if _jpeg_valid(data):
-        return "jpeg"
-    if _gif_valid(data):
-        return "gif"
-    if _webp_valid(data):
-        return "webp"
-    del prefix
-    return None
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            image_format = _FORMAT_BY_PIL_FORMAT.get(image.format or "")
+            if image_format is None:
+                return None
+            image.verify()
+            return image_format
+    except Exception:  # noqa: BLE001 - 解码器异常统一归类为 rejected
+        return None
 
 
 def validate_image_file(path: Path, inbox: Path) -> ImageCandidate:
@@ -275,18 +117,13 @@ def validate_image_file(path: Path, inbox: Path) -> ImageCandidate:
     path = Path(path)
     inbox = Path(inbox)
     ensure_regular_image_path(path, inbox)
-    prefix, file_sha256, size_bytes = _read_limited(path)
-    # 结构检查需要完整 bytes，但上限已经在流式读取阶段固定为 10 MiB。
-    try:
-        data = path.read_bytes()
-    except OSError as error:
-        raise ValueError("image is unreadable") from error
-    image_format = _detect_format(prefix, data)
+    data, file_sha256, size_bytes = _read_limited(path)
+    image_format = _detect_format(data)
     suffix = path.suffix.lower()
     expected = _FORMAT_BY_SUFFIX.get(suffix)
-    if image_format is None or expected is None or expected[0] != image_format:
+    if image_format is None or expected is None or expected != image_format:
         raise ValueError("image format is unsupported or extension mismatches content")
-    return ImageCandidate(path, file_sha256, image_format, expected[1], size_bytes)
+    return ImageCandidate(path, file_sha256, image_format[0], image_format[1], size_bytes)
 
 
 def validate_library_name(path: Path, library: Path) -> tuple[str, str] | None:
