@@ -1,0 +1,256 @@
+## Purpose
+
+为 Hermes Agent 提供一个不接受 Agent 指定贴纸标识或会话目标的 QQ 贴纸发送能力，使插件能够依据当前
+对话意图从已维护的本地贴纸库中选择相关内容、完成受控文件校验并安全发送一张贴纸。
+
+## ADDED Requirements
+
+### Requirement: `sticker_send` 只在贴纸库可用且 tokenizer 可用时暴露
+
+插件 MUST 将中文 tokenizer 声明为可选依赖，而不是基础运行时的必装依赖。Agent 可见的 Tool
+definitions MUST 只有在既有贴纸 store 中至少存在一个当前可见、具备有效 `sticker_files` 关联且
+library 文件可用的条目，并且可选 `jieba` 可以导入时，才包含 `sticker_send`。可用性探测 MUST
+不得创建目录或数据库；贴纸库为空、缺失或没有可用条目时 MUST 在导入 `jieba` 前返回不可用。
+`jieba` 不可导入时 MUST 隐藏 `sticker_send`，但 MUST 不影响其他 Tool 或贴纸维护命令。
+内部已登记但当前不可用的 ToolSpec 不得出现在 Agent 可调用列表中；过期 definition 触发 handler
+时也 MUST fail closed。
+
+#### Scenario: 贴纸库为空时不要求 tokenizer
+
+- **WHEN** 贴纸 store 缺失、为空，或没有当前可见且文件索引有效的条目
+- **THEN** 系统 SHALL 不导入或要求 `jieba`
+- **AND** Agent 可见 Tool definitions SHALL 不包含 `sticker_send`
+- **AND** 其他 Tool 与贴纸维护命令 SHALL 继续可用
+
+#### Scenario: 贴纸库非空但可选 tokenizer 不可用
+
+- **WHEN** 贴纸库存在至少一个可用条目，但运行环境无法导入可选 `jieba`
+- **THEN** Agent 可见 Tool definitions SHALL 不包含 `sticker_send`
+- **AND** 系统 SHALL 不因该依赖缺失而影响其他 Tool 或贴纸维护命令
+
+#### Scenario: 贴纸库和 tokenizer 都可用
+
+- **WHEN** 贴纸库存在至少一个可用条目且 `jieba` 可以导入
+- **THEN** Agent 可见 Tool definitions SHALL 包含 `sticker_send`
+- **AND** 工具 SHALL 使用同一 tokenizer 执行查询和元数据匹配
+
+### Requirement: Agent 只能通过受限的 `sticker_send` Tool 请求发送
+
+插件 MUST 注册一个名为 `sticker_send` 的异步 Agent Tool。Tool MUST 只接受可选的 `intent`、
+`emotion` 和 `tags` 三类查询参数；三个参数均为空、缺失或只包含空白时 MUST 返回
+`invalid_input`。`emotion` 若提供 MUST 是 `joy|sadness|anger|surprise|fear|disgust|love|approval|confusion|neutral|mixed|unknown`
+中的一个值；`intent` MUST 是不超过 64 个字符的非空短字符串；`tags` MUST 是包含 1 至 5 个非空
+字符串的数组，每个 tag 归一化后不得超过 16 个字符，重复的归一化 tag MUST 返回 `invalid_input`。
+Tool MUST 拒绝 `sticker_id`、`emoji_id`、`face_id`、`chat_id`、`session_id`、文件路径、远端媒体
+URL 以及其他未声明字段，并在任何 Milky Action 或文件读取前返回 `invalid_input`。成功回执可以
+返回被选中的不透明 `sticker_id`，但 Agent 不得指定该 ID。
+
+#### Scenario: Agent 只提供一个查询参数
+
+- **WHEN** Agent 只提供非空 `emotion`、非空 `intent` 或至少一个非空 `tags`
+- **THEN** `sticker_send` SHALL 接受该调用并开始本地候选匹配
+- **AND** SHALL 不要求 Agent 补充其他查询参数
+
+#### Scenario: Agent 提供多个查询参数
+
+- **WHEN** Agent 同时提供 `emotion`、`tags` 和 `intent` 中的两个或三个参数
+- **THEN** 系统 SHALL 将每个已提供参数作为同一次匹配请求的约束
+- **AND** SHALL 不把未提供的参数补成默认值
+
+#### Scenario: Tool 参数包含目标或路径
+
+- **WHEN** Tool 参数包含 `sticker_id`、`emoji_id`、`face_id`、`chat_id`、`session_id`、任意路径、URL 或未知字段
+- **THEN** Tool SHALL 返回 `invalid_input`
+- **AND** SHALL 不读取文件、不打开贴纸 store 且不调用 Milky
+
+### Requirement: 发送目标必须来自可信的当前 Milky 会话上下文
+
+Tool MUST 从 task-local session context 读取 `HERMES_SESSION_PLATFORM` 和
+`HERMES_SESSION_CHAT_ID`。只有 `HERMES_SESSION_PLATFORM=milky` 且 chat key 为合法的
+`dm:<十进制 QQ 号>` 或 `group:<十进制群号>` 时，Tool 才能继续发送。Tool MUST NOT 使用
+`HERMES_SESSION_ID`、最近会话、home channel、默认频道或 Agent 参数推断目标。
+缺少、冲突、非法或不支持的上下文 MUST 在网络访问前返回 `missing_session_context` 或
+`unsupported`，不得建立旁路 client。
+
+#### Scenario: 当前 Milky 私聊上下文可用
+
+- **WHEN** task-local context 表示 `HERMES_SESSION_PLATFORM=milky` 且
+  `HERMES_SESSION_CHAT_ID=dm:<合法 QQ 号>`
+- **THEN** Tool SHALL 将贴纸发送到该私聊目标
+- **AND** SHALL 不要求 Agent 传入 QQ 号
+
+#### Scenario: 当前 Milky 群聊上下文可用
+
+- **WHEN** task-local context 表示 `HERMES_SESSION_PLATFORM=milky` 且
+  `HERMES_SESSION_CHAT_ID=group:<合法群号>`
+- **THEN** Tool SHALL 将贴纸发送到该群聊目标
+- **AND** SHALL 不把群聊目标改写为私聊或默认目标
+
+#### Scenario: 上下文缺失或不是 Milky
+
+- **WHEN** 当前 context 缺少平台、缺少 chat key、平台不是 `milky`、chat key 非法或表示 temp
+  会话
+- **THEN** Tool SHALL 在网络访问前返回固定的 `missing_session_context` 或 `unsupported`
+- **AND** SHALL 不回退到任何其他目标
+
+### Requirement: 候选匹配必须只使用当前生效元数据并以文本相关性为优先
+
+系统 MUST 只从当前可见且当前文件索引有效的 `sticker_items` 中检索，并只读取当前生效的
+`emotion`、`tags` 和 `description`。字段来源为 `manual` 或 `vision` MUST 不改变匹配权重。
+提供 `emotion` 时，候选的当前 `emotion` MUST 严格相等；提供 `tags` 时，候选 MUST 至少
+精确命中一个请求 tag，多个请求 tag 之间是 OR 关系；提供 `intent` 时，候选 MUST 至少命中
+完整归一化 intent 短语或一个有效的本地规范化 token，不要求全部 token 命中。多个已提供参数
+之间 MUST 取 AND。候选 MUST 按不产生数值分数的固定相关性层级比较：完整短语命中高于全部
+token 命中，全部 token 命中高于部分 token 命中；同一层级内命中不同有效 token 或请求 tag
+更多者优先。未提供 `emotion` 时，没有精确 tag、短语或 token 证据的候选 MUST 被排除并返回
+`no_match`；仅提供 `emotion` 时，通过情绪硬筛选的候选可以直接进入轮换层，不得因没有文本
+证据而返回 `no_match`。系统不得使用任意最低分数阈值。
+
+#### Scenario: 人工修正字段不获得额外优先级
+
+- **WHEN** 两张候选贴纸的当前 `emotion`、`tags` 和 `description` 匹配证据相同，但字段来源
+  不同
+- **THEN** 系统 SHALL 按相同的相关性规则处理两张贴纸
+- **AND** SHALL 不因为 `*_source=manual` 增加或减少匹配优先级
+
+#### Scenario: 明确情绪不匹配
+
+- **WHEN** Agent 提供 `emotion=love`，而某候选当前 `emotion` 为 `joy`
+- **THEN** 该候选 SHALL 在相关性排序前被排除
+- **AND** SHALL 不因 tags 或 description 相似而发送该候选
+
+#### Scenario: 只有低质量或无证据候选
+
+- **WHEN** 贴纸库中只有候选，但候选不满足已提供的情绪、标签或意图词法条件
+- **THEN** Tool SHALL 返回 `no_match`
+- **AND** SHALL 不因为候选数量只有一张而降低匹配要求
+
+#### Scenario: intent 只有部分 token 命中
+
+- **WHEN** `intent` 经同一 tokenizer 分为多个有效 token，候选只命中其中一部分，且没有更高层级候选
+- **THEN** 该候选 SHALL 保留在部分 token 命中层级中参与选择
+- **AND** 系统 SHALL 不因不存在全部 token 命中而直接返回 `no_match`
+
+#### Scenario: 唯一候选存在实际词法证据
+
+- **WHEN** 只有一张候选通过已提供的 `emotion`/`tags` 硬筛选，且至少命中一个 intent 短语/token 或请求 tag
+- **THEN** 系统 SHALL 选择该候选发送
+- **AND** SHALL 不使用未定义的数值分数阈值拒绝该候选
+
+### Requirement: 语义相关性必须优先于曝光轮换
+
+系统 MUST 先按固定的无分数相关性层级确定最终候选池，再使用当前 chat key 的发送历史进行
+多样性选择。只有最终层级和命中证据完全并列的候选才能进入轮换池。使用历史只能作为并列候选
+之间的软偏好，MUST NOT 硬排除最近使用的贴纸，也 MUST NOT 让明显较差的候选超过明显更匹配
+的候选。并列时，未使用或较久未使用者可以获得更高选择概率，同等使用历史下允许随机选择；
+候选只有一张且满足最低证据时 SHALL 发送。
+
+#### Scenario: 更匹配的贴纸最近刚发送
+
+- **WHEN** 候选 A 的文本相关性明显高于候选 B，且 A 刚在当前会话中发送过
+- **THEN** 系统 SHALL 仍优先选择 A
+- **AND** SHALL 不因 A 最近发送而强制选择 B
+
+#### Scenario: 多张候选相关性接近
+
+- **WHEN** 多张候选都满足查询约束且相关性层级和命中证据完全相同
+- **THEN** 系统 SHALL 在这些候选中进行随机或等价的软轮换
+- **AND** 选择 SHALL 可以偏向当前会话较久未使用的候选，但不得把近期候选设为绝对不可选
+
+#### Scenario: 唯一候选满足要求
+
+- **WHEN** 只有一张候选满足最低匹配要求
+- **THEN** 系统 SHALL 选择该候选发送
+- **AND** SHALL 不因没有其他候选而返回 `no_match`
+
+### Requirement: 发送只能使用已维护并校验通过的库文件
+
+系统 MUST 通过选定条目的内部关联找到 `stickers/library/` 下的 content-addressed 文件，并在
+发送前校验文件仍存在、路径仍位于受控 plugin-data 根目录、文件为允许的图片格式且实际
+SHA-256 与 `sticker_items.file_sha256` 和 `sticker_files.sha256` 一致。Tool MUST NOT 接受
+或读取任意 Agent 路径、URL 或未登记文件。校验失败 MUST 返回 `missing_file` 或
+`storage_error`，且 MUST NOT 静默选择另一张贴纸继续发送。
+
+#### Scenario: 库文件和 hash 校验通过
+
+- **WHEN** 选定条目的 library 文件存在、路径受控且 hash 与索引一致
+- **THEN** 系统 SHALL 生成一个 `image` segment，并将其 `sub_type` 设为 `sticker`
+- **AND** SHALL 保留贴纸图片内容，不附加未请求的文本或第二张图片
+
+#### Scenario: 选定文件缺失或 hash 不一致
+
+- **WHEN** 选定贴纸的文件缺失、越界、格式无效或 hash 校验失败
+- **THEN** Tool SHALL 返回 `missing_file` 或 `storage_error`
+- **AND** SHALL 不调用发送 Action，也 SHALL 不改发排序中的下一张贴纸
+
+### Requirement: 单次 Tool 调用只能产生一次明确的贴纸发送 Action
+
+Tool MUST 根据 `dm:<id>` 或 `group:<id>` 分别调用既有的 `send_private_message` 或
+`send_group_message`，消息 MUST 只包含一张已校验的 sticker image segment。一次 Tool 调用
+在发送请求进入网络边界后 MUST NOT 自动重试、拆分、回退为文本或追加第二个发送 Action。
+Tool 可以被 Agent 在不同调用中重复调用，不得设置 Agent turn 级调用次数上限。
+
+#### Scenario: 私聊贴纸发送
+
+- **WHEN** 当前目标是合法 `dm:<id>`，且选定文件已校验通过
+- **THEN** 系统 SHALL 只调用一次 `send_private_message`
+- **AND** 请求 SHALL 只包含一张 `sub_type=sticker` 的 image segment
+
+#### Scenario: 群聊贴纸发送
+
+- **WHEN** 当前目标是合法 `group:<id>`，且选定文件已校验通过
+- **THEN** 系统 SHALL 只调用一次 `send_group_message`
+- **AND** 请求 SHALL 使用当前群号，不得改投其他群或私聊
+
+#### Scenario: Milky 结果未知
+
+- **WHEN** 发送 Action 已进入网络边界但结果为超时、连接中断或 transport unknown
+- **THEN** Tool SHALL 返回 `transport_unknown`
+- **AND** SHALL 不自动重试或伪造 `sent`
+
+### Requirement: 发送统计和会话历史必须与发送边界一致
+
+当有效贴纸已完成本地校验并进入发送 Action 边界时，系统 MUST 对现有 `sticker_items` 的
+`use_count` 和 `last_used_at` 执行一次原子更新，并记录当前 chat key 下的贴纸使用时间，供
+后续近似候选软轮换使用。统计更新 MUST 不等待 Milky 成功响应；Milky 成功、失败或未知均不
+回滚已经接受的统计。统计写入失败时 MUST 不重发已经接受的消息；同一次 Tool 调用 MUST
+不得重复计数。不同 Tool 调用之间不受调用次数限制，并分别产生自己的统计记录。
+
+#### Scenario: Action 成功、失败或未知均计数
+
+- **WHEN** 贴纸发送 Action 已进入网络边界，并分别返回成功、协议拒绝、HTTP 错误或未知结果
+- **THEN** 对应贴纸 SHALL 只增加一次使用统计
+- **AND** 统计结果 SHALL 不被远端失败或未知结果回滚
+
+#### Scenario: 统计 claim 写入失败
+
+- **WHEN** 贴纸已完成本地校验，但发送前的统计 claim 无法持久化
+- **THEN** 系统 SHALL 返回 `storage_error`
+- **AND** SHALL 不调用 Milky，也 SHALL 不为了补写统计而发送或重发该贴纸
+
+#### Scenario: Agent 连续显式调用
+
+- **WHEN** Agent 在同一 turn 或不同 turn 中显式多次调用 `sticker_send`
+- **THEN** 每次调用 SHALL 独立执行候选选择、一次发送和一次统计处理
+- **AND** 系统 SHALL 不因 turn 边界拒绝后续显式调用
+
+### Requirement: 工具结果和诊断必须使用固定安全分类
+
+Tool 成功时 MUST 返回至少 `status=sent`、选定的不透明 `sticker_id` 和 Milky 返回的
+`message_id`；无候选时返回 `status=no_match`。缺少可信上下文、参数非法、文件缺失、存储
+失败、Milky 协议拒绝、HTTP 错误、malformed 和 transport unknown MUST 使用固定机器可读
+分类，不得把 HTTP 200、Action 调用完成或统计更新成功单独描述为用户已看到消息。日志和
+异常 MUST 不包含 token、Authorization、完整参数、媒体 URL、本地路径、图片 bytes、完整远端
+响应或自由文本正文。
+
+#### Scenario: 成功结果
+
+- **WHEN** Milky 返回可确认的成功消息序列
+- **THEN** Tool SHALL 返回 `status=sent`、不透明 `sticker_id` 和 `message_id`
+- **AND** SHALL 不把原始响应 body 写入日志
+
+#### Scenario: 本地或远端失败
+
+- **WHEN** 参数、上下文、匹配、文件、存储或 Milky Action 任一边界失败
+- **THEN** Tool SHALL 返回对应固定分类
+- **AND** SHALL 不泄露路径、URL、凭证、完整参数、图片内容或底层异常正文
