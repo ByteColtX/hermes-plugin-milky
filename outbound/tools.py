@@ -674,7 +674,7 @@ SET_GROUP_MEMBER_SPECIAL_TITLE_SCHEMA = {
 
 STICKER_SEND_SCHEMA = {
     "name": "sticker_send",
-    "description": "根据当前 QQ 对话意图发送一张贴纸",
+    "description": "发送一张贴纸/sticker/meme",
     "parameters": {
         "type": "object",
         "properties": {
@@ -682,7 +682,7 @@ STICKER_SEND_SCHEMA = {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 64,
-                "description": "简短的贴纸使用意图",
+                "description": "优先填写一个简短的贴纸意图，如：绷不住、哈哈、笑死",
             },
             "emotion": {
                 "type": "string",
@@ -700,7 +700,7 @@ STICKER_SEND_SCHEMA = {
                     "mixed",
                     "unknown",
                 ],
-                "description": "贴纸情绪筛选条件",
+                "description": "可选的严格情绪筛选；只有确定目标情绪时填写，不确定时省略",
             },
             "tags": {
                 "type": "array",
