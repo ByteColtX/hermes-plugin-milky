@@ -151,3 +151,23 @@ client 时 MUST 在网络访问前返回 `unsupported`，不得临时创建旁�
 - **WHEN** 命令注册、请求或响应解析失败
 - **THEN** 日志和用户可见结果 SHALL 只保留命令名、错误分类和必要的安全 reason
 - **AND** SHALL 不包含 token、Authorization header、真实 QQ/群 ID、媒体路径、完整响应或完整异常
+
+### Requirement: `/milky sticker` 只能通过显式命令维护本地贴纸库
+
+插件 MUST 在同一 `/milky` command registry 中支持 `sticker add [--dry-run]`、`list [--limit]`、
+`edit <sticker_id>`、`reanalyze <sticker_id>`、`del <sticker_id>`、`cleanup [--dry-run]` 和 `reindex`。
+贴纸命令 SHALL 只使用 handler 收到的 `raw_args`，不得推断 friend/group、操作者或目标授权；贴纸
+维护 SHALL 不调用 Milky Action、不创建 Agent Tool、不进入主 Agent transcript、Will 或普通消息 handoff。
+
+#### Scenario: 显式 sticker add
+
+- **WHEN** command handler 收到 `sticker add` 或 `sticker add --dry-run`
+- **THEN** 系统 SHALL 在固定 plugin-data inbox 中校验、去重并最多分析 50 张唯一候选
+- **AND** 视觉调用 SHALL 最多并发 10 路，true 候选正式模式进入 library，false 候选进入 `junk/`
+- **AND** dry-run SHALL 不移动文件或写入数据库
+
+#### Scenario: 贴纸命令错误隔离
+
+- **WHEN** sticker 参数非法、视觉结果非法、存储失败或条目不存在
+- **THEN** handler SHALL 返回固定安全分类和受限计数
+- **AND** SHALL 不返回路径、URL、图片 bytes、完整参数、凭证或异常正文

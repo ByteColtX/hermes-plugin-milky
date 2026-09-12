@@ -25,6 +25,7 @@ hermes-plugin-milky/
 ├── __init__.py                 # 唯一公开入口：register(ctx)
 ├── adapter.py                  # BasePlatformAdapter 生命周期和边界委托
 ├── slash_commands.py           # /milky 命令
+├── stickers/                   # 显式人工贴纸维护、独立 store 和图片校验
 ├── config/                     # 启动配置、URL、Will policy
 ├── milky/                      # DTO、解析、HTTP Action、SSE、资源和日志
 ├── inbound/                    # normalizer、canonical、pipeline、mapper、系统事件
@@ -102,6 +103,7 @@ SSE /event
 | `gates/` / `will/` | 固定 Gate 顺序、`wait`/`trigger`、willingness 和 reply cost |
 | `session/` / `state/` | chat 状态、buffer、去重和 MuteTracker |
 | `outbound/` | 目标、segment、拆分、附件、上传和固定工具 |
+| `stickers/` | 固定目录图片校验、独立 SQLite store 和显式人工维护命令 |
 
 依赖方向：
 
@@ -152,6 +154,26 @@ connect
 `disconnect()` 必须幂等地取消 SSE consumer、detached pipeline、定时器和状态刷新，关闭 HTTP/SSE 资源，并解除 sender/command 生命周期绑定。
 
 插件只有 `/milky` 命令，在 Gate 通过后、Will 之前分流，不进入 wait buffer、资源补全或普通 Agent 正文；无参数时通过已连接 client 调用 `get_impl_info`，将已知实现字段格式化为可读摘要。未连接、参数错误、rejected、malformed、HTTP 错误和 transport unknown 只返回安全分类，不临时创建 client。
+
+显式 `/milky sticker` 命令由同一个 command service 处理。贴纸 store 只在有效维护命令中懒加载，使用
+Hermes `plugin_data_dir("hermes-plugin-milky")` 和独立 `plugin_db(..., filename="stickers.db")`；注册、
+普通连接、SSE、Will 和 Agent 输出不创建贴纸目录、数据库、视觉任务或旁路 client。固定目录为
+`stickers/inbox/`、`stickers/library/` 和 `stickers/junk/`。`sticker_items` 保存视觉基线、当前值、
+字段级 source、时间戳和使用统计，`sticker_files` 只保存 library 技术索引；两张表位于独立数据库，
+不触及 Hermes session DB。
+
+`add` 先递归校验图片、流式计算 SHA-256 并去重，再按稳定顺序最多提交 50 张唯一候选，视觉调用最多并发
+10 路。视觉结果必须先通过外层 JSON envelope，再通过固定内层 schema：单选 `emotion`、2–5 个中文
+`tags`、20 字以内中文 `description` 和严格布尔 `is_sticker`。true 原文件原子移动到 content-addressed
+library 并逐条提交，false 原文件原子移动到 junk，失败留在 inbox；dry-run 不移动、删除或写入。
+`edit` 的 set/clear 是字段级事务更新，`reanalyze` 只替换视觉基线并让 vision 字段跟随，人工字段保持。
+`del` 只接受可见不透明 ID；提交后由 cleanup 回收无引用文件。`cleanup` 保留缺失引用元数据且不触及
+junk，`reindex` 只扫描 library 并原子重建 `sticker_files`，不创建 `sticker_id`。
+
+当前 Hermes command handler 只提供 `raw_args`，因此本 change 不声明 Milky friend/group 或 operator 授权，
+不读取或新增 `MILKY_STICKER_OPERATOR_IDS` 等配置。贴纸失败压缩为 `invalid_input`、`rejected`、
+`duplicate`、`junk`、`visual_unavailable`、`missing_file`、`storage_error`、`unsupported` 等安全分类，
+不得泄露 token、Authorization、路径、URL、图片 bytes、完整参数或异常正文。
 
 ## 6. 入站消息契约
 

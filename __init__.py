@@ -112,9 +112,10 @@ def register(ctx: Any) -> None:
 
     from .config import load_config
     from .slash_commands import SlashCommandService
+    from .stickers import StickerMaintenanceService
 
     milky_config = load_config()
-    command_service = SlashCommandService()
+    command_service = SlashCommandService(StickerMaintenanceService(plugin_context=ctx))
     _register_bundled_skill(ctx)
     register_tools(ctx)
     register_command = getattr(ctx, "register_command", None)

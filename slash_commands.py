@@ -8,6 +8,7 @@ import json
 from threading import RLock
 
 from milky.client import ActionError
+from stickers.maintenance import StickerMaintenanceService
 
 _SAFE_FAILURES = frozenset(
     {
@@ -58,9 +59,10 @@ def format_impl_info(raw_response: str) -> str:
 class SlashCommandService:
     """提供固定的 ``/milky`` 命令并绑定活动 Milky client。"""
 
-    def __init__(self) -> None:
+    def __init__(self, sticker_service: StickerMaintenanceService | None = None) -> None:
         self._clients: list[object] = []
         self._lock = RLock()
+        self._sticker_service = sticker_service or StickerMaintenanceService()
 
     @property
     def active_client_count(self) -> int:
@@ -85,9 +87,14 @@ class SlashCommandService:
             self._clients = [candidate for candidate in self._clients if candidate is not client]
 
     async def handle(self, raw_args: str) -> str:
-        """处理无参数 ``/milky``，并只返回安全分类或格式化成功信息。"""
+        """处理 ``/milky``，并只返回安全分类或格式化成功信息。"""
 
-        if not isinstance(raw_args, str) or raw_args.strip():
+        if not isinstance(raw_args, str):
+            return "invalid_input: usage: /milky"
+        stripped = raw_args.strip()
+        if stripped:
+            if stripped.split(maxsplit=1)[0].lower() == "sticker":
+                return await self._sticker_service.handle(raw_args)
             return "invalid_input: usage: /milky"
         client = self._unique_client()
         if client is None:
@@ -126,6 +133,13 @@ class SlashCommandService:
             else "malformed"
         )
         return f"{safe}: get_impl_info failed"
+
+    def close(self) -> None:
+        """关闭命令 service 当前仍持有的贴纸操作资源。"""
+
+        close = getattr(self._sticker_service, "close", None)
+        if callable(close):
+            close()
 
 
 __all__ = ["SlashCommandService", "format_impl_info"]

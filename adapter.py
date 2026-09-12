@@ -349,6 +349,7 @@ class MilkyAdapter(BasePlatformAdapter):
             await self._close_component(self._outbound, "outbound_close_failed")
             await self._close_component(self._mute_tracker, "mute_tracker_close_failed")
             self._unbind_command_service()
+            await self._close_component(self._slash_command_service, "sticker_service_close_failed")
             await self._close_component(self._client, "client_close_failed")
             self._unbind_sender()
             self._mark_disconnected()

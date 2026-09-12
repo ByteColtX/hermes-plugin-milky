@@ -145,3 +145,22 @@ Agent 出站 `at`、`reply`、`face` 和本地贴纸图片的 CQ-compatible 语�
 - **WHEN** Agent 读取 Milky QQ CQ reference skill 中的能力说明
 - **THEN** 工具可用性和参数校验 SHALL 仍以实际注册的 ToolSpec 为准
 - **AND** skill SHALL 不通过文字说明扩大可调用的 Milky Action 范围，也不得把 text fallback 误称为原生 CQ 执行
+
+### Requirement: 人工贴纸 store 必须懒加载并由生命周期拥有
+
+贴纸维护 SHALL 使用独立的 `stickers.db` 和 plugin-data 下固定的 `stickers/inbox/`、
+`stickers/library/`、`stickers/junk/`。注册、普通连接和 SSE 消费阶段 MUST 不创建贴纸目录、打开
+贴纸数据库、扫描图片、调用视觉服务或创建脱离命令的后台任务；有效维护命令结束后 SHALL 关闭本次
+操作的 store，disconnect/reload SHALL 保留已提交条目和文件。
+
+#### Scenario: 注册和连接无贴纸副作用
+
+- **WHEN** Hermes 注册插件或 Milky adapter 完成普通连接
+- **THEN** 贴纸目录和数据库 SHALL 保持懒加载
+- **AND** 普通消息、系统事件和 Will SHALL 不触发 add、reanalyze 或其他贴纸操作
+
+#### Scenario: disconnect 保留贴纸数据
+
+- **WHEN** 已提交贴纸后 adapter disconnect 或插件 reload
+- **THEN** 本次打开的贴纸资源 SHALL 被关闭
+- **AND** 下一次显式维护命令 SHALL 能读取已提交的元数据和 library 文件

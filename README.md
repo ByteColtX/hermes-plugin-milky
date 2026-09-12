@@ -63,6 +63,8 @@ change 和已归档 change 的测试证据见 [openspec/](openspec/)。
 - **会话安全边界：** 支持 chat 白名单、禁言状态同步、消息去重和有界历史缓冲。
 - **QQ 会话介绍：** 在支持 system prompt section 的 Hermes 宿主中，首次 Milky friend/group
   session prompt 可看到当前会话的最小资料；介绍来自入站消息快照，不实时查询 Milky。
+- **人工贴纸维护：** 通过显式 `/milky sticker` 命令维护插件持久目录中的图片库；普通消息、入站图片、
+  关键词、Will 和 Agent 输出不会自动收集贴纸。
 
 运行环境：Python 3.13+、Hermes Gateway、Milky v1.3 服务和 `httpx`。Hermes 负责 Agent
 队列及入站资源的下载、缓存和权限边界；本插件负责 Milky 适配和已声明的 QQ 能力。
@@ -671,6 +673,35 @@ CQ image 仅用于本地 `file://` URI 的 sticker，例如：
 纯文本 `/...` 消息会在 canonical、去重和 Gate 之后分流，不进入 Will 历史或普通 Agent 正文。
 合法命令交给 Hermes 既有命令分发；插件自身提供无参数 `/milky`，用于以可读摘要返回 Milky 实现信息。
 
+`/milky sticker` 只处理显式人工维护参数，固定命令为：
+
+```text
+/milky sticker add [--dry-run]
+/milky sticker list [--limit 1..100]
+/milky sticker edit <sticker_id> [--emotion=<enum>] [--tags=<tag1>,<tag2>,...] [--description=<text>] [--clear=<field>[,<field>...]]
+/milky sticker reanalyze <sticker_id>
+/milky sticker del <sticker_id>
+/milky sticker cleanup [--dry-run]
+/milky sticker reindex
+```
+
+首次有效维护命令才会在 Hermes plugin-data 下创建 `stickers/inbox/`、`stickers/library/`、
+`stickers/junk/` 和独立 `stickers.db`。`add` 递归扫描 inbox，只接受 PNG、JPEG、GIF、WebP，单文件
+上限为 `10 MiB`，按流式 SHA-256 去重；视觉辅助只在显式 `add`、`add --dry-run` 或 `reanalyze`
+中调用。每次 add 最多处理 50 张唯一候选，同时最多 10 个视觉调用；其余候选留在 inbox 并报告
+`batch_deferred`。合法 `is_sticker=true` 原文件原子移动到 library，`false` 原文件移动到 junk，
+视觉失败或结构非法留在 inbox。dry-run 只校验、去重、分析和预览，不移动文件或写入数据库。
+
+库条目保存 `detected_*` 视觉基线、当前生效 `emotion`/`tags`/`description`、字段级 `vision`/`manual`
+来源、`created_at`/`updated_at`/`detected_at`、`use_count` 和 UTC `last_used_at`。`edit` 只更新指定
+字段；`--clear` 恢复对应视觉基线。`reanalyze` 只刷新视觉基线，人工字段保持不变；返回 `false` 时
+报告 `not_sticker` 并保留原条目。`list` 输出受限摘要，不输出路径、URL、原文件名或图片 bytes。
+`cleanup` 不扫描或删除 junk；`reindex` 只重建 library 的 `sticker_files` 技术索引，不创建贴纸条目。
+
+当前 command handler 只收到 `raw_args`，本 change 不推断 Milky friend/group 或操作者身份，也不增加
+`MILKY_STICKER_OPERATOR_IDS` 等插件授权配置。贴纸维护不创建旁路 Milky client、Agent Tool、主 Agent
+transcript、普通消息 handoff 或脱离命令生命周期的后台视觉任务。
+
 ### QQ ToolSpec
 
 插件固定提供 25 个 QQ ToolSpec，覆盖：
@@ -707,7 +738,8 @@ malformed 和 unsupported 会保持明确失败分类。缺少消息序号时不
 | `__init__.py::register_tools(ctx)` | 委托 `outbound.tools` 注册固定 ToolSpec；注册阶段不联网。 |
 | `MilkyAdapter` | 管理连接、停止、入站交接和出站委托。 |
 | `MilkyOutboundSender` | 校验 `group:/dm:` 目标，格式化消息并调用 Milky Action/upload。 |
-| `SlashCommandService` | 管理活动 Milky client，处理 `/milky`。 |
+| `SlashCommandService` | 管理活动 Milky client，处理 `/milky` 和显式贴纸维护命令。 |
+| `stickers/` | 懒加载独立 `stickers.db`，校验 inbox 图片，执行 add/list/edit/reanalyze/del/cleanup/reindex。 |
 
 支持 `register_system_prompt_section` 的 Hermes 宿主会在 `after_memory` 登记
 `hermes-plugin-milky.qq-platform-guidance`，并在连接完成后使用已确认的 QQ UID 和昵称渲染
