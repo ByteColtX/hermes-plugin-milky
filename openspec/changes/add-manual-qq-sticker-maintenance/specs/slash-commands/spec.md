@@ -8,8 +8,8 @@ HTTP POST、Bearer 认证和 JSON `{}` body。成功时，命令回复正文 MUS
 `data.impl_name`、`data.impl_version`、`data.milky_version`、`data.qq_protocol_type` 和
 `data.qq_protocol_version`；不得展示完整 JSON envelope 或未知扩展字段。协议失败、malformed
 或传输未知时不适用成功摘要交付。`/milky sticker` 后的固定子命令 SHALL 在同一 Hermes
-插件命令通道中处理：`add [--dry-run]`、`list [--limit <n>]`、`edit <sticker_id> [--emotion=<enum>] [--tags=<tag1>,<tag2>,...] [--description=<text>] [--clear=<field>[,<field>...]]`、`del <sticker_id>`、
-`cleanup [--dry-run]` 和 `reindex` SHALL 遵守贴纸维护规范；只有显式 `add` 路径可以调用
+插件命令通道中处理：`add [--dry-run]`、`list [--limit <n>]`、`edit <sticker_id> [--emotion=<enum>] [--tags=<tag1>,<tag2>,...] [--description=<text>] [--clear=<field>[,<field>...]]`、`reanalyze <sticker_id>`、`del <sticker_id>`、
+`cleanup [--dry-run]` 和 `reindex` SHALL 遵守贴纸维护规范；只有显式 `add` 或 `reanalyze` 路径可以调用
 Hermes core 的辅助视觉能力，该路径不得调用 `get_impl_info` 或任意 Milky Action。
 
 #### Scenario: 成功获取协议端信息
@@ -28,18 +28,20 @@ Hermes core 的辅助视觉能力，该路径不得调用 `get_impl_info` 或任
 
 - **WHEN** 插件 command handler 收到 `sticker add` 参数
 - **THEN** 系统 SHALL 扫描固定持久目录的 inbox，先完成文件校验和 hash 去重，再按稳定顺序最多将 50 张唯一候选放入命令级视觉队列，同时最多执行 10 个视觉调用
-- **AND** SHALL 解析每次视觉调用的外层 envelope，并仅将 `success=true` 且内层 `analysis` 通过 JSON/schema 校验的图片立即写入库；回执 SHALL 返回创建、重复、拒绝、`visual_unavailable` 和其他固定失败摘要
+- **AND** SHALL 解析每次视觉调用的外层 envelope，并仅将 `success=true` 且内层 `analysis` 通过 JSON/schema 校验且 `is_sticker=true` 的图片从 inbox 移动到 library；合法 `is_sticker=false` 的图片 SHALL 移动到 `junk/` 且不得入库；回执 SHALL 返回创建、重复、`junk`、拒绝、`visual_unavailable` 和其他固定失败摘要
 - **AND** 超出 50 张批次上限的候选 SHALL 返回 `batch_deferred` 并保留在 inbox
-- **AND** 视觉分析失败的候选 SHALL 保留在 inbox，供下一次 add 增量重试
+- **AND** 视觉分析失败、envelope 非法或内层 schema 非法的候选 SHALL 保留在 inbox，供下一次 add 增量重试
+- **AND** 成功处理的 `is_sticker=true` 或 `is_sticker=false` 原文件 SHALL 不再留在 inbox
 - **AND** SHALL 不进入 Will、wait buffer、普通 Agent turn、主 Agent transcript 或 Milky Action
 
 #### Scenario: sticker add dry-run 只预览视觉结果
 
 - **WHEN** 插件 command handler 收到 `sticker add --dry-run` 参数
 - **THEN** 系统 SHALL 执行与正式 add 相同的文件校验、hash 去重、50 张批次上限和最多 10 个并发的命令级视觉辅助
-- **AND** SHALL 返回候选的主情绪、中文检索标签和描述摘要；视觉元数据不决定人工筛选，但外层 envelope 失败、内层 `analysis` 非法或字段非法的候选不进入库
+- **AND** SHALL 返回候选的主情绪、中文检索标签、描述摘要和 `is_sticker` 判定；`true` 候选 SHALL 标记为 `would_add`，`false` 候选 SHALL 标记为 `would_move_to_junk`
+- **AND** 视觉元数据不决定 `true` 候选的情绪修正，但外层 envelope 失败、内层 `analysis` 非法或字段非法的候选不移动
 - **AND** 超出 50 张批次上限的候选 SHALL 返回 `batch_deferred`
-- **AND** SHALL 不写入贴纸文件、数据库记录或可见条目
+- **AND** SHALL 不移动、删除或写入贴纸文件、数据库记录或可见条目
 
 #### Scenario: sticker edit 手动修正视觉元数据
 
@@ -48,6 +50,15 @@ Hermes core 的辅助视觉能力，该路径不得调用 `get_impl_info` 或任
 - **AND** 设置字段 SHALL 将对应字段来源标记为 `manual`，`--clear=<field>` SHALL 恢复对应视觉基线并将该字段来源改回 `vision`
 - **AND** 行级 `source` SHALL 派生为任一字段为 `manual` 时的 `manual`，并可通过 `field_sources` 查看具体字段来源
 - **AND** SHALL 不修改图片文件、content hash、技术索引或 sticker ID
+
+#### Scenario: sticker reanalyze 重新生成视觉基线
+
+- **WHEN** 插件 command handler 收到 `sticker reanalyze <sticker_id>` 参数
+- **THEN** 系统 SHALL 使用同一固定视觉 prompt 分析对应 library 文件
+- **AND** 合法 `is_sticker=true` 时 SHALL 更新视觉基线，并只让来源为 `vision` 的当前字段跟随新结果
+- **AND** 来源为 `manual` 的字段、图片文件、content hash、技术索引和 sticker ID SHALL 保持不变
+- **AND** 合法 `is_sticker=false` 时 SHALL 返回 `not_sticker` 并保留原条目，不移动到 `junk/`
+- **AND** 视觉失败或结构非法时 SHALL 返回 `visual_unavailable` 并保留原条目
 
 #### Scenario: `/milky sticker list` 只读列举
 

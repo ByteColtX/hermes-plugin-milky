@@ -22,7 +22,7 @@
 
 ### Requirement: add 必须只导入可验证的图片文件并保留原始输入
 
-`/milky sticker add` SHALL 递归扫描固定 inbox 下的 regular file，且 SHALL 只接受已确认属于 PNG、JPEG、GIF 或 WebP 的非空图片。文件大小 SHALL 不超过 `10 MiB`；符号链接、目录、特殊文件、扩展名与内容不一致、损坏、不可读或超限文件 SHALL 被分类为 `rejected` 或对应的固定失败分类。确定性文件校验和 content hash 去重完成后，add SHALL 对尚未重复的候选调用 Hermes core 的辅助视觉能力生成元数据建议；视觉结果的具体分类 SHALL NOT 决定通过确定性校验的图片是否入库，但视觉调用成功 SHALL 是本次入库的前置条件。视觉调用失败的候选 SHALL 保留在 inbox，供后续命令增量重试。候选内容的来源和基础筛选由操作者负责，普通消息不得触发该流程。
+`/milky sticker add` SHALL 递归扫描固定 inbox 下的 regular file，且 SHALL 只接受已确认属于 PNG、JPEG、GIF 或 WebP 的非空图片。文件大小 SHALL 不超过 `10 MiB`；符号链接、目录、特殊文件、扩展名与内容不一致、损坏、不可读或超限文件 SHALL 被分类为 `rejected` 或对应的固定失败分类。确定性文件校验和 content hash 去重完成后，add SHALL 对尚未重复的候选调用 Hermes core 的辅助视觉能力生成元数据建议和 `is_sticker` 判定；只有完整结果结构合法且 `is_sticker=true` 的候选可以移动到 library 并创建可见条目，完整结果结构合法且 `is_sticker=false` 的候选 SHALL 移动到 `junk/` 且不得入库。视觉调用失败或结果结构非法的候选 SHALL 保留在 inbox，供后续命令增量重试。候选内容的来源和基础筛选由操作者负责，普通消息不得触发该流程。
 
 #### Scenario: 导入受支持的静态图片和 GIF
 
@@ -43,50 +43,66 @@
 - **AND** SHALL 只对剩余的唯一候选执行视觉分析
 - **AND** 每张候选图片 SHALL 最多触发一次视觉分析调用
 
-#### Scenario: 视觉分析结果可用
+#### Scenario: 视觉分析结果判定为贴纸
 
-- **WHEN** 唯一候选的视觉结果可解析，且 `emotion`、`tags` 与 `description` 符合固定枚举和长度边界
-- **THEN** 正式 add SHALL 将该候选的图片和视觉元数据一起进入原子文件和元数据提交
+- **WHEN** 唯一候选的视觉结果可解析，且 `emotion`、`tags`、`description` 与 `is_sticker` 符合固定 schema，`is_sticker` 为 `true`
+- **THEN** 正式 add SHALL 将该候选的原文件从 inbox 原子移动到 library，并将图片和视觉元数据一起提交
 - **AND** 可见条目 SHALL 保存受限的 `emotion`、`tags` 和 `description` 元数据
 
-#### Scenario: 视觉标签与人工判断不一致
+#### Scenario: 视觉分析结果判定为非贴纸
 
-- **WHEN** 视觉结果中的 `emotion`、`tags` 或 `description` 与操作者对图片的判断不一致
+- **WHEN** 唯一候选的视觉结果可解析，且 `emotion`、`tags`、`description` 与 `is_sticker` 符合固定 schema，`is_sticker` 为 `false`
+- **THEN** 正式 add SHALL 将该候选的原文件从 inbox 原子移动到 `junk/`
+- **AND** 系统 SHALL 返回或统计 `junk`
+- **AND** 系统 SHALL 不创建 library 文件、`sticker_entries` 或可见 `sticker_id`
+- **AND** 后续 add SHALL 不自动扫描 `junk/`，操作者可直接删除文件，或手动移回 inbox 后重新执行 add
+
+#### Scenario: 贴纸视觉元数据与人工判断不一致
+
+- **WHEN** `is_sticker=true` 且视觉结果中的 `emotion`、`tags` 或 `description` 与操作者对图片的判断不一致
 - **THEN** 系统 SHALL 将该结果作为视觉元数据建议保存或报告
-- **AND** 只要图片通过确定性文件校验，正式 add SHALL 仍为其创建库文件和可见条目
-- **AND** SHALL 保留 inbox 原文件，供操作者按需修正元数据
+- **AND** 正式 add SHALL 仍将其原文件移动到 library 并创建可见条目
+- **AND** 操作者 SHALL 能通过 `edit` 修正入库后的元数据
 
 #### Scenario: 视觉分析不可用或结果不可信
 
 - **WHEN** Hermes core 视觉能力不可用、超时、返回错误、返回非 JSON 对象或字段不符合固定枚举/长度边界
 - **THEN** 系统 SHALL 报告 `visual_unavailable` 或等价的固定状态
-- **AND** SHALL 不为该图片创建库文件或可见条目
+- **AND** SHALL 不移动该图片、不创建库文件或可见条目
 - **AND** SHALL 保留 inbox 原文件，下一次 add SHALL 能重新尝试该图片
 - **AND** SHALL 不向用户或日志输出原始异常、完整模型回复、路径或图片内容
 
-#### Scenario: add 不删除人工投放文件
+#### Scenario: add 按视觉结果移动人工投放文件
 
-- **WHEN** add 成功处理、跳过重复或拒绝 inbox 文件
-- **THEN** 系统 SHALL 保留该 inbox 原文件
-- **AND** SHALL 不把“导入成功”解释为可以删除操作者的源文件
+- **WHEN** add 对 inbox 文件得到合法的 `is_sticker=true` 或 `is_sticker=false` 结果
+- **THEN** `is_sticker=true` 的原文件 SHALL 移动到 library，`is_sticker=false` 的原文件 SHALL 移动到 `junk/`
+- **AND** 成功处理的原文件 SHALL 不再留在 inbox
+
+#### Scenario: 移动失败保留源文件
+
+- **WHEN** 合法视觉结果已经得到，但移动到 library 或 `junk/` 失败
+- **THEN** 系统 SHALL 报告 `storage_error`
+- **AND** SHALL 不创建可见条目
+- **AND** 源文件 SHALL 保留在 inbox，供下一次命令处理
 
 ### Requirement: 视觉辅助结果必须结构化、有界且与主 Agent 隔离
 
-贴纸维护的视觉辅助 SHALL 只在到达插件 command handler 的显式 `sticker add` 或 `add --dry-run` 参数中运行，并 SHALL 在确定性校验和去重之后按稳定顺序最多纳入 `50` 张唯一候选；第 `51` 张及以后 SHALL 报告 `batch_deferred`、保留在 inbox 且不得调用视觉。当前批次同时进行中的视觉调用 SHALL 不超过 `10` 个，任一调用完成后 SHALL 立即从当前批次队列补入下一候选。正式 add 中每个视觉结果成功的候选 SHALL 独立完成原子入库，不得等待整批候选完成；正常完成时命令 SHALL 等待当前批次候选进入成功提交、重复、固定失败或 `batch_deferred` 状态后返回。宿主超时或取消时，系统 SHALL 保证已提交条目保持可见、未提交候选保持在 inbox；本 change 不承诺可靠回收已由 Hermes core 发出的底层视觉调用。`vision_analyze_tool` 返回的字符串 SHALL 先解析为外层 JSON envelope；只有外层 `success=true`、读取 `analysis`、去除精确匹配的允许 scale note 前缀，并将剩余 `analysis` 严格解析为单个 JSON 对象后，才可校验其中的 `emotion`、`tags` 和 `description`。视觉结果 SHALL 是单个内层 JSON 对象，包含固定枚举的单选 `emotion`、2–5 个中文 `tags` 和 20 个字符以内的中文 `description`；固定枚举、数量、语言或长度约束不满足时 SHALL 报告 `visual_unavailable`，不得创建库文件或可见条目，候选 SHALL 保留在 inbox 供下一次命令重试。视觉字段只作为已接收条目的元数据建议，不得据此阻止成功完成视觉分析的图片入库。视觉辅助 MUST NOT 创建 Agent tool call、写入主 Agent transcript、启动 handoff 或触发普通消息流程；插件不主动创建脱离 handler 的持久化后台队列。操作者 SHALL 能通过显式 `edit` 命令修正已入库的视觉元数据。
+贴纸维护的视觉辅助 SHALL 只在到达插件 command handler 的显式 `sticker add`、`add --dry-run` 或 `reanalyze` 参数中运行；`add` SHALL 在确定性校验和去重之后按稳定顺序最多纳入 `50` 张唯一候选，第 `51` 张及以后 SHALL 报告 `batch_deferred`、保留在 inbox 且不得调用视觉。当前批次同时进行中的视觉调用 SHALL 不超过 `10` 个，任一调用完成后 SHALL 立即从当前批次队列补入下一候选。正式 add 中每个视觉结果成功的候选 SHALL 独立完成原子移动和元数据提交，不得等待整批候选完成；`is_sticker=true` 的候选 SHALL 移动到 library 并创建可见条目，`is_sticker=false` 的候选 SHALL 移动到 `junk/` 且不得入库；正常完成时命令 SHALL 等待当前批次候选进入成功提交、`junk`、重复、固定失败或 `batch_deferred` 状态后返回。宿主超时或取消时，系统 SHALL 保证已提交条目保持可见、尚未完成移动或提交的候选保持在 inbox；本 change 不承诺可靠回收已由 Hermes core 发出的底层视觉调用。`vision_analyze_tool` 返回的字符串 SHALL 先解析为外层 JSON envelope；只有外层 `success=true`、读取 `analysis`、去除精确匹配的允许 scale note 前缀，并将剩余 `analysis` 严格解析为单个 JSON 对象后，才可校验其中的 `emotion`、`tags`、`description` 和 `is_sticker`。视觉结果 SHALL 是单个内层 JSON 对象，包含固定枚举的单选 `emotion`、2–5 个中文 `tags`、20 个字符以内的中文 `description` 和严格布尔 `is_sticker`；固定枚举、数量、语言、长度或布尔类型约束不满足时 SHALL 报告 `visual_unavailable`，add 候选不得移动文件、创建库文件或可见条目，且 SHALL 保留在 inbox 供下一次命令重试。情绪、标签和描述只作为已接收条目的元数据建议，`is_sticker` 是新增候选的唯一语义入库门槛。视觉辅助 MUST NOT 创建 Agent tool call、写入主 Agent transcript、启动 handoff 或触发普通消息流程；插件不主动创建脱离 handler 的持久化后台队列。操作者 SHALL 能通过显式 `edit` 命令修正已入库的视觉元数据，并通过 `reanalyze` 重新生成视觉基线。
 
 #### Scenario: dry-run 先给出视觉预览
 
 - **WHEN** 操作者执行 `/milky sticker add --dry-run`
 - **THEN** 系统 SHALL 完成与正式 add 相同的文件校验、去重和视觉分析
-- **AND** SHALL 返回每个已分析候选的主情绪、中文检索标签和描述摘要
-- **AND** SHALL 不写入贴纸文件、数据库记录或可见条目
+- **AND** SHALL 返回每个已分析候选的主情绪、中文检索标签、描述摘要和 `is_sticker` 判定
+- **AND** `is_sticker=true` 的候选 SHALL 标记为 `would_add`，`is_sticker=false` 的候选 SHALL 标记为 `would_move_to_junk`
+- **AND** SHALL 不移动、删除或写入任何贴纸文件、数据库记录或可见条目
 
 #### Scenario: 解析视觉外层 envelope 和内层 analysis
 
-- **WHEN** `vision_analyze_tool` 返回 JSON 字符串，外层对象为 `{"success": true, "analysis": "...", "scale_note": "..."}`，且 `analysis` 包含合法的贴纸元数据 JSON
+- **WHEN** `vision_analyze_tool` 返回 JSON 字符串，外层对象为 `{"success": true, "analysis": "...", "scale_note": "..."}`，且 `analysis` 包含带 `is_sticker` 布尔字段的合法贴纸元数据 JSON
 - **THEN** 系统 SHALL 先解析外层对象并检查 `success=true`
 - **AND** SHALL 只去除与 `scale_note` 精确匹配的 core 前缀，再解析 `analysis` 内层 JSON
-- **AND** SHALL 仅在内层 JSON 为单个对象且字段符合 schema 时生成贴纸条目
+- **AND** SHALL 仅在内层 JSON 为单个对象且字段符合 schema 时按 `is_sticker` 决定移动到 library 或 `junk/`
 
 #### Scenario: 失败 envelope 或空/非法 analysis 不入库
 
@@ -120,16 +136,17 @@
 #### Scenario: 单个候选完成后立即入库
 
 - **WHEN** 正式 add 中某个候选的视觉结果成功，且其他候选仍在视觉处理中或排队
-- **THEN** 系统 SHALL 立即为该候选完成独立的原子文件和元数据提交
-- **AND** 该候选 SHALL 在其他候选完成前成为可见条目
+- **THEN** 若 `is_sticker=true`，系统 SHALL 立即为该候选完成独立的原子移动和元数据提交
+- **AND** 若 `is_sticker=false`，系统 SHALL 立即将该候选移动到 `junk/` 且不创建可见条目
+- **AND** `is_sticker=true` 的候选 SHALL 在其他候选完成前成为可见条目
 - **AND** 已释放的视觉并发槽位 SHALL 继续处理队列中的下一候选
 
 #### Scenario: 命令取消或宿主超时时保留未提交候选
 
 - **WHEN** 操作者取消 add 或宿主在视觉调用完成前超时，且仍有候选正在视觉处理或排队
-- **THEN** 系统 SHALL 不为未提交候选创建库文件或可见条目
+- **THEN** 系统 SHALL 不为未完成移动或提交的候选创建库文件或可见条目
 - **AND** 已完成原子提交的条目 SHALL 保持可见
-- **AND** 正在处理或排队但尚未提交的候选 SHALL 保留在 inbox
+- **AND** 正在处理或排队但尚未移动或提交的候选 SHALL 保留在 inbox
 - **AND** 本 change SHALL 不把 Hermes core 对已发出底层调用的回收能力声明为可靠保证
 
 #### Scenario: 单个候选失败不阻塞队列
@@ -146,6 +163,7 @@
 - **AND** `emotion` SHALL 只允许一个值，不得返回数组或多个主情绪
 - **AND** `tags` SHALL 包含 2 至 5 个不重复的中文标签，每个不超过 16 个字符，且可以与 `emotion` 的中文含义重叠
 - **AND** `description` SHALL 为不超过 20 个字符的中文内容简述，图片含文字时 SHALL 概括文字含义而非抄录长文本
+- **AND** `is_sticker` SHALL 为 JSON 原生布尔值 `true` 或 `false`，不得接受字符串、数字或缺失字段
 
 #### Scenario: 主 Agent 上下文保持不变
 
@@ -189,6 +207,40 @@
 - **WHEN** 某条贴纸的一个或多个字段来源为 `manual`，且 inbox 中再次出现相同 content hash
 - **THEN** add SHALL 返回 `duplicate`
 - **AND** SHALL 不重新调用视觉能力，也 SHALL 不覆盖视觉基线、生效值或字段来源
+- **AND** 在确认 library 中已有完整同 hash 文件后，SHALL 移除 inbox 中的冗余副本
+
+### Requirement: reanalyze 必须支持已入库贴纸的重新视觉打标
+
+`/milky sticker reanalyze <sticker_id>` SHALL 只接受当前可见的 `sticker_id`，读取该条目的 library 文件，并使用与 add 相同的固定 prompt、视觉 envelope 解析和内层 schema 校验。只有合法且 `is_sticker=true` 的结果 SHALL 更新视觉基线；当前字段来源为 `vision` 的 `emotion`、`tags`、`description` SHALL 跟随新基线更新，来源为 `manual` 的当前字段 SHALL 保持不变。图片 bytes、content hash、library 文件、技术索引和 `sticker_id` SHALL 保持不变。视觉失败、结果非法或合法结果的 `is_sticker=false` SHALL 保留原条目的全部数据，并分别报告 `visual_unavailable` 或 `not_sticker`；`reanalyze` SHALL 不把已入库文件移动到 `junk/`。
+
+#### Scenario: reanalyze 成功更新视觉字段
+
+- **WHEN** 操作者执行 `/milky sticker reanalyze <sticker_id>`，视觉返回合法对象且 `is_sticker=true`
+- **THEN** 系统 SHALL 更新该条目的视觉基线
+- **AND** 来源为 `vision` 的当前字段 SHALL 使用新的 emotion、tags 和 description
+- **AND** 来源为 `manual` 的字段 SHALL 保持原值和 `manual` 来源
+- **AND** 图片文件、content hash、技术索引和 sticker ID SHALL 不变
+
+#### Scenario: reanalyze 返回非贴纸
+
+- **WHEN** reanalyze 的视觉结果合法但 `is_sticker=false`
+- **THEN** 系统 SHALL 返回 `not_sticker`
+- **AND** SHALL 保留原视觉基线、当前字段、字段来源、文件和可见条目
+- **AND** SHALL 不移动文件到 `junk/`、不删除条目或创建新条目
+
+#### Scenario: reanalyze 失败保持原条目
+
+- **WHEN** reanalyze 的视觉调用失败、外层 envelope 非法、analysis 非法或字段 schema 校验失败
+- **THEN** 系统 SHALL 返回 `visual_unavailable`
+- **AND** SHALL 保留原条目的视觉基线、生效字段、字段来源和文件
+- **AND** SHALL 允许下一次显式 reanalyze 重试
+
+#### Scenario: reanalyze 元数据提交失败回滚
+
+- **WHEN** 合法 `is_sticker=true` 结果在替换视觉基线时发生数据库错误
+- **THEN** 系统 SHALL 返回 `storage_error`
+- **AND** SHALL 保留更新前的视觉基线、生效字段和字段来源
+- **AND** SHALL 不修改图片文件或技术索引
 
 ### Requirement: 导入必须按内容去重并以原子方式提交
 
@@ -214,7 +266,7 @@
 
 ### Requirement: 维护命令必须有固定语法、受限输出和明确结果
 
-系统 MUST 支持以下 `/milky` 子命令：`sticker add [--dry-run]`、`sticker list [--limit <n>]`、`sticker edit <sticker_id> [--emotion=<enum>] [--tags=<tag1>,<tag2>,...] [--description=<text>] [--clear=<field>[,<field>...]]`、`sticker del <sticker_id>`、`sticker cleanup [--dry-run]` 和 `sticker reindex`。`--dry-run` SHALL 只允许扫描、校验、视觉分析和报告，不得写入或删除库文件、元数据或索引。list SHALL 使用稳定顺序和有界结果；默认最多返回 `20` 条，`--limit` SHALL 为 `1` 至 `100` 的十进制整数。结果 SHALL 只包含 `sticker_id`、格式、字节数、创建时间、当前生效的 `emotion`、有界 `tags`、有界 `description`、派生的 `source=vision|manual`、字段级 `field_sources`、固定状态和低敏计数；add 回执另 SHALL 报告 `visual_unavailable`，不包含绝对路径、URL、bytes、完整文件名或异常正文。
+系统 MUST 支持以下 `/milky` 子命令：`sticker add [--dry-run]`、`sticker list [--limit <n>]`、`sticker edit <sticker_id> [--emotion=<enum>] [--tags=<tag1>,<tag2>,...] [--description=<text>] [--clear=<field>[,<field>...]]`、`sticker reanalyze <sticker_id>`、`sticker del <sticker_id>`、`sticker cleanup [--dry-run]` 和 `sticker reindex`。`--dry-run` SHALL 只允许扫描、校验、视觉分析和报告，不得移动、删除或写入库文件、元数据或索引。list SHALL 使用稳定顺序和有界结果；默认最多返回 `20` 条，`--limit` SHALL 为 `1` 至 `100` 的十进制整数。结果 SHALL 只包含 `sticker_id`、格式、字节数、创建时间、当前生效的 `emotion`、有界 `tags`、有界 `description`、派生的 `source=vision|manual`、字段级 `field_sources`、固定状态和低敏计数；add 回执另 SHALL 报告 `junk` 与 `visual_unavailable`，reanalyze 回执 SHALL 报告 `not_sticker` 或 `visual_unavailable`，不包含绝对路径、URL、bytes、完整文件名或异常正文。
 
 #### Scenario: list 查看空库
 
@@ -240,7 +292,7 @@
 
 #### Scenario: handler 收到贴纸维护参数
 
-- **WHEN** 插件 command handler 收到合法的 `sticker add`、`list`、`edit`、`del`、`cleanup` 或 `reindex` 参数
+- **WHEN** 插件 command handler 收到合法的 `sticker add`、`list`、`edit`、`reanalyze`、`del`、`cleanup` 或 `reindex` 参数
 - **THEN** 系统 SHALL 按本 change 的语法、持久化和视觉规则处理参数
 - **AND** SHALL 不读取或推断未随 handler 传入的 Milky friend/group、平台或操作者身份
 
@@ -253,13 +305,13 @@
 #### Scenario: 非显式普通流程不触发维护
 
 - **WHEN** 普通消息正文、入站图片、关键词、Will 决策或 Agent 输出没有到达贴纸维护 command handler 的显式参数路径
-- **THEN** 系统 SHALL 不执行 add、del、cleanup 或 reindex
+- **THEN** 系统 SHALL 不执行 add、edit、reanalyze、del、cleanup 或 reindex
 - **AND** SHALL 不把贴纸维护作为普通消息旁路或 Agent Tool 暴露
 
 #### Scenario: 普通消息或 Agent 输出触发维护
 
 - **WHEN** 普通消息正文、图片、关键词、Will 决策、Agent 输出或其他事件没有显式匹配维护命令
-- **THEN** 系统 SHALL 不执行 add、del、cleanup 或 reindex
+- **THEN** 系统 SHALL 不执行 add、edit、reanalyze、del、cleanup 或 reindex
 - **AND** SHALL 不把贴纸维护作为普通消息旁路或 Agent Tool 暴露
 
 ### Requirement: del 必须按可见 sticker_id 删除并保护库文件一致性
@@ -287,7 +339,7 @@
 
 ### Requirement: cleanup 和 reindex 必须可预览、可恢复且不误删
 
-`cleanup` SHALL 识别库内 orphan file、缺失引用文件、残留临时文件和无效技术索引；正常模式只删除确认无可见条目引用的 orphan 或残留临时文件，发现缺失引用时 SHALL 保留元数据并报告 `missing_file`。`--dry-run` SHALL 只报告计划动作。`reindex` SHALL 只扫描 `stickers/library/`，校验受控相对路径、content-addressed 文件名、PNG/JPEG/GIF/WebP 结构、非空、`10 MiB` 上限和流式 SHA-256；通过校验的文件 SHALL 在一个数据库事务中原子重建 `sticker_files` 技术索引，事务失败 SHALL 保留旧索引。reindex SHALL 不扫描 inbox、不调用视觉、不创建或删除 `sticker_entries`、不修改任何视觉基线/生效元数据或字段来源；合法但没有可见条目引用的文件 SHALL 记为 orphan，缺失的可见条目 SHALL 保留元数据并报告 `missing_file`，无法确认的库文件 SHALL 报告 `reindex_skipped`。
+`cleanup` SHALL 识别库内 orphan file、缺失引用文件、残留临时文件和无效技术索引；正常模式只删除确认无可见条目引用的 orphan 或残留临时文件，发现缺失引用时 SHALL 保留元数据并报告 `missing_file`。`cleanup` SHALL NOT 删除或扫描 `junk/` 中的文件。`--dry-run` SHALL 只报告计划动作。`reindex` SHALL 只扫描 `stickers/library/`，校验受控相对路径、content-addressed 文件名、PNG/JPEG/GIF/WebP 结构、非空、`10 MiB` 上限和流式 SHA-256；通过校验的文件 SHALL 在一个数据库事务中原子重建 `sticker_files` 技术索引，事务失败 SHALL 保留旧索引。reindex SHALL 不扫描 inbox 或 `junk/`、不调用视觉、不创建或删除 `sticker_entries`、不修改任何视觉基线/生效元数据或字段来源；合法但没有可见条目引用的文件 SHALL 记为 orphan，缺失的可见条目 SHALL 保留元数据并报告 `missing_file`，无法确认的库文件 SHALL 报告 `reindex_skipped`。
 
 #### Scenario: dry-run 不产生变更
 
