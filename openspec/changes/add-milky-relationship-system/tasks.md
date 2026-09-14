@@ -44,5 +44,5 @@
 ## 7. 质量门禁与受控验证
 
 - [ ] 7.1 运行关系相关 pytest、`uv run ruff check .`、`uv run ruff format --check .` 和 `git diff --check`，修复实现、测试、文档和规范问题并把命令结果写入 evidence ledger
-- [ ] 7.2 运行完整 `uv run pytest -q`、`uv build` 和 `npx --yes @fission-ai/openspec@1.12.0 validate --changes --strict`，分类记录真实 Hermes 未覆盖、fake-only 通过和外部阻塞，不把 skip 当成集成通过
+- [ ] 7.2 运行完整 `uv run pytest -q`、`uv build` 和 `openspec validate --changes --strict`，分类记录真实 Hermes 未覆盖、fake-only 通过和外部阻塞，不把 skip 当成集成通过
 - [ ] 7.3 在获得明确写入授权且目标命中运行时 `MILKY_ALLOWED_CHATS` 后，使用 `uv run scripts/milky_smoke.py` 做关系只读/写入 smoke；没有真实服务或未获授权时记录 skip，不发送或修改外部 QQ 状态

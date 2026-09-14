@@ -25,4 +25,4 @@
 ## 5. 回归和质量门禁
 
 - [ ] 5.1 运行配置、tracker、adapter lifecycle、pipeline 和 fake injection 聚焦测试，覆盖 group/dm、白名单、闲置、quiet hours、maxAttemptsPerDay、busy、mute、拒绝和重连清理；验证 `uv run pytest -q tests/test_config.py tests/test_adapter_lifecycle.py tests/test_hermes_pipeline.py`
-- [ ] 5.2 运行完整质量门禁并记录结果：`uv run pytest -q`、`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check` 和 `npx --yes @fission-ai/openspec@1.12.0 validate --changes --strict`
+- [ ] 5.2 运行完整质量门禁并记录结果：`uv run pytest -q`、`uv run ruff check .`、`uv run ruff format --check .`、`uv build`、`git diff --check` 和 `openspec validate --changes --strict`

@@ -38,7 +38,7 @@ uv run ruff check .
 uv run ruff format --check .
 uv build
 git diff --check
-npx --yes @fission-ai/openspec@1.12.0 validate --changes --strict
+openspec validate --changes --strict
 ```
 
 按任务风险运行聚焦测试或完整质量门禁；只在 fake host 通过或被 skip 的检查，不算真实集成通过。smoke 使用 `uv run scripts/milky_smoke.py --help`，默认只读；发送或上传必须获得明确授权、使用 `--allow-write`，且目标命中运行时 `MILKY_ALLOWED_CHATS`。

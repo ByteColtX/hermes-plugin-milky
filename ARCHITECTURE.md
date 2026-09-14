@@ -556,7 +556,7 @@ uv run ruff check .
 uv run ruff format --check .
 uv build
 git diff --check
-npx --yes @fission-ai/openspec@1.12.0 validate --changes --strict
+openspec validate --changes --strict
 ```
 
 测试优先使用 fake Hermes、fake Milky transport、SSE fixture 和脱敏合成数据，覆盖协议与错误分类、

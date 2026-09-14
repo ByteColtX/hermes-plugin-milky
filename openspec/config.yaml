@@ -1,46 +1,32 @@
 schema: spec-driven
 
 context: |
-  项目是 Python 3.13+ 的 Hermes Milky QQ 平台适配器，使用 uv 管理环境。
-  ARCHITECTURE.md 是协议、所有权和行为契约的项目基线。OpenSpec artifacts 描述目标行为；
-  实现状态和是否已交付必须以代码、测试和 evidence 为准。发现规划、实现、文档或契约冲突时，
-  必须报告冲突并更新正确的事实来源，不得静默宣称已完成。
-  OpenSpec 规范必须描述可观察行为，而不是类名、函数名、库选择或逐行实现方案。
-  所有 OpenSpec artifacts 使用中文撰写；协议名、代码标识、命令和字段名保留原文。
-  Milky v1.3 使用 HTTP POST Action 和 SSE GET /event；friend/group/temp 必须保持独立
-  的 dm:/group: chat key；temp 消息在协议解析后直接记录 ignored_temp，不创建 chat key。
-  Gate 是确定性的硬性门禁，Will 是独立的发言决策。
-  入站媒体的下载、缓存、SSRF、权限和本地路径由 Hermes 公共 helper 所有；出站本地附件
-  仅按 ARCHITECTURE.md 和现行 outbound-messaging 规范由插件执行受限 materialization，插件不得复制入站资源规则。
-  token、Authorization header、个人 QQ、真实媒体路径和敏感正文不得进入规范、fixture、
-  日志、异常、快照或提交。
+  这是 Hermes 的 Milky QQ directory plugin；根目录 `__init__.py::register(ctx)` 是唯一公开入口。
+  `ARCHITECTURE.md` 维护稳定模块边界、生命周期和所有权；`README.md` 维护安装、配置和当前能力；
+  源码、测试与 evidence 才能证明实现状态。未归档 change 只是规划，不得将目标或未验证能力写成已交付。
+  OpenSpec artifacts 使用中文并描述可观察行为，不写具体类名、函数名、库选择或逐行实现方案。
+  注册和导入阶段不得联网、建立 SSE 或创建长期任务；普通消息入口须在必要的连接状态同步完成后开放，
+  停止时必须取消并等待插件任务并释放插件拥有的资源。
+  Milky v1.3 使用 HTTP POST Action 和 SSE GET `/event`；普通 Agent 流程只处理 `message_receive`，
+  并沿既有 canonical、去重、确定性 Gate、独立 Will 和 Hermes handoff 边界运行；同一 chat 按 ingress
+  顺序串行处理。只接受已确认的 `dm:<十进制 QQ 号>` 和 `group:<十进制群号>` 目标；非法或 temp
+  目标不得回退到其他目标或创建普通会话。
+  入站资源的下载、缓存、SSRF、权限和本地路径由 Hermes 公共 helper 负责；出站本地资源遵守项目既有
+  大小限制和一次性读取边界。工具只来自 manifest、`outbound/tools.py` 和显式 operationId，不开放
+  任意 Action catalog，也不由正文、关键词、Will 或事件隐式触发状态变更。
+  可能产生副作用的 Action 最多调用一次；未确认能力保持 `unknown`、`malformed`、`blocked` 或
+  `unsupported`，不得报告假成功或盲目重试。
+  规范、fixture、快照和提交只使用合成身份、协议值和占位资源。运行时诊断可在确有运维关联时保留
+  已确认的 chat key、message ID 或必要的群/用户 ID，但不得记录 token、Authorization、原始响应或
+  异常正文、敏感消息正文、媒体 URL、本地路径、文件内容、Tool 原始参数或原始结果。
 
 rules:
   proposal:
-    - 对包含 spec-level behavior change 的 change，必须明确目标能力相对于当前实现的状态，不得把规划或未验证能力写成已交付行为。
-    - 对包含 spec-level behavior change 的 change，Capabilities 必须与 specs/<capability-path>/spec.md 一一对应，并说明非目标。
-    - 若 change 的 .openspec.yaml 设置 skip_specs=true，必须说明没有 spec-level behavior change，不得为了通过校验虚构 capability 或 spec。
+    - 说明相对于当前实现和主 specs 的差异、范围、非目标与证据状态，不把规划或未验证能力写成已交付。
   specs:
-    - 对需要生成 spec 的 capability，一个 capability 只使用一个 spec.md；每个 requirement 必须是可观察的 SHALL 或 MUST 行为。
-    - 每个 requirement 至少包含一个严格使用四级标题 `#### Scenario:` 的 WHEN/THEN 场景。
-    - 优先覆盖错误、未知、边界、重连、隐私和降级行为；不得把实现步骤写进 spec。
-    - 遵守 ARCHITECTURE.md 的 Gate/Will、Hermes 媒体所有权、temp 忽略和安全边界。
-    - 若 change 的 .openspec.yaml 设置 skip_specs=true，不创建 spec 文件，也不为了满足规则虚构 requirement。
+    - 只写可观察行为和已确认的项目边界；遵守既有生命周期、消息/媒体所有权、授权、日志和隐私边界。
+    - 不复制 ARCHITECTURE.md 或主 specs 的精确顺序、字段、默认值，也不猜测未确认的协议或 Hermes API。
   design:
-    - 说明规范之间的边界、依赖方向、未实现状态和未来归档条件。
-    - 不因协议或 Hermes API 未确认而猜测行为；保留 unsupported 或待实机反馈边界。
+    - 说明依赖方向、资源与状态所有权、实现状态、未决问题和验证边界；未确认能力保持明确的 unknown 或 unsupported 状态。
   tasks:
-    - 每项任务使用可追踪的 `- [ ] X.Y` 或 `- [x] X.Y` 格式，并写出验证方式。
-
-operations:
-  apply:
-    guidance:
-      - 先读取 ARCHITECTURE.md，并按 openspec instructions 返回的 contextFiles 读取当前 change artifacts；不要假定固定 artifact 文件名。
-      - 按变更类型选择验证：行为变化先补契约或 fixture，再实现和测试；按项目要求运行相关 Ruff、format、build 和 diff 检查，不为文档或纯配置变更强制虚构 fixture 或完整构建。
-      - 本地 Milky smoke 默认只读；发送或上传必须有用户明确授权、使用 --allow-write，且目标命中运行时 MILKY_ALLOWED_CHATS。
-      - trigger 决策完成后立即更新 reply cost；不为未知远端结果盲目重试。
-  archive:
-    guidance:
-      - 归档前检查必要 artifacts、tasks 和 evidence；运行时能力应在相关自动化证据具备后再同步 delta，纯文档、重构或 skip_specs change 按其适用验证处理。
-      - 实机 Hermes/Milky 未覆盖的边界必须保留在 evidence 中；归档或 validate 通过不等于真实环境认证，不得报告假成功。
-      - 关注 validate 输出中的 archive merge INFO；退出码为 0 仍不保证 archive 一定成功，冲突应在归档前处理或明确交由用户确认。
+    - 为任务写明验证方式，并区分 fixture/fake host 证据与真实 Hermes/Milky 验证；未完成的边界不得写成已验证。

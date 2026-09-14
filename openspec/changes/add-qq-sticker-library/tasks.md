@@ -33,5 +33,5 @@
 
 - [ ] 5.1 补充 fake Hermes/Milky 集成 fixture，覆盖 friend/group、Gate deny、wait/trigger、当前图片自动分类、截图/新闻排除、自动入库、Tool 调用、native send、forget 和 storage/classifier 失败；用脱敏测试断言不输出 token、URL、路径、bytes、视觉理由原文或敏感正文
 - [ ] 5.2 运行相关聚焦测试并按项目标准运行 `uv run pytest -q`、`uv run ruff check .`、`uv run ruff format --check .`、`uv build` 和 `git diff --check`；将失败按契约、实现、fake host 或环境问题分类
-- [ ] 5.3 运行 `npx --yes @fission-ai/openspec@1.12.0 validate --changes --strict`，修复 artifact/schema/链接问题并确认所有任务、规范和设计状态一致
+- [ ] 5.3 运行 `openspec validate --changes --strict`，修复 artifact/schema/链接问题并确认所有任务、规范和设计状态一致
 - [ ] 5.4 更新 evidence ledger，明确哪些行为只在 fake host 验证、哪些 Hermes/Milky 视觉与实机边界仍为 `unsupported`；默认只做只读 smoke，任何真实发送或上传必须单独取得明确授权后再验证
