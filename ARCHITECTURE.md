@@ -1,557 +1,318 @@
-# hermes-plugin-milky 架构基线
+# hermes-plugin-milky 架构说明
 
-> 本文记录 v0.1 的稳定模块边界、数据流、所有权和限制。安装与当前能力见 `README.md`；可观察行为和测试要求见 `openspec/`。
+> 本文面向第一次接触仓库的开发者和 AI agent。先读“快速判断”和“运行时主流程”，再按变更目标跳到对应模块。
 
-## 1. 项目识别
+## 快速判断
 
-| 项目 | 内容 |
-|---|---|
-| 名称 | `hermes-plugin-milky` |
-| 类型 | Hermes directory plugin，由插件目录直接发现 |
-| 用途 | 将 Milky QQ 事件、Action 和出站能力适配到 Hermes Gateway |
-| 运行时 | Python 3.13+ |
-| 协议 | Milky v1.3；HTTP Action + SSE `GET /event` |
-| 公开入口 | 根目录 `__init__.py::register(ctx)` |
-| 仓库 | [ByteColtX/hermes-plugin-milky](https://github.com/ByteColtX/hermes-plugin-milky) |
-| 更新日期 | 2026-09-13 |
+`hermes-plugin-milky` 是运行在 Hermes Gateway 进程内的 Milky QQ directory/platform plugin。它通过 Milky v1.3 的 HTTP Action 和 SSE 事件流接收、处理和发送 QQ 私聊与群聊消息。
 
-边界以本文和 `AGENTS.md` 为准；可观察行为、测试要求和 change 进度以 `openspec/` 为准，安装与配置以 `README.md` 为准，代码与测试提供当前实现证据。单次本地测试、fake host、OpenAPI 文档清单或 fixture 不能证明真实 Hermes 宿主和 Milky 服务已经支持某项能力。
+它不是独立 QQ 服务、Web 服务或 Agent runtime。Hermes 拥有 Agent turn、session/transcript、入站资源 helper 和最终消息交接；本插件拥有 Milky 协议适配、入站策略、出站格式化、有限的进程内状态，以及独立的贴纸库。
 
-## 2. 项目结构
+唯一公开入口是 `__init__.py::register(ctx)`。导入和注册阶段不得联网、启动 SSE 或创建长期任务。普通消息只有在登录、群列表和 Bot 群成员禁言状态同步完成后，才会进入入站流水线。
+
+本文只描述当前源码、测试、manifest、README 和已实现主规范能证明的事实。未归档的 `openspec/changes/` 是规划或进行中的工作，不能当作当前能力。无法确认的内容写成 `Not evident from the repository`，不根据惯例猜测。
+
+## 1. 项目结构
+
+### 1.1 目录地图
 
 ```text
 hermes-plugin-milky/
-├── plugin.yaml                 # Hermes manifest；声明插件、依赖、环境和 ToolSpec
-├── __init__.py                 # 唯一公开入口：register(ctx)
-├── adapter.py                  # BasePlatformAdapter 生命周期和边界委托
-├── slash_commands.py           # /milky 命令
-├── stickers/                   # 显式人工贴纸维护、发送检索、独立 store 和图片校验
-├── config/                     # 启动配置、URL、Will policy
-├── milky/                      # DTO、解析、HTTP Action、SSE、资源和日志
-├── inbound/                    # normalizer、canonical、pipeline、mapper、系统事件
-├── gates/ / will/              # Gate、routing、willingness 和 reply cost
-├── session/ / state/           # identity、dedup、buffer、MuteTracker
-├── outbound/                   # formatter、sender、附件、上传和 ToolSpec handler
-├── skills/                     # milky-qq-cq-reference、milky-qq-action-tools 只读 bundled skill
-├── scripts/                    # milky_smoke.py；受控本地 smoke
-├── tests/                      # 脱敏 fixture、fake transport 和模块测试
-├── openspec/                   # 主 specs、已归档 change 历史和 evidence ledger
-├── ARCHITECTURE.md
-├── README.md
-└── CONTRIBUTING.md
+├── plugin.yaml              # Hermes manifest、依赖、环境变量和 26 个 ToolSpec
+├── __init__.py              # 唯一入口：注册 platform、command、tools、skills
+├── adapter.py               # MilkyAdapter；连接、停止和 Hermes 边界
+├── config/                  # 启动配置、白名单和 Will policy
+├── milky/                   # DTO、解析、HTTP Action、SSE、资源、日志
+├── inbound/                 # canonical、pipeline、消息映射、系统事件
+├── gates/                   # 固定顺序的硬门禁
+├── will/                    # routing / willingness 决策引擎
+├── session/                 # chat identity、Admission、dedup、buffer、上下文
+├── state/                   # MuteTracker
+├── outbound/                # sender、CQ、媒体、上传、拆分和 ToolSpec handler
+├── stickers/                # SQLite 贴纸库、维护命令和 sticker_send
+├── slash_commands.py        # `/milky` 命令服务
+├── skills/、scripts/        # bundled skill；smoke、prompt、face catalog 工具
+├── tests/、openspec/        # 测试 fixture；当前 spec、change、归档历史和 evidence
+├── pyproject.toml、uv.lock  # uv、Setuptools、Ruff、pytest、构建和锁定依赖
+├── README.md                # 安装、配置、能力和安全警告
+└── AGENTS.md                # 仓库开发约束和事实来源规则
 ```
 
-Hermes 读取 `plugin.yaml` 后调用根 `__init__.py`。`pyproject.toml` 和 `uv.lock` 只负责开发环境、质量检查和构建，不是第二个插件入口。
+没有 frontend、独立 backend、ORM、消息队列、容器编排或 Infrastructure-as-Code。`dist/`
+和 `hermes_plugin_milky.egg-info/` 是已有构建/开发产物，不是额外运行入口。
 
-## 3. 系统模型与数据流
+### 1.2 改动导航
+
+| 目标 | 先看哪里 | 主要影响 |
+|---|---|---|
+| 配置和默认值 | `config/__init__.py`、`plugin.yaml` | 启动校验、manifest、adapter 组装 |
+| 协议字段和 segment | `milky/models.py`、`parser.py`、`inbound/normalizer.py` | canonical、资源、context、fixture |
+| 普通消息触发 | `inbound/pipeline.py`、`gates/`、`will/`、`session/` | dedup、Gate、buffer、Agent handoff |
+| 系统事件 | `inbound/system_events.py`、`session/context.py` | context FIFO、即时成员通知 |
+| 媒体和文件发送 | `outbound/sender.py`、`materialization.py`、`file_upload.py` | 本地文件边界、Milky Action |
+| QQ Agent 工具 | `outbound/tools.py`、`plugin.yaml`、`milky/client.py` | schema、allowlist、权限风险 |
+| 贴纸功能 | `stickers/`、`slash_commands.py` | SQLite、文件库、单次发送 |
+| 连接和停止 | `adapter.py`、`milky/event_stream.py`、`state/mute_tracker.py` | 同步、SSE、任务释放 |
+
+## 2. 系统图
 
 ```text
-                         +----------------------+
-                         |    Hermes Gateway    |
-                         | registry / Agent     |
-                         +----------+-----------+
-                                    |
-                       register(ctx) / adapter
-                                    |
-             +----------------------+----------------------+
-             |                                             |
-             v                                             v
-      +-------------+                               +-------------+
-      | Inbound     |                               | Outbound    |
-      | pipeline    |                               | sender      |
-      +------+------+                               +------+------+
-             |                                             |
-             v                                             v
-      Hermes MessageEvent                         Milky HTTP Action
-             ^                                             ^
-             |                                             |
-      Milky SSE GET /event  <------>  milky/client + auth
-             ^
-             |
-      session / Will / MuteTracker state
+QQ 用户/事件 <-> Milky 服务
+                  │ SSE / HTTP Action
+                  v
+MilkyAdapter -> InboundPipeline -> Hermes Gateway -> Agent session/turn -> OutboundSender -> Milky
+                                      ├── 固定 ToolSpec -> sender/client
+                                      └── /milky -> SlashCommandService -> stickers.db / 文件库
 ```
 
-HTTP Action 与 SSE 是独立边界：Action 使用 `POST` JSON，事件流使用 `GET /event`；不使用 WebSocket echo、pending response map、WebHook 或 WebSocket fallback。
+关键边界：
 
-普通入站顺序固定为：
+- Hermes 是宿主边界，提供 platform registry、Agent session、消息队列和资源 helper。
+- Milky 是外部 QQ 协议边界；插件只通过 HTTP Action 和 SSE 与它通信。
+- SSE 不直接创建 Agent turn；普通消息必须经过 `InboundPipeline`。
+- ToolSpec 先经过固定 schema/handler，再调用受限的 client/sender；没有通用 Action catalog。
+- 贴纸数据库和文件目录只由显式贴纸维护或 `sticker_send` 使用。
 
-```text
-SSE /event
-  -> 只接受 message_receive
-  -> parse / normalize / canonical
-  -> TTL dedup
-  -> per-chat admission
-  -> SelfMessageGate -> ChatAllowlistGate -> MutedGroupGate
-  -> /milky 命令分流，或写入 wait buffer
-  -> Will.decide
-  -> wait；或 trigger 时原子 drain 当前 chat
-  -> trigger 决策完成后扣一次 reply cost
-  -> trigger 阶段补全资源和 reply
-  -> 映射 Hermes MessageEvent
-  -> adapter.handle_message()
-```
+## 3. 核心组件
 
-同一 chat 按 ingress sequence 串行，不复制 Hermes 的 busy、follow-up、interrupt 或 Agent 队列；不同 chat 可以并行。系统消息和 cron 可复用已连接 sender，或使用一次性 client 投递。
+### 3.1 注册入口和生命周期
 
-## 4. 组件职责与依赖
+`register(ctx)` 一次性解析 `MilkyConfig`，注册 bundled skills、`/milky`、25 个 Milky Action ToolSpec、`sticker_send`，以及 Milky platform 和可选的 home-channel cron 元数据。
 
-| 组件 | 主要职责 |
-|---|---|
-| `__init__.py` / `adapter.py` | 读取 context、解析配置、注册插件、管理连接和 Hermes 委托 |
-| `milky/` | DTO、容错解析、HTTP/SSE、资源引用和错误分类 |
-| `inbound/` | canonical、dedup 后的管线、segment 和 Hermes 映射 |
-| `gates/` / `will/` | 固定 Gate 顺序、`wait`/`trigger`、willingness 和 reply cost |
-| `session/` / `state/` | chat 状态、buffer、去重和 MuteTracker |
-| `outbound/` | 目标、segment、拆分、附件、上传和固定工具 |
-| `stickers/` | 固定目录图片校验、独立 SQLite store 和显式人工维护命令 |
+它还注册两个无网络的 `after_memory` prompt section：平台使用指导，以及当前 QQ 会话资料快照。注册阶段只组装 service/factory，不创建 HTTP client 请求、SSE、长期 task 或贴纸数据库访问。
 
-依赖方向：
+`adapter.py::MilkyAdapter` 通过构造参数拥有 `MilkyClient`、`SseEventStream`、`MuteTracker`、`ResourceResolver`、`InboundPipeline`、`MilkyOutboundSender`、`WaitBuffer`、`ChatAdmissionCoordinator`、`TtlDeduplicator`、Will engine 和 session snapshot store。依赖可注入，因此 fake host/transport 可以覆盖生命周期而不连接真实 Milky。
 
-```text
-config -> register -> adapter
-                         ├── inbound -> gates -> state
-                         │          ├── will
-                         │          └── session
-                         ├── milky/client <- outbound
-                         └── milky/event_stream -> parser/models
-```
-
-Gate 不做网络 I/O，Will 不做授权，session 不复制 Hermes 队列；只有 mapper 和必要的 adapter 边界依赖 Hermes 消息类型。
-
-## 5. 生命周期与运行边界
-
-### 注册与连接
-
-`register(ctx)` 同时登记 25 个与 Milky operationId 对齐的 Action ToolSpec 和一个独立的语义 `sticker_send`；后者只保存 schema、handler 和只读可用性检查，不打开贴纸 store 或联网。`jieba` 作为插件运行时依赖由 manifest 和项目依赖声明提供，并随正常模块导入加载。
-
-`register(ctx)` 是唯一公开入口：读取 context、一次性解析配置，注册 `milky-qq-cq-reference`、`milky-qq-action-tools`、`/milky` 和显式 ToolSpec，登记 `MILKY_HOME_CHANNEL`，组装 client/SSE/MuteTracker/Will/session/pipeline/sender，并调用 Hermes 平台注册接口。`platform_hint` 只包含 `You are chatting on QQ through Hermes's Milky platform.`；宿主提供 `register_system_prompt_section` 时，入口另外登记 `hermes-plugin-milky.qq-platform-guidance` 和 `hermes-plugin-milky.qq-session-context` 两个 `after_memory` section。
-
-该 section 使用注册实例共享的进程内身份快照。adapter 在登录、群列表和每个群的 Bot 成员状态同步成功、普通消息入口完成组装后发布已确认的 `self_id` 和 `nickname`；section renderer 只读快照，不访问 Milky client，不读取 session metadata，也不从消息或配置推断身份。未连接、同步失败或 nickname 无法安全规范化时，section 返回空内容，由 Hermes 跳过该 section；缺少宿主 section API 时仍完成只含首句的平台注册。
-
-`hermes-plugin-milky.qq-session-context` 独立负责当前 QQ 会话介绍。每个 `register(ctx)` 创建一个线程安全、有界的本地 snapshot store；pipeline 在 trigger 的资源解析和 MessageEvent mapper 成功后、`handle_message()` 前，以 `dm:<id>`/`group:<id>` 登记经过 canonical 身份校验的最小资料。friend 只保留 `user_id`、`nickname`、`sex`；group 只保留 `group_id`、`group_name`、`member_count`、`description`、`announcement`。快照不写入 MessageEvent、`channel_context`、`platform_hint` 或出站正文，同群不同 Hermes session 共享 group key，不同注册实例隔离。淘汰或资料缺失只使 section 返回空内容，不阻断 handoff。
-
-会话介绍 callback 只读取 task-local `HERMES_SESSION_CHAT_ID` 和本地 snapshot，不执行 Milky Action、HTTP/SSE、文件访问或其他阻塞 I/O。昵称、群名、描述和公告按不可信 metadata 中和控制字符、折叠换行并限制长度；Hermes 已持久化完整 system prompt 时按 Hermes restore 语义保留原 section 字节，显式 prompt rebuild 才重新读取当时可用的本地快照。不提供实时刷新能力。
-
-导入和注册阶段不得联网、建立 SSE、创建长期任务或写入用户全局 skills 目录。配置错误必须在启动时安全失败，不能回显凭证。
-
-连接就绪顺序是：
-
-```text
-connect
-  -> get_login_info
-  -> get_group_list
-  -> 确定白名单允许的群集合
-  -> 对选中群一次性无界并发 get_group_member_info(..., user_id=self_id, no_cache=true)
-  -> 等待并收集所有成员查询结果
-  -> MuteTracker 初始同步完成
-  -> 启动 SSE /event
-  -> 开放 message_receive pipeline
-```
-
-初始成员查询不使用插件侧 semaphore、worker 数或分批等待；所有结果收集完成且没有失败后才算同步完成。
-身份和禁言初始状态同步完成前，普通消息不得进入 pipeline。重连不假定服务端补发断线期间丢失的消息，也不恢复 wait buffer、system context 或 Will 分数。
-
-### 停止与命令
-
-`disconnect()` 必须幂等地取消 SSE consumer、detached pipeline、定时器和状态刷新，关闭 HTTP/SSE 资源，并解除 sender/command 生命周期绑定。
-
-插件只有 `/milky` 命令，在 Gate 通过后、Will 之前分流，不进入 wait buffer、资源补全或普通 Agent 正文；无参数时通过已连接 client 调用 `get_impl_info`，将已知实现字段格式化为可读摘要。未连接、参数错误、rejected、malformed、HTTP 错误和 transport unknown 只返回安全分类，不临时创建 client。
-
-显式 `/milky sticker` 命令由同一个 command service 处理。贴纸 store 只在有效维护命令中懒加载，使用
-Hermes `plugin_data_dir("hermes-plugin-milky")` 和独立 `plugin_db(..., filename="stickers.db")`；注册、
-普通连接、SSE、Will 和 Agent 输出不创建贴纸目录、数据库、视觉任务或旁路 client。固定目录为
-`stickers/inbox/`、`stickers/library/` 和 `stickers/junk/`。`sticker_items` 保存视觉基线、当前值、
-字段级 source、时间戳和使用统计，`sticker_files` 只保存 library 技术索引；两张表位于独立数据库，
-不触及 Hermes session DB。
-
-`add` 先递归校验图片、流式计算 SHA-256 并去重，再按稳定顺序最多提交 50 张唯一候选，视觉调用最多并发
-10 路。视觉结果必须先通过外层 JSON envelope，再通过固定内层 schema：单选 `emotion`、2–5 个中文
-`tags`、20 字以内中文 `description` 和严格布尔 `is_sticker`。true 原文件原子移动到 content-addressed
-library 并逐条提交，false 原文件原子移动到 junk，失败留在 inbox；dry-run 不移动、删除或写入。
-`edit` 的 set/clear 是字段级事务更新，`reanalyze` 只替换视觉基线并让 vision 字段跟随，人工字段保持。
-`del` 只接受可见不透明 ID；提交后由 cleanup 回收无引用文件。`cleanup` 保留缺失引用元数据且不触及
-junk，`reindex` 只扫描 library 并原子重建 `sticker_files`，不创建 `sticker_id`。
-
-`sticker_send` 只在 definitions discovery 发现有效 library 条目时可见。它从
-task-local `HERMES_SESSION_PLATFORM`/`HERMES_SESSION_CHAT_ID` 获取当前 `dm:`/`group:` 目标，只读取当前生效
-`emotion`、`tags`、`description` 和有效文件索引；使用无数值分数的完整短语、全部 token、部分 token 层级，
-并只在完全并列时按 chat 使用记录软轮换。发送前完成 containment、图片格式、双索引 SHA-256 和一次性
-`base64://` materialization，claim 全局及 per-chat 统计后只调用一次对应消息 Action。发送结果未知不重试，
-不文本 fallback，不把内部匹配层级写入 Tool 回执；空库、无 context 或过期 sender 均 fail closed。
-
-当前 Hermes command handler 只提供 `raw_args`，因此本 change 不声明 Milky friend/group 或 operator 授权，
-不读取或新增 `MILKY_STICKER_OPERATOR_IDS` 等配置。贴纸失败压缩为 `invalid_input`、`rejected`、
-`duplicate`、`junk`、`visual_unavailable`、`missing_file`、`storage_error`、`unsupported` 等安全分类，
-不得泄露 token、Authorization、路径、URL、图片 bytes、完整参数或异常正文。
-
-## 6. 入站消息契约
-
-### 身份、canonical 与 dedup
-
-普通状态只接受 `dm:<十进制 QQ 号>`（friend）和 `group:<十进制群号>`（group）。
-
-空值、负数、非数字和额外分隔符均非法。`message_scene=temp` 记录 `ignored_temp` 后丢弃，不创建 chat key、canonical、dedup、buffer、Will、Hermes turn 或出站目标。
-
-canonical 至少包含 `platform`、`self_id`、scene、chat key、peer/sender ID、Milky `message_seq`、Unix 秒时间戳、typed segments、正文、mention/quote、媒体引用、raw 和安全 metadata。
-
-稳定去重 key 为：
-
-```text
-milky:<self_id>:<chat_key>:<message_seq>
-```
-
-TTL map 的检查和插入必须原子完成，且早于资源补全、Will 和 Hermes turn。缺少 `message_seq` 时不得伪造稳定 key；当前帧可以处理一次，但记录 `no_stable_message_seq`。
-
-### Admission、buffer 与 Hermes 交接
-
-同一 chat 的 canonical、Gate、buffer、Will 和 trigger drain 在 admission 边界内按 ingress sequence 串行；Gate deny 不增长 buffer 或修改 Will。`wait` 不调用 Hermes、不写 transcript；`trigger` 在决策完成后先扣一次 reply cost，再原子 drain 当前 chat，并按序完成资源解析、mapper 和 `handle_message()` 提交。历史 wait 只进 `channel_context`，当前消息只进本次正文；handoff 失败只能重试同一批次或记录不可恢复失败，不得无条件回填，且不回滚已经执行的扣费。系统不等待 Agent 完成。
-
-### 系统事件
-
-只有 `message_receive` 进入普通消息路径。Milky SSE `GET /event` 收到的
-`message_recall`、request、notice、lifecycle 和未知事件默认 observe-only，不伪装成普通消息。
-
-`message_recall` 只有在 `message_scene` 为 `friend` 或 `group`，且 `peer_id`、`message_seq`、
-`sender_id` 是已确认的非负整数时，才写入对应 chat 的 system context FIFO：friend 使用
-`dm:<peer_id>`，group 使用 `group:<peer_id>`。`operator_id` 缺失或为 null 时，body 为
-`uid <sender_id> recalled message msg_seq <message_seq>`；群聊仅在操作人存在且
-`operator_id != sender_id` 时为 `Admin uid <operator_id> recalled uid <sender_id>'s message msg_seq <message_seq>`；
-操作人缺失、为 null 或与发送者相同时使用前一文案。好友存在不同操作人时使用
-`uid <operator_id> recalled uid <sender_id>'s message msg_seq <message_seq>`，不推断管理员角色。
-事件类型前缀由 renderer 统一添加为 `<event message_recall>`。
-
-`group_nudge`、`friend_nudge`、`group_member_increase`、`group_member_decrease` 和合法
-`message_recall` 可写入每 chat 独立、有界、可丢失的 system context FIFO；除显式启用且注入被接受
-的成员事件外，不创建 canonical、dedup、Gate、Will、reply cost 或独立 Hermes turn。group nudge
-只有 `receiver_id == self_id` 才产生 self-poke，friend nudge 只有明确的自身接收方向且无自身发送
-冲突才产生 self-poke；该特征仍不改变 nudge 的 observe-only 边界。它们与普通 wait 消息共享 ingress
-sequence，在下一次同 chat trigger 中按序合并并原子清除。缺少 chat key、撤回必要字段或撤回场景非法
-时记录 `malformed`/`unsupported`，不创建上下文；其他事件不自动发送或批准。
-
-正文使用固定英文格式：`group_nudge` 为 `uid <sender_id> poked uid <receiver_id>`，`friend_nudge`
-为 `uid <user_id> poked once`；成员加入/退出分别为 `uid <user_id> joined the group. Details: {...}`
-和 `uid <user_id> left the group. Details: {...}`，Details 只保留已确认的 group/user/operator/invitor
-字段。缺少 `operator_id` 或 `invitor_id` 时省略，不补空字符串；撤回事件只展示英文撤回元数据，不
-调用 `get_message`，不恢复被撤回消息正文，也不把 `display_suffix`、动作图片 URL、timestamp、raw
-payload 或未确认扩展字段放入上下文。
-
-`MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` 是启动期固定的 `true`/`false` 开关，默认 `false`。关闭时
-成员事件使用无 Tip 的基础英文 body，继续等待下一次普通消息；开启时在 body 末尾追加固定 Tip，并
-在 system context append 后读取该群待处理记录，按 ingress 顺序通过 adapter 的 Hermes
-`inject_message` 交接。只有宿主接受注入后才 drain；session key 必须来自 Hermes 已确认或从其
-持久化 session route 恢复的 gateway 会话，不能由 `group:<id>`、`dm:<id>` 或其他插件 chat key 推导。缺少确认、授权、live gateway 或
-注入被拒绝时保留上下文并记录安全分类，不重试、不直接调用 Milky Action。nudge、recall、request、
-file upload 和其他系统事件不受该开关影响。
-
-## 7. Segment、资源与 Hermes 映射
-
-### Segment 解析与正文
-
-normalizer 不做网络 I/O。支持并保留 `text`、`mention`、`mention_all`、`face`、`reply`、
-`image`、`record`、`video`、`file`、`forward`、`market_face`、`light_app`、`xml`、`markdown`；
-未知 segment 只保留安全 raw 和诊断，不变成正文或 Agent 指令。
-
-| segment | 正文展示 |
-|---|---|
-| `face` | `[face:<face_name>]`；启动时从插件目录 catalog 映射非 `emoji 表情` pack 的有效 `qSid`/`qDes`，名称保留原值；目录不可用、未命中或冲突时回退 `face_id` |
-| `mention_all` | `@全体成员` |
-| `image` | 临时 `[img:file_name=<summary/resource_id>]`；成功 materialize 后替换为 helper basename |
-| `record` / `video` | `[record:NOT SUPPORTED]` / `[video:NOT SUPPORTED]`；当前 `record` 成功 materialize 后以 VOICE 媒体交给 Hermes core，不在插件侧配置 STT 或转换格式 |
-| `file` | `[file:file_id=<file_id>,file_name=<file_name>,file_hash=<file_hash>]` |
-| `forward` | `[forward:forward_id=<forward_id>]`；普通 trigger 不自动展开 |
-| `market_face` | `[market_face:summary=<summary>]` |
-| `light_app` | `[light_app:{"meta":...}]` 的完整递归 `meta` 根对象 |
-| `xml` | `[xml:NOT SUPPORTED]` |
-| `markdown` | 原样进入正文 |
-
-缺失字段使用 `NOT SUPPORTED`，不得补造 ID、文件名或路径。mention 区分 self、all、here、none；直接提及只有 `mention.user_id == self_id` 才是 self，reply 只有 `reply.data.sender_id == self_id` 才是 self quote；Milky v1.3 不从普通文本或 mention 名称推断 here。
-
-inline `reply` 通过单行 header 的 `reply_to` 和 Hermes reply metadata 表达；补全失败才使用 `[reply:NOT SUPPORTED]`。普通 `forward` 只保留 `forward_id`。
-
-### Context、资源和媒体
-
-普通历史消息按已确认的 `dm:`/`group:` chat namespace 选择单行格式。group 普通历史继续使用：
-
-```text
-<sender uid <sender_id> msg_seq <message_seq> reply_to <reply_seq>> <body>
-```
-
-group 缺失字段省略，保持字段顺序；dm 普通历史每条只输出经过既有 body 编码的正文，不生成
-sender、uid、`msg_seq`、`reply_to` 或其他普通消息 header。dm 和 group 的普通历史都按 ingress
-sequence 拼接；dm body 中的回车和换行编码为字面量 `\\n`，不新增 header 专用编码。系统事件
-对两种 chat 均使用 `<event <event_type>> <body>`，不得伪装成普通消息。所有直接 batch、公开
-renderer 和资源解析后的 pipeline 出口都使用同一已确认 namespace 选择规则；缺少或混用
-namespace 时失败，不从正文、sender 名称或 raw payload 推断。header/body 中的非可信值必须
-编码为不改变记录边界的字面量。无历史记录时 `channel_context` 为 `None`，不是空字符串；当前
-trigger 不进入其中。普通 group 的当前 `MessageEvent.text` 和历史记录继续使用既有单行
-header；普通 dm 的当前 `MessageEvent.text` 和历史记录均只输出经过 body 编码的正文，不生成
-sender、uid、`msg_seq`、`reply_to` 或其他普通消息 header。dm 中的 system event 仍保留
-`<event <event_type>> <body>`。这些 Agent-facing 文本选择不改变 canonical、真实 Milky
-message_seq、Hermes reply metadata、资源解析结果或媒体字段。
-
-wait 阶段只保存 URL、resource/file ID、文件名、MIME/大小提示和原始 segment，不下载文件；trigger 阶段才可调用已确认的 Milky resource Action、`get_message` 或 Hermes helper。group file 使用 `get_group_file_download_url(group_id, file_id)`；private file 只有 `file_hash` 可用时才使用 `get_private_file_download_url(user_id, file_id, file_hash, ...)`。
-
-Hermes 拥有入站资源的下载、缓存、SSRF、权限和本地路径规则；plugin 不创建第二套 media cache、下载目录或权限规则。只有 Hermes helper 返回且通过本地路径校验的结果才能进入 `MessageEvent.media_urls` / `media_types`。
-
-同一 trigger 的媒体按“历史 context 中成功 materialize 的直接图片，再到当前消息和实际展示的 reply 图片”顺序合并；成功图片先在本批次内以受限流式 SHA-256 按 bytes 选择首次代表，hash 失败时仅按有效本地路径去重，并同步维护等长 `media_types`。正文 occurrence、代表 basename、MIME、`channel_context`、`media_urls` 和 `media_types` 必须来自同一份 batch finalization；不得从 context 文本反解析路径，也不得提升历史音频、视频、文件、未知引用或未展示的嵌套 reply 图片。hash 只读取 Hermes helper 已返回的非空常规本地文件，大小上限仍为 8 MiB；该入站 hash 边界与 `MILKY_MAX_LOCAL_MEDIA_BYTES` 的出站读取边界独立，不建立跨 batch/session 的缓存。
-
-### Hermes MessageEvent
-
-friend 映射为 private message，group 映射为 group message；`source` 固定为 `milky`，Hermes `message_id` 使用已确认的 Milky `message_seq` 字符串，并保留 sender、raw、timestamp、reply metadata、正文、安全 metadata、`channel_context` 和已确认附件。没有受支持正文、媒体或结构化内容时记录丢弃原因，不创建空 `MessageEvent`。
-
-## 8. Gate、Will 与禁言状态
-
-### Gate
-
-Gate 是进入 Will 和 Hermes 前的确定性硬性门禁，顺序不可变：
-
-1. `SelfMessageGate`：`sender_id == self_id` 时拒绝；
-2. `ChatAllowlistGate`：`MILKY_ALLOWED_CHATS` 为空则放行，否则要求完整 chat key 精确命中，
-   或要求对应的 `dm:*` / `group:*` 命名空间通配符命中；
-3. `MutedGroupGate`：member 或 whole 为 `muted` 时拒绝，未成功维护为 `unmuted` 前拒绝。
-
-Gate 不包含概率、关键词、回复发送、网络查询或 Will 分数修改。
-
-### Will
-
-Will 只在 Gate allow 后运行，输出 `wait` 或 `trigger`。`WillInput` 至少包含 self/chat/channel、segments、正文、独立的 self mention/self quote/self-poke 特征、reply 存在性与目标序号、image、event type 和时间。routing 的 `mention`、`quote`、`poke` 分别只匹配明确涉及 Bot 自身的目标；nudge 即使形成 self-poke routing 信号仍保持 observe-only。
-
-配置使用嵌套 `engine`、`routing`、`willingness`、`priority` schema。routing 按 direct、mention、mentionAll、quote、poke、allMessage、keywords 顺序处理；willingness 按 chat 隔离维护 `score`、`lastMessageAt`、`lastDecayAt`。`interestKeywords` 命中后只选择 `keywordMultiplier`，`forceKeywords` 命中后跳过概率抽样并触发；两者都只匹配规范化正文。公式、半衰期、ratio、概率 clamp、force、关键词、direct/image/reply/poke 和时钟回拨以 OpenSpec 为准，clock/random 依赖注入。
-
-`forceKeywords` 只增加 willingness 的 force 决策条件，不绕过 `SelfMessageGate`、`ChatAllowlistGate` 或 `MutedGroupGate`，不额外增加 score。通过 Gate 且得到 `trigger` 的普通消息在 Will 决策完成后立即扣一次 reply cost；资源解析、映射、Hermes 交接和最终 QQ 发送不影响该次扣费。wait、Gate deny、system context、命令和 temp 不扣费。
-旧的扁平 dm policy、allowed groups/users、muted groups、require mention 及旧 routing 字段
-不得静默迁移。
-
-### MuteTracker
-
-`MuteTracker` 是 Bot 群禁言状态的唯一拥有者。初始同步依次完成登录和群列表阶段，再对最终选中的群一次性无界并发调用：
+连接顺序固定为：
 
 ```text
 get_login_info
--> get_group_list
--> 对所有选中群并发 get_group_member_info(group_id, user_id=self_id, no_cache=true)
--> 收集全部结果后提交快照
+  -> get_group_list
+  -> 按入站白名单筛选群
+  -> 查询选中群的 Bot member 状态（no_cache=true）
+  -> 提交 MuteTracker 初始快照
+  -> 恢复 Hermes 已确认的 session key
+  -> 创建并启动 InboundPipeline
+  -> 绑定 command/sender
+  -> 启动 GET /event SSE
+  -> adapter ready，开放 message_receive
 ```
 
-初始成员查询全部完成前保持未就绪；任一查询失败仍 fail-closed 并使本轮初始同步失败。运行期
-`refresh_group()` 继续使用每群锁、冷却和全局并发上限，初始扫描的无界并发不扩散到稳态维护。
-member 禁言只读取 `member.shut_up_end_time`；member 和 whole 分开维护。初始化或维护失败时 fail-closed，刷新失败保留上次二态状态。Milky v1.3 没有可读取 whole mute 的 Action 或群实体字段时，whole 为 `unknown`；只有明确的 `group_whole_mute` 事件才能改为 `muted`/`unmuted`。
+初始同步失败时保持 fail closed，不把普通消息交给 pipeline，并向 Hermes 报告分类错误。`disconnect()` 幂等：先停止 SSE，再取消并等待 handler/pipeline task，关闭 sender、MuteTracker、command service 和 HTTP client。清理某个组件失败不能阻止其他组件释放。
 
-`group_mute` 的 `duration=0` 表示取消，`group_whole_mute` 按 `is_mute` 更新。群消息出站失败可触发有锁、冷却和并发上限的刷新；私聊失败不得查询群状态。成员禁言可由本地 TTL 任务转为 `unmuted`，停止时取消任务。
+SSE 重连不会假设服务端补发断线期间的消息，也不会恢复 wait buffer、system context 或 Will 分数。
 
-## 9. Milky HTTP 与 SSE
+### 3.2 Milky 协议层
 
-`MILKY_BASE_URL` 去除末尾斜杠但保留 path prefix：
+协议层按职责分为：`models.py` 的 typed DTO；`parser.py` 的事件/response 解析；`client.py` 的
+Bearer、HTTP、envelope、字段校验和错误分类；`event_stream.py` 的 SSE 分帧、handler、重连和取消；
+`resources.py` 的资源补全；`face_catalog.py` 的本地 face 映射；`logging.py` 的安全日志。
+它们不编排 Agent、不执行任意 Action，也不复制 Hermes 的下载缓存。
+
+请求地址和认证形式：
 
 ```text
-<base>/api/{action}
-<base>/event
+POST <MILKY_BASE_URL>/api/{action}
+GET  <MILKY_BASE_URL>/event
+Authorization: Bearer <MILKY_ACCESS_TOKEN>
 ```
 
-Action 一律使用 HTTP `POST` JSON；无参数 Action 也发送 `{}`。认证为 `Authorization: Bearer <token>`，凭证不得进入日志、异常、结果、fixture 或快照。
+HTTP 200 仍需校验 JSON、`status`、`retcode` 和所需 `data`。错误至少区分 `invalid_input`、`unsupported`、`rejected`、`malformed`、`http_error` 和 `transport_unknown`。可能有副作用的 Action 最多提交一次；超时或连接中断时不自动重试，因为远端结果可能未知。
 
-client 必须区分 HTTP 错误、非 JSON、协议 `status`/`retcode` 拒绝、malformed data、unsupported、transport unknown 和 timeout。HTTP 200 不等于协议成功；插件侧成功发送结果使用远端 `data.message_seq` 生成稳定字符串 `SendResult.message_seq`，交给 Hermes 时才映射为宿主 `SendResult.message_id`。超时代表远端是否执行未知；可能有副作用的 Action 不盲目重试。
+SSE 支持 `event:`、多行 `data:`、空行分帧、UTF-8、未知事件、handler 异常、EOF 和连接错误。
+receive loop 不等待慢 handler；handler 在停止时统一取消并等待，重连退避有界。
 
-SSE receive loop 必须处理 `event:`、多行 `data:`、空行边界、断线重连、退避、取消、未知或损坏事件和资源释放。malformed/unknown 事件安全记录并继续；handler 不得阻塞接收循环。
+### 3.3 入站策略和状态
 
-## 10. 出站消息与固定工具
+普通消息的编排集中在 `inbound/pipeline.py::InboundPipeline`：
 
-### 目标、segment 和附件
+1. 只有 `message_receive` 进入普通消息路径；其他事件交给 system-event observer。
+2. parser、normalizer、extractor 生成 typed 的 `CanonicalMessage`。
+3. 在资源补全和 Hermes turn 之前执行稳定 TTL dedup。
+4. 进入 per-chat Admission，再按顺序执行 Self、allowlist、mute 等 Gate。
+5. `/milky` 走命令分支；其他消息进入 routing 或 willingness Will engine。
+6. `wait` 写入有界 FIFO；`trigger` 原子 drain 当前 chat，并扣一次 `replyCost`。
+7. 只有 trigger 才补全资源、生成 Hermes `MessageEvent` 并调用 `handle_message()`。
 
-- `group:<id>` 只能调用 `send_group_message`；`dm:<id>` 只能调用 `send_private_message`；非法和 temp
-  目标在网络访问前失败，不回退默认频道或另一种场景；
-- formatter 生成 Milky segment，空白消息在网络访问前拒绝，未使用 `[SPLIT]` 的长文本由
-  `chunking.py` 拆分；
-- 图片、语音、视频分别进入 `image`、`record`、`video` native segment；文档使用独立的
-  `upload_group_file` / `upload_private_file`，不塞入 message segment；未实现的编辑、撤回、reaction
-  等能力返回 `unsupported`，不报告假成功。
+chat key 只接受 `dm:<十进制 QQ 号>` 和 `group:<十进制群号>`。`temp` 或非法目标不创建 key、dedup、buffer、Will 或 turn。Admission 只保证插件 ingress 顺序，不复制 Hermes 的 busy、follow-up、interrupt 或 Agent queue；不同 chat 可以并行。
 
-普通出站文本在整行严格等于 `[SPLIT]`（区分大小写、无前后空白），或在包含其他非空白正文的普通行中出现未转义 `[SPLIT]` 时启用分段。只有空白包围的标记行仍作为普通文本；`[[SPLIT]]` 还原为可见字面量
-`[SPLIT]`，不启用分段。语法完整的 CQ-compatible 或 unknown type CQ 候选范围内的 `[SPLIT]`
-不触发控制；malformed 或未闭合 CQ-like 内容不受保护，其中的标记按普通文本规则处理。独立标记行及其分隔边界被删除，行中标记只删除自身；系统过滤空段，最多形成三个逻辑
-文本单元，超过三段时把尾部按原顺序合并到第三段。随后每个逻辑单元仍使用既有长度边界分块；
-如果物理文本消息因此超过三条，插件在首个消息 Action 前整体返回本地边界错误，不截断、不部分
-发送。没有有效标记的普通长文本不受三条上限影响，文本段仍先于 `MEDIA:` 附件且不交错。
+`will/routing.py` 根据 direct、mention、mentionAll、quote、poke、allMessage 和关键词选择 `wait`/`trigger`。`will/willingness.py` 使用分数衰减、增益、阈值和 force 规则。两种 engine 互斥，均不授予工具权限。
 
-启动配置 `MILKY_LONG_TEXT_FORWARD_THRESHOLD` 默认 `0`，只接受 `0..4096` 的十进制整数。
-正值且一次出站文本的可见规范化长度严格大于阈值时，插件在普通分块和 `[SPLIT]` 三条预检前
-选择 forward 路径：所有非空逻辑段和既有长度分块按顺序组成一个 `forward.messages`，顶层
-`message` 只含一个 `forward`，群聊/私聊分别调用 `send_group_message`/
-`send_private_message`。每个节点包含 `user_id`、`sender_name` 和 `segments`，身份优先取 live
-连接初始同步或 standalone 的 `get_login_info({})`；读取失败、身份缺失或昵称为空/含控制字符时
-固定使用 `10001`/`QQ用户`，成功结果只取远端 `data.message_seq` 作为插件侧单一 `message_seq`，在 Hermes boundary 映射为单一 `message_id`，不伪造
-`time`、`forward_id` 或 continuation ID。预检、嵌套 segment 校验和本地 media materialization
-全部在第一个消息 Action 前完成；forward Action 失败不回退普通分块、不重试。
+### 3.4 系统事件、会话快照和禁言
 
-自动 forward 只接收同一有序出站批次中的 native `image`、`record`、`video`。文档/文件没有
-进入该 `forward` 的 outgoing segment，继续使用独立 `upload_group_file`/
-`upload_private_file`；Hermes 仅提供分离的 `MEDIA:` 文本和附件调用时，插件不猜测批次归属，
-仍按既有先文本后附件边界投递。实现不宣称 Milky 服务端对 forward 总大小或节点数量的未验证上限。
+`inbound/system_events.py` 处理 recall、nudge、群成员加入/退出等事件。默认行为是写入每 chat 有界的 context-only FIFO，不创建普通 turn、不扣 Will cost、不自动调用 Action；它与 wait 消息共享 ingress sequence，在下一次 trigger 中按序合并。
 
-Agent 的本地附件通过 Hermes 的 `MEDIA:<local_path>` 指令进入上述入口：普通回复把指令放在
-最终回复中，显式调用通用 `send_message` 时把指令放在 `message` 参数中。Hermes 按扩展名调用
-`send_image_file`、`send_voice`、`send_video` 或 `send_document`。该指令是平台发送约定，不是
-25 个显式 QQ ToolSpec；Agent 不应因为 ToolSpec 列表没有 `send_video` 而判断 Milky 没有媒体发送能力。
+开启 `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS=true` 后，成员加入/退出事件可使用已确认或恢复的 Hermes session key 调用 `inject_message()`。没有确认的 key 时只保留 context，绝不能从 `group:<id>` 猜出 session key。
 
-Hermes 从同一 Agent 回复提取的 `MEDIA:` 附件不属于插件文本分段批次。插件先按顺序完成所有
-文本单元，再由 Hermes 按提取顺序调用图片、语音、视频 native 入口或独立文件 upload；当前
-不支持文本段与附件交错，插件不从原始正文中的 `MEDIA:` 位置推断顺序。需要交错投递时必须
-由 Hermes core 提供有序文本/附件交接契约。
+`session/identity.py` 是 chat key 和 Bot identity 的单一校验点。`session/admission.py` 管理短临界区和 sequence；`session/dedup.py` 默认使用 300 秒、最多 10,000 条的进程内 TTL map；`session/buffer.py` 默认每 chat 保存 20 条 wait 历史；`session/qq_context.py` 默认最多保存 256 个会话资料快照。它们都不跨进程持久化。
 
-出站收到本地路径、`Path` 或 `file://localhost` 时，只读取一次常规、非空且不超过启动配置
-`MILKY_MAX_LOCAL_MEDIA_BYTES` 的文件并生成 `base64://`；该配置默认 `33554432` 字节（`32 MiB`），
-合法范围为 `8388608` 至 `33554432` 字节（`8–32 MiB`）。合法 `http(s)://` 和显式 `base64://`
-原样保留，不下载、读取或解码，也不应用本地文件大小检查。Base64 编码约放大为原始字节的
-`4/3`，内网连接不消除 Milky、代理或下游平台的服务端限制。文件上传携带安全文件名，不能假定
-Milky 能访问 plugin 的本地路径。每个可能有副作用的 Action 最多提交一次；部分失败保留已成功
-结果和首个失败分类，不发送纯文本 fallback。
+`state/mute_tracker.py` 是 Bot 群禁言状态的唯一拥有者。冷启动和运行期刷新分别维护个人禁言、全体禁言和 `unknown`；状态未知时 Gate 保守拒绝群消息。运行期刷新带 per-group lock、冷却、并发上限和可取消的 TTL task。
 
-### 受限 CQ-compatible 语法
+### 3.5 出站、文件和工具
 
-`CQ` 前缀大小写不敏感；`[CQ:...]`、`[cq:...]` 和其他大小写变体共用以下解析、ID 校验和
-fallback 规则。该兼容性只作用于前缀，不扩大已确认的 CQ 类型、字段或 Milky segment 映射。
-普通 Agent 文本可使用：
+`outbound/sender.py` 同时服务 live adapter、ToolSpec 和 standalone sender：
 
-- `[CQ:at,qq=<uid>]` -> native `mention`；
-- `[CQ:reply,id=<message_seq>]` -> native `reply`；
-- `[CQ:image,file=file:///path/to/sticker.ext,type=sticker]` -> native `image`（仅 sticker）。
+- `dm:<id>` 只路由到 `send_private_message`；`group:<id>` 只路由到 `send_group_message`。
+- 目标在网络请求前校验；非法或 `temp` 目标不回退到其他目标。
+- `formatter.py` 处理 CQ-compatible text、mention、reply 和 face；`chunking.py` 处理长度分块。
+- `splitting.py` 识别 `[SPLIT]`，最多产生 3 条有序消息；`[SILENT]` 由 Hermes core 处理。
+- `materialization.py` 和 `file_upload.py` 只读一次出站本地资源，并受启动时大小上限约束。
+- 图片、语音、视频和 document 可走 native media/file upload；插件不把本地路径直接交给 Milky。
+- `MILKY_LONG_TEXT_FORWARD_THRESHOLD` 大于 0 时，超长文本可与有序 native media 合成一个 forward。
 
-CQ 图片的 formatter 只负责解析，不做文件 I/O；sender 在消息 Action 前复用统一
-materialization。CQ sticker 的 `file://localhost`、`file:///...` 和本地路径只读取一次合规文件并
-转换为 `base64://`。普通图片不使用 CQ image，使用 `MEDIA:<local_path>` 入口。失败时在网络访问
-前返回分类错误，不发送原始 CQ 或纯文本 fallback。
-
-未确认映射、未知类型或参数错误按 text fallback 原样发送，但 fallback 不代表 native 语义
-执行。`uid` 和 `msg_seq` 只能来自当前 group 消息或 group `channel_context` 的真实 header；dm
-普通消息的 body-only 记录不提供这些 Agent-facing 字段。不实现 CQ 入站、OneBot Action、OneBot echo 或
-WebSocket RPC。
-
-`[SILENT]` 是 Hermes core 的无需回复控制标记。Milky plugin 不解析、删除或根据它调用 Action；
-仅接收 Hermes core 已决定交付的文本或独立附件。
-
-### ToolSpec
-
-工具是显式、固定、可审计的能力边界，不是任意 Milky Action catalog。工具独立校验类型、
-范围、额外字段和目标；入站正文、mention、allowlist 或 Will 分数不能授予工具权限。状态
-变更只能由显式调用触发，不能由 friend request、群通知、关键词或普通消息自动触发。
-
-当前 manifest 公开 25 个固定 Action ToolSpec，另有独立的 `sticker_send` 语义 Tool：
+manifest 中固定提供以下 25 个 Milky Action ToolSpec：
 
 ```text
-send_profile_like, send_friend_nudge, send_group_nudge, recall_group_message,
-get_group_info, get_group_member_list, get_group_member_info, set_group_member_mute,
-set_group_whole_mute, get_forwarded_messages, get_private_file_download_url,
-kick_group_member, quit_group, delete_friend, get_friend_requests,
-accept_friend_request, reject_friend_request,
-get_group_file_download_url, accept_group_request, reject_group_request,
-accept_group_invitation, reject_group_invitation, get_group_files,
-get_friend_info, set_group_member_special_title
+send_profile_like, send_friend_nudge, send_group_nudge, recall_group_message, get_group_info, get_group_member_list, get_group_member_info,
+set_group_member_mute, set_group_whole_mute, get_forwarded_messages, get_private_file_download_url, kick_group_member, quit_group, delete_friend,
+get_friend_requests, accept_friend_request, reject_friend_request, get_group_file_download_url, accept_group_request, reject_group_request,
+accept_group_invitation, reject_group_invitation, get_group_files, get_friend_info, set_group_member_special_title
 ```
 
-名称与 Milky operationId 一一对应；参数、最小响应结构和错误分类由 `__init__.py`、`outbound/tools.py`、
-`milky/client.py` 和相关 OpenSpec 约束。成功可返回协议要求的 raw envelope，但日志只用工具名、
-Action、分类、状态码（已知时）和耗时；
-结果未知返回 `transport_unknown`，不自动重试。新增工具必须先有独立 OpenSpec、参数边界和安全回归。
+另有语义工具 `sticker_send`。工具 schema 禁止未知字段并校验 QQ ID、消息序号、枚举和值域；插件不根据正文、关键词、Will 或事件隐式触发状态变更。
 
-群文件工具使用 `get_group_file_download_url(group_id, file_id)` 查询下载链接，或使用
-`get_group_files(group_id, parent_folder_id?)` 查询文件和文件夹数组；查询结果保留完整 envelope，
-不下载、不缓存、不解码。群请求工具使用 `notification_seq`、`notification_type` 和 `group_id`，
-群邀请工具使用独立的 `invitation_seq`；接受/拒绝 Action 只由完整的显式 Tool 调用触发，事件、
-正文、关键词和 Will 不会自动提交。四个群管理 Action 的未知结果为 `transport_unknown`，不重试、
-不换目标、不更新本地状态。
+### 3.6 贴纸子系统
 
-`get_friend_info` 只接受 `user_id`，成功时保留完整 envelope 和非空 object `data`；当前公开
-Milky v1.3 文档未声明该 operation，因此不把好友资料字段写入 `FriendEntity` 或其他本地 DTO，
-目标服务不支持时按远端错误边界返回。`set_group_member_special_title` 只接受
-`group_id`、`user_id`、`special_title`，空字符串原样传递，成功只接受空 object；超时、连接或
-读写失败返回 `transport_unknown`，只提交一次且不更新本地群成员状态。
+`/milky sticker` 提供 `add`、`list`、`edit`、`reanalyze`、`del`、`cleanup`、`reindex`。维护服务批量上限为 50，视觉分析并发上限为 10，图片输入、路径、格式、大小和 SHA-256 均校验。
 
-`sticker_send` 不是 Milky operationId，definitions discovery 会单独执行只读可用性检查。它只接受
-`intent`、`emotion`、`tags`，不接受任何 target、ID、路径或 URL；目标只能来自当前 Milky task-local context。
-`jieba>=0.42.1` 和 `Pillow>=12.3.0` 通过 `pyproject.toml` 运行时依赖及 manifest 的 `python_dependencies`
-声明提供，不设置上限，也不做按需导入；无可用条目时不暴露工具。结果只允许 `sent`、`no_match`、`invalid_input`、`missing_session_context`、
-`unsupported`、`missing_file`、`storage_error`、`rejected`、`http_error`、`malformed` 和
-`transport_unknown`，并且一次调用最多一个 sticker message Action。
+贴纸库只在显式命令或 `sticker_send` 首次需要时懒加载。数据库和文件目录不参与普通消息、SSE 或 Will。`StickerStore` 使用 plugin-data 下的 `stickers.db`，并维护 `sticker_items`、`sticker_files`、`sticker_send_usage`；图片位于受控的 inbox/library/junk 目录。
 
-## 11. 所有权、安全与配置
+`sticker_send` 在一次 Tool 调用中完成查询、候选选择、使用次数 claim、文件校验和一次发送。
+贴纸 SQLite 与文件移动不是单一事务，崩溃后需要 `cleanup` 或 `reindex` 修复孤儿状态。
 
-### 日志职责与边界
+## 4. 主要数据流
 
-Milky 运行时只使用标准 Python logger，并统一放在 `hermes_plugins.milky.*` 命名空间下；logger
-默认传播到 Hermes root，不添加插件 handler、文件、异步队列、脱敏器或 fallback 后端。普通日志
-消息由一个 `event=milky.*` 标签和必要的低敏 `key=value` 字段组成，事件类别固定为
-`milky.lifecycle`、`milky.action`、`milky.sse`、`milky.inbound`、`milky.resource`、
-`milky.outbound`、`milky.mute` 和 `milky.tool`。
+### 4.1 普通消息
 
-`INFO` 记录生命周期终态、Action/Tool/出站结果、资源汇总、Mute 汇总和入站 wait/trigger/handoff；
-`WARNING` 记录拒绝、超时、传输未知、重连、降级和状态同步失败；`ERROR` 仅用于插件拥有的不可
-恢复本地边界；`DEBUG` 记录普通 frame、dedup/Gate 细节和高频成功细节。Action、Tool 和出站
-结果在已知时记录 `status_code`，并记录 `classification` 与 `duration_ms`；SSE 重连记录安全
-`reason`、`attempt` 和 `delay_seconds`。
+```mermaid
+sequenceDiagram
+    participant M as Milky SSE
+    participant P as InboundPipeline
+    participant W as Gate / Will / Buffer
+    participant R as ResourceResolver
+    participant H as Hermes
+    participant O as OutboundSender
 
-日志值只允许固定分类、计数、耗时、状态码和已经确认的 `uid`、QQ/群 ID、`chat_key`、
-`message_seq` 或 `ingress_sequence`。Hermes boundary 的 `message_id` 只用于宿主字段映射；插件不得把 token、Authorization header、完整 URL、请求或
-响应 body、消息正文、关键词、raw segment、媒体 URL、文件名、本地路径、文件内容、Tool 原始
-入参/结果、自由文本异常或 traceback 交给 logger。Tool 调用方仍获得既有 raw envelope；日志不会
-为此复制、摘要或改写业务对象。日志被禁用、丢弃或 handler 失败时，连接、SSE、Gate/Will、buffer、
-Action、Tool、出站和 MuteTracker 的业务结果保持不变。
+    M->>P: message_receive
+    P->>P: parse, normalize, canonical, dedup
+    P->>W: Admission + Gate + Will
+    alt wait
+        W-->>P: append to bounded buffer
+    else trigger
+        P->>R: resolve media/reply/forward
+        R-->>P: Hermes-safe batch
+        P->>H: handle_message(MessageEvent)
+        H->>O: send / media / file
+        O-->>M: POST /api/send_*
+    end
+```
 
-运维查看路径为 `hermes logs -f`（默认 `agent.log`）、`hermes logs --level DEBUG -f`（高频诊断）
-和 gateway 进程的 `hermes logs gateway -f`。这些命令由 Hermes core 负责最终脱敏、异步落盘和文件
-路由；插件不把日志格式当作 Tool 或业务 API。
+资源解析在 trigger 之后，减少被 Gate、dedup 或 wait 丢弃消息的网络和缓存成本。资源缺失、远端未知结果和映射失败不会被包装成成功。
 
-### 状态与所有权
+系统事件先进入 `system_events` observer，再写入 context FIFO；下一次同 chat trigger 时按 sequence 合并。只有成员事件开关开启且 session key 已确认，才可 `inject_message`。
 
-插件不使用自有持久化数据库。进程内状态只有 TTL dedup、每 chat wait buffer、system
-context buffer、willingness 状态，以及 MuteTracker 群状态和 TTL 任务；停止或重连时可以丢失。
+出站流程是 `Hermes response / MEDIA:/local/path` → split/format/校验目标 → 一次 materialize 或 upload → 一次 Action → `success`、`rejected` 或 `transport_unknown`。
 
-| 所有者 | 负责内容 |
-|---|---|
-| Hermes | Agent turn、session/transcript、入站媒体下载与缓存、路径权限和资源 materialization |
-| `milky/client` | 认证、URL、HTTP transport 和 raw envelope |
-| `inbound` | canonical、segment 解析、chat pipeline 和 Hermes MessageEvent |
-| `outbound` | Milky segment、文件 upload 和受限出站本地 materialization |
-| `MuteTracker` | Bot 群 member/whole 禁言观测状态 |
+`transport_unknown` 表示请求失败但无法确认远端是否已执行。插件不为了“修复”未知结果而自动重试可能有副作用的 Action。
 
-### 安全边界
+## 5. 数据存储和所有权
 
-- 秘密只从运行时环境或安全凭证存储注入；日志、异常、`SendResult`、fixture、快照和 OpenSpec
-  artifact 不包含凭证、完整敏感正文、Base64、媒体 URL、本地路径或完整 HTTP body；
-- 业务 ID、chat key 和 message ID 可用于安全关联，但 inbound 不是工具授权来源；Action 的
-  类型、范围和目标须在进入 HTTP client 前校验；
-- unknown segment/event、未确认资源、malformed、unsupported 和未知执行结果必须显式分类，
-  不补默认值、不静默改名、不伪造成功、不跨场景回退。
+| 存储 | 类型 | 所有者 | 生命周期 |
+|---|---|---|---|
+| Hermes session/transcript | 宿主存储 | Hermes | 由 Hermes 管理，本插件只使用确认的 session key |
+| Hermes 入站媒体缓存 | 宿主 helper | Hermes | `milky/resources.py` 委托，不在插件复制 |
+| Milky 事件、dedup、buffer、Will、mute、snapshot | 进程内内存 | 本插件 | 重启、跨实例不恢复 |
+| `stickers.db` | SQLite | `stickers/` | plugin-data 下持久化，命令结束关闭连接 |
+| sticker image library | 本地文件 | `stickers/` | 受控目录、校验后保留 |
 
-### 启动配置
+仓库没有其他数据库、ORM、消息队列、迁移服务或远程缓存的证据。SQLite schema 在 `stickers/storage.py` 中创建和迁移；备份、保留策略和跨进程锁定方案为 `Not evident from the repository`。
 
-配置只在启动时解析一次：
+## 6. 外部集成和 API
 
-| 环境变量 | 必需 | 作用 |
+### Hermes Gateway
+
+集成点是 `register_platform`、`BasePlatformAdapter`、`handle_message`、`inject_message`、系统 prompt section、plugin-data 目录和媒体 helper。Hermes 负责 Agent、session、队列、媒体下载/缓存和最终发送交接；插件不 monkey patch Hermes core。
+
+### Milky v1.3
+
+集成方式是 Bearer-authenticated HTTP Action 加 SSE `GET /event`。Action 既有查询，也有发送、禁言、踢人、好友和请求处理等副作用。请求参数、response envelope、`status`/`retcode`、typed data 和错误分类都在 `milky/client.py` 中校验。
+
+**其他服务。** 仓库没有 WebSocket、Webhook、OneBot echo、独立视觉服务、STT 服务、云数据库或队列客户端的独立连接配置。贴纸视觉分析若由 Hermes plugin context 提供，其具体 provider、凭证和部署位置是 `Not evident from the repository`。
+
+## 7. 配置、技术栈和构建
+
+### 7.1 技术栈
+
+- Python 3.13+；asyncio 是连接、SSE、资源、刷新和 per-chat 协调的并发模型。
+- `httpx` 承担 Milky HTTP/SSE transport；Pillow 校验贴纸图片；jieba 负责贴纸检索分词。
+- SQLite 使用 Python 标准库；Setuptools 构建 wheel/sdist；Hermes 通过 `plugin.yaml` 加载。
+- pytest、Ruff 和 uv 服务于本地测试、质量检查、格式化、锁定和构建。
+
+### 7.2 配置入口
+
+必需环境变量：`MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN`。
+
+可选环境变量：
+
+| 变量 | 默认值 | 作用 |
 |---|---:|---|
-| `MILKY_BASE_URL` | 是 | HTTP(S) 基址；保留 path prefix |
-| `MILKY_ACCESS_TOKEN` | 是 | Bearer token；只在认证层使用 |
-| `MILKY_ALLOWED_CHATS` | 否 | 具体 `group:<id>` / `dm:<id>` 或 `group:*` / `dm:*` 入站白名单；通配符只匹配对应命名空间；为空放行 |
-| `MILKY_WILL_POLICY` | 否 | 嵌套 `engine`、`routing`、`willingness`、`priority` 策略 |
-| `MILKY_SESSION_BUFFER_SIZE` | 否 | wait buffer 上限；默认 20，0 表示禁用历史缓冲 |
-| `MILKY_HOME_CHANNEL` | 否 | 系统/cron 默认目标；完整 `group:<id>` 或 `dm:<id>` |
-| `MILKY_MAX_LOCAL_MEDIA_BYTES` | 否 | 出站本地资源原始字节数上限；默认 `33554432`（`32 MiB`），范围 `8388608`–`33554432`（`8–32 MiB`） |
-| `MILKY_LONG_TEXT_FORWARD_THRESHOLD` | 否 | 超长文本合并转发阈值；默认 `0`，范围 `0..4096`，严格大于阈值才选择 forward |
-| `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` | 否 | 群成员事件即时通知；默认 `false`，只接受大小写不敏感的 `true`/`false`，启动时读取 |
+| `MILKY_ALLOWED_CHATS` | 空 | 入站白名单；支持具体 `dm:`/`group:` 和对应 `*` |
+| `MILKY_WILL_POLICY` | routing 默认策略 | `routing` 或 `willingness` 的 wait/trigger 规则 |
+| `MILKY_SESSION_BUFFER_SIZE` | `20` | 每 chat wait 历史上限；`0` 关闭 |
+| `MILKY_HOME_CHANNEL` | 未配置 | 系统/cron 默认目标，不参与入站白名单 |
+| `MILKY_MAX_LOCAL_MEDIA_BYTES` | `33554432` | 出站本地资源上限；合法范围 8–32 MiB |
+| `MILKY_LONG_TEXT_FORWARD_THRESHOLD` | `0` | 超长 forward 阈值；0 表示关闭 |
+| `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` | `false` | 是否注入成员加入/退出事件 |
 
-`MILKY_HOME_CHANNEL` 不参与入站 allowlist；未配置时不猜测 origin、默认频道或私聊目标。已
-连接 adapter 的 live 投递复用普通 sender；standalone cron 每次创建并关闭临时 client，
-目前只支持文本和已格式化文本，不支持 `MEDIA:` 媒体、文件或线程参数；启用正的
-`MILKY_LONG_TEXT_FORWARD_THRESHOLD` 时，standalone 只在阈值触发的文本路径额外用一次
-`get_login_info({})` 确认 forward 节点身份。
+`config/__init__.py` 在启动时一次解析配置，校验 URL、chat key、Action 名称、整数、JSON、布尔值和范围；错误不得回显 token。配置变更需要重启 Gateway 才会生效。
 
-## 12. 测试、状态与非目标
+### 7.3 构建和部署边界
 
-### 验证入口
+本地环境只使用 `uv`；安装插件后由 Hermes Gateway 加载目录中的 manifest 和入口。仓库没有 Dockerfile、Kubernetes、Terraform、Ansible、systemd、GitHub Actions、云托管或自动发布配置。生产 hosting、进程监管、备份、滚动升级、回滚和多实例路由均为 `Not evident from the repository`。
 
-本地 Python 环境只使用 `uv`：
+## 8. 安全架构
+
+### 8.1 已实现的边界
+
+- Milky 使用 Bearer token；`MILKY_BASE_URL` 只接受绝对 HTTP(S)，不接受 URL 内用户名/密码、
+  query 或 fragment；Action 名称只接受 ASCII 字母、数字和下划线。
+- chat key 严格限制为 `dm:<数字>` 或 `group:<数字>`；temp、非法目标和不匹配目标 fail closed。
+- allowlist 在入站 Gate 生效；被 Gate 拒绝的消息不增长 buffer、不修改 Will、不创建 turn。
+- ToolSpec `additionalProperties=false`，参数有明确类型、枚举、ID 和消息序号范围。
+- sticker 路径限制在 plugin-data library，拒绝路径穿越和不受控文件，并校验 regular file、格式、大小、SHA-256；出站本地资源只读取一次并受大小上限约束。
+- 日志、diagnostics 和 smoke 摘要不输出 token、Authorization、完整 body、正文、媒体 URL、本地路径、图片 bytes 或异常正文。
+
+### 8.2 当前风险和未知项
+
+`MILKY_ALLOWED_CHATS` 只约束入站会话，不等于 ToolSpec、slash command 或出站 sender 的调用者授权。当前 25 个 Action tool 没有插件内独立的操作者/目标授权层；其中包含禁言、踢人、撤回、退群、删好友和请求处理。部署时必须把 Hermes tool 权限和 Milky 目标限制视为外部责任。
+
+插件不强制 HTTPS，也没有证据表明实现 OAuth、token rotation、独立 session cookie、静态加密、SQLite 文件权限治理、CORS/CSP 或专用 secrets backend。这些均为 `Not evident from the repository`。
+
+## 9. 可观测性、性能和扩展性
+
+**可观测性。** logger 命名空间为 `hermes_plugins.milky.*`，主要事件包括 lifecycle、action、sse、inbound、resource、outbound、mute 和 tool。日志使用固定分类、计数、耗时、HTTP status（可确认时）和安全序号；adapter、SSE、pipeline 有界 diagnostics，`scripts/milky_smoke.py` 提供脱敏摘要。
+
+仓库没有 metrics、distributed tracing、error-reporting SDK、health endpoint、audit log、dashboard 或 alerting 配置证据。
+
+**性能模型。**
+
+- 同一 chat 的策略临界区按 ingress sequence 串行；不同 chat 可并行。
+- SSE receive loop 不等待业务 handler，handler 和资源任务在停止时可取消。
+- dedup、wait buffer、context、session snapshot 和 diagnostics 都有容量上限。
+- MuteTracker 的稳态刷新有 per-group lock、冷却和并发上限。
+- 文本可分块；大本地媒体经过一次读取和 base64，成本受 8–32 MiB 启动限制影响。
+
+插件状态在进程内，未实现跨实例 dedup、buffer/Will 恢复、sticky routing 或故障转移一致性。透明水平扩展和生产容量上限为 `Not evident from the repository`；已知成本包括 base64 放大、Milky Action 延迟和 Hermes Agent 处理能力。
+
+## 10. 开发和测试
+
+### 10.1 本地工作流
+
+要求 Python 3.13+ 和 uv；不得使用 pip、pipx 或直接调用 python/python3：
 
 ```text
-uv run pytest
+uv sync
+uv run pytest -q
 uv run ruff check .
 uv run ruff format --check .
 uv build
@@ -559,39 +320,75 @@ git diff --check
 openspec validate --changes --strict
 ```
 
-测试优先使用 fake Hermes、fake Milky transport、SSE fixture 和脱敏合成数据，覆盖协议与错误分类、
-SSE 边界/重连/取消、friend/group/temp、canonical/dedup、Admission/Gate/Will/buffer、全部
-segment 与 reply/forward、Hermes media helper、group/dm 出站与文件上传、MuteTracker 生命周期、
-ToolSpec schema/显式调用/最小响应校验及日志输入边界。
+真实 Milky smoke：
 
-真实 Milky 写入、上传、踢人、退群、删好友及好友请求操作必须获得用户明确授权。
+```text
+uv run scripts/milky_smoke.py --help
+```
 
-### 当前状态与未决边界
+smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必须命中运行时 `MILKY_ALLOWED_CHATS`。fake transport 或 fixture 通过不等于真实 Hermes/Milky 集成通过。
 
-当前存在未归档 change 时，`openspec/changes/` 同时包含进行中的规划与已完成 change 的归档历史。
-已有主规范继续覆盖入站 context/图片合并、出站附件/native media/文件上传、固定 QQ ToolSpec
-和标准 logger 日志边界；当前清单为 25 个 Action ToolSpec 加 1 个语义贴纸 Tool，完成项以主规范和归档 change 的 `tasks.md`、evidence
-ledger 为准。
-Hermes 扩展点、Milky Action 支持/错误 envelope，以及 25 个 Action ToolSpec 和 `sticker_send` 的参数与
-最小 response 结构，仍需与真实宿主、manifest、OpenSpec 和 Milky OpenAPI 持续对齐。
+### 10.2 测试架构
 
-v0.1 不做：OneBot v11 入站协议/Action/echo/CQ 入站兼容、WebHook、WebSocket fallback、自动
-forward 展开、任意 Action catalog、temp 会话、未经确认的跨场景回退，以及插件自有媒体缓存、
-下载目录和 SSRF 规则副本。未知 segment、系统事件或失败 Action 不得伪装成普通消息、成功回复
-或 Agent 指令；高风险状态变更不得由事件、正文、关键词或 Will 隐式触发；未确认 Hermes 扩展
-点前不接管 Agent 队列、session store、媒体缓存或最终 turn 生命周期，也不把 fixture/OpenAPI
-清单当作真实 Milky 生产能力证明。
+测试位于 `tests/`，主要使用 fake Hermes host、fake HTTP/SSE transport、脱敏 JSON fixture、合成媒体、可注入时钟和随机源。覆盖边界包括：
 
-## 13. 术语表
+| 范围 | 代表测试 |
+|---|---|
+| 生命周期、配置和策略 | `test_plugin_entry.py`、`test_adapter_lifecycle.py`、`test_home_channel.py`、`test_config.py`、`test_gate_registry.py`、`test_will_*.py`、`test_admission.py` |
+| parser、normalizer、canonical、系统事件 | `test_milky_parser.py`、`test_normalizer.py`、`test_canonical.py`、`test_protocol_fixtures.py` |
+| client、SSE、未知结果、资源 | `test_milky_client.py`、`test_milky_event_stream.py`、`test_unknown_send_outcomes.py`、`test_resources.py` |
+| CQ、媒体、分块、sender、tools、mute | `test_cq_formatter.py`、`test_multimedia_outbound.py`、`test_outbound.py`、`test_qq_tools.py` |
+| prompt、model、slash、贴纸、HTTPX | `test_hermes_prompt_integration.py`、`test_model_control_integration.py`、`test_slash_commands.py`、`test_sticker_*.py`、`test_milky_local_integration.py` |
+
+测试证明本地模块契约、错误分类、脱敏和生命周期清理；不证明真实 QQ 权限、Milky 字段版本、真实媒体发送、视觉 provider、生产 CI 或部署行为。覆盖率阈值和 CI 执行环境是 `Not evident from the repository`。
+
+## 11. 架构决策、风险和未来工作
+
+### 已观察到的决策
+
+- **作为 Hermes plugin，而非独立服务。** 复用宿主 session、Agent、队列和媒体 helper；代价是强依赖 Hermes 扩展点。
+- **HTTP Action 与 SSE 分离。** 长连接重连/取消和副作用请求有不同生命周期；不维护 echo/pending response map。
+- **先 canonical/dedup/Gate/Will，再补资源和 handoff。** 先过滤重复、越权和不需要回复的消息，节省资源成本。
+- **固定 ToolSpec，不开放任意 Action。** 能力可发现、可审计、可测试；新增 Action 必须同步 manifest、schema、handler 和测试。
+- **贴纸库独立且懒加载。** 避免污染 Hermes session DB，也避免普通消息产生文件和视觉分析副作用。
+- **未知结果显式保守处理。** 不在远端执行状态不明时自动重试或声称成功；代价是可能需要人工核对。
+
+### 当前风险和技术债
+
+- ToolSpec 缺少独立调用者/目标授权，是最高影响的权限缺口。
+- 进程内 dedup、buffer、Will、mute 和 snapshot 在重启/多实例中不连续。
+- 远端副作用可能进入 `transport_unknown`，本地不能自动判断是否已完成。
+- SQLite 与文件库不是单一事务，崩溃后需要 cleanup/reindex。
+- 模块级活动 sender binding 和多 adapter 隔离能力需要继续审查；更强保证为 `Not evident from the repository`。
+- 真实 Hermes、Milky、QQ 权限和第三方 provider 的集成证据仍有限。
+
+### 未交付规划与建议
+
+未归档 change 中的 idle-session wakeup、relationship system、自动 QQ sticker library 不是当前能力。在实现前应分别定义 session 注入授权、关系状态所有权、贴纸入站 hook 和持久化迁移边界。
+
+基于当前结构的建议：先补 ToolSpec 授权，再考虑多实例；随后补 health/metrics/trace、SQLite 备份和恢复；同时把活动 sender 改为 adapter/session 级依赖注入，减少跨实例共享风险。
+
+## 12. 项目识别与术语
+
+| 项目 | 当前事实 |
+|---|---|
+| 名称 | `hermes-plugin-milky` |
+| 类型 | Hermes directory/platform plugin |
+| 语言 | Python 3.13+ |
+| 协议 | Milky v1.3 HTTP Action + SSE |
+| 公开入口 | `__init__.py::register(ctx)` |
+| manifest/package version | manifest 2；package 1.8.0 |
+| 维护者 | `ByteColtX`（manifest 和 pyproject author） |
+| 架构复核日期 | 2026-09-14 |
+| 部署目标 | Hermes Gateway；具体 hosting 为 `Not evident from the repository` |
 
 | 术语 | 含义 |
 |---|---|
-| directory plugin | Hermes 从插件目录发现并加载的插件 |
-| Milky Action | `POST /api/{action}` 操作 |
-| canonical / chat key | 规范化消息记录；`group:<id>` 或 `dm:<id>` 会话标识 |
-| Gate / Will | 进入 Hermes 前的硬性门禁；决定 `wait` 或 `trigger` 的策略层 |
-| wait/context buffer | 按 chat 隔离、有界、可丢失的待触发消息/系统事件缓存 |
-| materialization | 将已确认资源变为 Hermes 或 Milky 可访问引用 |
-| native segment | Milky wire protocol 的 typed segment，如 `image`、`record`、`video` |
-| transport unknown / raw envelope | 无法确认远端结果；保留 `status`、`retcode`、`data` 和扩展字段的响应 |
-| ToolSpec | Hermes Agent 可发现的固定工具 schema、handler 和调用边界 |
+| chat key / canonical message / Admission | chat key 是严格的 `dm:<QQ号>` 或 `group:<群号>`；canonical 是 parser、normalizer、identity 校验后的不可变记录；Admission 是保证插件 ingress 顺序的每 chat 短临界区 |
+| Gate | Will 前的确定性硬门禁 |
+| Will | 决定 `wait` 或 `trigger` 的 routing/willingness 策略 |
+| wait buffer / trigger batch / system context | wait buffer 是每 chat 有界 FIFO；trigger batch 是原子 drain 后交给 Hermes 的批次；system context 是 recall、nudge、member 等 context-only 事件 |
+| materialization | 将本地资源变成受控的发送输入；不是直接传本地路径 |
+| ToolSpec / `sticker_send` | ToolSpec 是固定名称、schema、handler 和检查函数组成的 Agent 工具；`sticker_send` 从本地贴纸库选择并发送一张图片 |
+| `transport_unknown` | 网络失败且无法确认远端副作用是否已执行 |
+| `[SPLIT]` / `[SILENT]` / standalone sender | 出站分段标记 / Hermes core 的静默控制 / 没有 live adapter 时供 cron/home channel 使用的一次性 sender |
