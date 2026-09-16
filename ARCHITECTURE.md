@@ -18,7 +18,7 @@
 
 ```text
 hermes-plugin-milky/
-├── plugin.yaml              # Hermes manifest、依赖、环境变量和 26 个 ToolSpec
+├── plugin.yaml              # Hermes manifest、依赖、环境变量、25 个 Action ToolSpec 和 1 个语义 Tool
 ├── __init__.py              # 唯一入口：注册 platform、command、tools、skills
 ├── adapter.py               # MilkyAdapter；连接、停止和 Hermes 边界
 ├── config/                  # 启动配置、白名单和 Will policy
