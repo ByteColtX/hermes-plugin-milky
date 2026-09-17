@@ -61,7 +61,7 @@ SEND_PROFILE_LIKE_SCHEMA = {
                 "minimum": 1,
                 "maximum": 50,
                 "nullable": False,
-                "description": "点赞数量；通常为10或50次",
+                "description": "点赞数，通常10或50次，同一Q号每日上限50次",
             },
         },
         "required": ["user_id"],
