@@ -55,7 +55,7 @@ metadata:
 
 | ToolSpec | 参数 | 用途 |
 | --- | --- | --- |
-| `send_profile_like` | `{user_id: integer, count?: integer|null}` | 点赞名片 |
+| `send_profile_like` | `{user_id: integer, count?: integer|null}`；显式 `count` 为 `1..50`，通常 `10` 或 `50` | 点赞名片；同一 QQ 号每日上限 50 次 |
 | `send_friend_nudge` | `{user_id: integer, is_self?: boolean|null}` | 给好友发送戳一戳 |
 | `send_group_nudge` | `{group_id: integer, user_id: integer}` | 在群里戳一戳；目标须是群成员 |
 | `recall_group_message` | `{group_id: integer, message_seq: integer}` | 撤回群消息 |

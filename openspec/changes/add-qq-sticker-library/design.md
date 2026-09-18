@@ -2,6 +2,11 @@
 
 本 change 建立在当前 Milky 入站和出站边界之上。普通消息已经按 canonical、TTL dedup、admission、Gate、Will、buffer drain、trigger 资源解析、Hermes mapper 和 `handle_message()` 交接；`ResourceResolver` 在 trigger 阶段把已确认的远端媒体交给 Hermes helper，并只向 mapper 提供本地 materialization。出站图片已经由统一 sender 负责目标解析、大小限制、URI materialization 和 Milky native Action。
 
+当前版本还已经交付显式 `/milky sticker` 人工维护和 `sticker_send`：独立 `stickers.db` 使用
+`sticker_items`、`sticker_files`、`sticker_send_usage` 等表，图片位于 plugin-data 下的受控目录。
+本 change 需要在这个既有持久化边界上迁移或扩展 schema，保留已有人工条目、文件、字段覆盖和
+使用统计；不得把“首次启用”实现为创建空库、覆盖旧表或重复导入已有文件。
+
 贴纸收藏的目标是“系统自主收集高质量贴纸”，而不是让 Agent 看到图片后再调用收藏工具。因此自动收集必须挂在资源解析完成之后的 Milky-owned 旁路上，并且不能改变原有 Hermes handoff。视觉判定优先复用 Hermes 已有的 `vision_analyze_tool` 能力；视觉能力不可用或结果不满足严格格式时，自动收藏安全跳过。
 
 因此 sticker library 不需要复制下载器、SSRF 校验、远端媒体缓存或第二套出站发送协议。它只需要暂存当前图片的受信任本地输入，经过确定性过滤和视觉质量策略后，把接受的内容写入插件自己的持久化目录，并在发送时重新交给既有出站边界。
@@ -31,9 +36,12 @@
 
 ## Decisions
 
-### 1. 使用两层内容目录，并保存质量判定元数据
+### 1. 在现有贴纸库上扩展两层内容目录，并保存质量判定元数据
 
-插件使用独立的 `stickers.db`，通过 `plugin_db("hermes-plugin-milky", filename="stickers.db")` 打开；实际 bytes 位于 `plugin_data_dir("hermes-plugin-milky") / "stickers"`。文件名由 SHA-256 content ID 派生，不能由 Tool 参数、远端 URL 或原始文件名派生。
+插件继续使用现有独立的 `stickers.db`，通过 `plugin_db("hermes-plugin-milky", filename="stickers.db")`
+打开；实际 bytes 位于 `plugin_data_dir("hermes-plugin-milky") / "stickers"`。文件名由 SHA-256
+content ID 派生，不能由 Tool 参数、远端 URL 或原始文件名派生。迁移需保留当前人工维护 schema
+和已有条目，再增加或映射自动 collection 所需的 asset/entry 数据；schema 失败时不得清空旧库。
 
 数据库至少包含两层逻辑：
 
@@ -52,7 +60,8 @@ sticker_entry
 
 `sticker_asset` 负责一份真实内容及其已确认的质量状态；`sticker_entry` 负责某个作用域的可见分类、标签和统计。 `UNIQUE(scope_key, content_id)` 防止同一作用域重复条目。质量标签使用固定枚举，不保存视觉模型的自由文本理由；source 只保存低敏关联字段，不保存消息正文、临时 URL、完整 Milky raw、发送者昵称或本地路径。
 
-选择独立 `stickers.db` 而不是复用关系系统的默认数据库，是为了避免关系表迁移、连接关闭和 schema 版本互相污染。两者仍共享 Hermes plugin-data 根目录，但不共享表、repository 或事务对象。
+继续使用独立 `stickers.db` 而不是复用关系系统的默认数据库，是为了避免关系表迁移、连接关闭和
+schema 版本互相污染。两者仍共享 Hermes plugin-data 根目录，但不共享表、repository 或事务对象。
 
 备选方案是单个 JSON 文件或 `ctx.state`；前者无法安全处理并发和原子引用，后者有配额且不适合图片目录和关系查询，因此不采用。直接复用 Hermes session DB 也会把插件业务状态耦合到 core session 生命周期，排除在外。
 
@@ -119,6 +128,9 @@ sticker_forget: {sticker_id}
 
 `sticker_categories`、`sticker_search`、`sticker_send` 和 `sticker_forget` 都从当前 session 推导 scope；Agent 不得提交路径、URL、resource ID、content bytes 或任意 target。 `sticker_forget` 只删除当前作用域的 entry；底层 asset 只有在没有其他 entry 引用时才由可恢复 cleanup 处理。
 
+当前 `sticker_send` 只按 `intent`、`emotion` 和 `tags` 使用既有人工库；本 change 会在保留当前
+会话目标和一次发送边界的前提下，将其调整为可处理新 entry 的受限契约，并增加其余固定工具。
+
 自动收集是内部服务操作，不注册为 Agent Tool，也不由关键词、Will、普通回复或系统事件隐式触发。 `pre_tool_call` 只为四个固定工具做会话、scope、参数和权限检查；handler 继续重复校验。 `sticker_send` 最多一次网络发送，未知结果不重试、不计数。
 
 ### 6. 读写和文件一致性采用可恢复顺序
@@ -150,7 +162,8 @@ storage service 首次工具、自动收集任务或 CLI 使用时懒加载，�
 
 ## Migration Plan
 
-1. 首次启用创建空的 sticker library；不自动扫描历史入站消息，不回填历史图片，也不迁移其他插件的数据库或资源目录。
+1. 首次启用自动 collection 时先识别并迁移现有 `stickers.db`/library schema，保留人工条目、文件、
+   人工字段和使用统计；不自动扫描历史入站消息，不回填历史图片，也不迁移其他插件的数据库或资源目录。
 2. 先实现只读 categories/search、质量 fixture 和 dry-run import，再启用自动收集、send 和 forget；视觉能力不可用时只提供查询/发送已有条目。
 3. 在 fake Hermes、脱敏资源 fixture 和 fake Milky sender 上验证正负图片分类、截图/新闻排除、作用域隔离、任务取消、文件/数据库失败和未知发送结果；实机 smoke 仅在用户明确授权目标后进行。
 4. 回滚时关闭自动收集或撤销插件版本；保留 `plugin-data/.../stickers`，不执行自动删除。恢复版本时通过 schema version 或显式 reindex 处理，不依赖重新下载远端媒体。

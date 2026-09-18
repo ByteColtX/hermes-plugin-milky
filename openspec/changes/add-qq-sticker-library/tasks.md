@@ -1,7 +1,7 @@
 ## 1. 契约、配置和持久化基础
 
 - [ ] 1.1 增加 sticker scope 配置解析，默认使用当前 `dm:<peer_id>`/`group:<group_id>`，仅允许显式合法的 global 配置；用配置单元测试验证缺失、非法和 global 场景不猜测目标
-- [ ] 1.2 建立独立的 sticker storage 模块和 schema version，使用 `plugin_db("hermes-plugin-milky", filename="stickers.db")` 与 `plugin_data_dir()` 下的 sticker 文件目录；用 schema 初始化、重载和路径边界测试验证不触及 Hermes session DB
+- [ ] 1.2 在已有 `stickers.db`/library storage 上扩展 schema version，继续使用 `plugin_db("hermes-plugin-milky", filename="stickers.db")` 与 `plugin_data_dir()` 下的 sticker 文件目录；用兼容迁移、重载、旧条目/统计保留和路径边界测试验证不覆盖现有人工库、不触及 Hermes session DB
 - [ ] 1.3 实现 `sticker_asset`/`sticker_entry` 的作用域、SHA-256 content ID、quality class/score、classifier version、category/tag、usage 字段和 `(scope_key, content_id)` 去重；用 store 单元测试覆盖 duplicate、跨作用域隔离、空库和损坏记录
 - [ ] 1.4 实现接受图片的 MIME/大小/常规文件校验、临时文件原子写入、引用优先清理和 missing/orphan 诊断；用 PNG/JPEG/GIF/WebP、超限、非 regular file、写入失败和 cleanup 测试验证不留下假成功
 
@@ -16,7 +16,7 @@
 
 ## 3. 固定 ToolSpec、授权和纠错
 
-- [ ] 3.1 注册 `sticker_categories`、`sticker_search`、`sticker_send` 和 `sticker_forget` 固定 ToolSpec，确认自动收集不作为 Agent Tool；用工具发现和参数边界测试验证注册阶段无网络/图片读取/视觉调用副作用
+- [ ] 3.1 在保留并调整现有 `sticker_send` 的前提下，注册 `sticker_categories`、`sticker_search` 和 `sticker_forget` 固定 ToolSpec，确认自动收集不作为 Agent Tool；用工具发现和参数边界测试验证注册阶段无网络/图片读取/视觉调用副作用
 - [ ] 3.2 增加 sticker 专用 `pre_tool_call` 授权与安全审计，并在 handler 内重复校验当前 platform、session、chat scope 和 target；用跨群、temp、未确认 session、任意路径/URL/资源 URI 注入测试验证网络和 mutation 前拒绝
 - [ ] 3.3 实现 `sticker_categories`/`sticker_search` 的当前作用域查询，返回紧凑元数据且不泄露路径、URL、正文、bytes 或视觉自由文本；用 category/keyword/tag/limit、空库、损坏 DB 和缺文件测试验证结果边界
 - [ ] 3.4 实现 `sticker_send` 复用现有 Milky image sender、目标解析和 materialization，最多一次网络发送，仅在确认成功后更新 usage；用成功、rejected、unsupported、transport unknown、缺文件和重复工具调用测试验证不重发不计数
@@ -26,7 +26,7 @@
 
 - [ ] 4.1 提供受权限控制的 import/list/cleanup/reindex CLI 及 `--dry-run`，导入目录沿用同一 MIME、大小、hash 和质量策略；用 dry-run 断言无文件/数据库写入，并覆盖不支持文件、截图/新闻拒绝和重复导入
 - [ ] 4.2 接入懒加载、`ctx.on_unload()` 关闭、自动分类任务取消、staging 清理和 plugin reload 数据保留；用注册阶段、首次使用、卸载、重载、数据库不可用和 schema 不兼容测试验证不阻断普通 Milky handoff
-- [ ] 4.3 更新 `ARCHITECTURE.md`、`README.md`、plugin manifest/配置说明和 bundled skill，明确自动质量门控、scope、四个工具、运维命令和拒绝边界；用文档搜索和 manifest 能力检查验证没有宣传未交付能力
+- [ ] 4.3 更新 `ARCHITECTURE.md`、`README.md`、plugin manifest/配置说明和 bundled skill，明确自动质量门控、scope、现有发送工具与新增工具、运维命令和拒绝边界；用文档搜索和 manifest 能力检查验证没有宣传未交付能力
 - [ ] 4.4 与 `add-milky-relationship-system` 的工具注册、pipeline observer 和生命周期改动进行合并复核，保持独立数据库/表/事件语义；用两套 change 的 fake integration 回归验证没有覆盖注册或改变关系规则
 
 ## 5. 集成验证和交付证据
