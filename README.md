@@ -179,12 +179,15 @@ group_sessions_per_user: false
 # 显式指定时区
 timezone: Asia/Shanghai
 
-# 长任务跟进
+# 长任务跟进与卡住自恢复
 agent:
-  gateway_timeout: 1800
+  gateway_timeout: 360          # 无 Agent 活动 6 分钟后终止当前 turn
+  gateway_timeout_warning: 120  # 超时前 2 分钟发出提醒
   gateway_auto_continue_freshness: 3600
   gateway_notify_interval: 180  # 每 3 分钟发一次“仍在处理”
-  session_stall_timeout: 300    # 排队且无进展 5 分钟时提醒
+  session_stall_timeout: 120    # 有排队消息且无进展 2 分钟时提醒
+  local_stream_stale_timeout: 180  # 本地 provider 无实际流内容 3 分钟后重连
+  api_max_retries: 1            # 减少卡住 provider 的重复等待
   # 已确认主模型支持图片输入时，直接以内联图片交给主模型
   image_input_mode: native
 
