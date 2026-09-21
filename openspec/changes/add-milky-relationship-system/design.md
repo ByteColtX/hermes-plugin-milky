@@ -251,7 +251,7 @@ occurred_at。它可执行 commitment due/resolve、major/critical 事件和受�
 ### 7. Hermes 能力边界和失败策略
 
 `ctx.state` 保留给少量配置/feature metadata，不保存关系 event ledger；关系数据库不写
-Hermes core session state，也不修改 `/Users/bytecolt/PythonProjects/hermes-agent`。
+Hermes core session state，也不修改 Hermes core。
 关系 Tool 不依赖 Milky HTTP Action，缺失 session context 时安全返回错误；未同步 self_id
 时即使存在历史关系也拒绝新的关系读写，避免把错误 Bot 归因到用户。
 

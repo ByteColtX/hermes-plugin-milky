@@ -31,6 +31,6 @@
 ## Impact
 
 - 影响 `inbound/pipeline.py`、`adapter.py`、`__init__.py`、`plugin.yaml`、`outbound/tools.py` 以及新增的 relationship repository/service、事件模型和配置模块。
-- 新增 Hermes `plugins.plugin_storage.plugin_db("hermes-plugin-milky")` 依赖边界，使用独立 SQLite/WAL 表保存关系状态和事件账本；Hermes core 与 `/Users/bytecolt/PythonProjects/hermes-agent` 不修改。
+- 新增 Hermes `plugins.plugin_storage.plugin_db("hermes-plugin-milky")` 依赖边界，使用独立 SQLite/WAL 表保存关系状态和事件账本；不修改 Hermes core。
 - 需要补充关系算法、SQLite 事务/迁移、群成员隔离、Tool 授权、幂等、异常降级和 fake Hermes 集成测试，并同步 `ARCHITECTURE.md`、`README.md` 与主规范。
 - 这是新增持久化行为和 Agent 工具能力；未配置关系策略或旧 Hermes 宿主缺少必要 session context 时，系统必须保持安全的只读/不变更降级，而不是猜测目标或写入默认关系。

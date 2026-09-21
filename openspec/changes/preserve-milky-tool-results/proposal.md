@@ -27,7 +27,7 @@ Milky Tool 的响应目前经过插件侧 envelope 解析、敏感字段过滤�
 
 ## Impact
 
-- 主要影响 [`milky/parser.py`](/Users/bytecolt/PythonProjects/hermes-plugin-milky/milky/parser.py)、[`milky/client.py`](/Users/bytecolt/PythonProjects/hermes-plugin-milky/milky/client.py)、[`outbound/sender.py`](/Users/bytecolt/PythonProjects/hermes-plugin-milky/outbound/sender.py) 和 [`outbound/tools.py`](/Users/bytecolt/PythonProjects/hermes-plugin-milky/outbound/tools.py) 的 Tool 响应路径及其测试 fixture。
-- 需要与 Hermes core 的 Tool registry 和 [`transform_tool_result`](/Users/bytecolt/PythonProjects/hermes-agent/model_tools.py:834) 行为协同；本 change 不修改 Hermes core，只记录其 opt-out 能力为外部依赖和验证边界。
+- 主要影响 [`milky/parser.py`](../../../milky/parser.py)、[`milky/client.py`](../../../milky/client.py)、[`outbound/sender.py`](../../../outbound/sender.py) 和 [`outbound/tools.py`](../../../outbound/tools.py) 的 Tool 响应路径及其测试 fixture。
+- 需要与 Hermes core 的 Tool registry 和 `transform_tool_result` 行为协同；本 change 不修改 Hermes core，只记录其 opt-out 能力为外部依赖和验证边界。
 - 入站事件解析、普通消息上下文、日志内容、资源下载权限、Tool allowlist 和副作用调用次数不在本 change 内改变。
 - 真实 Hermes host、真实 Milky 响应和可能产生副作用的 Action 仍不自动验证；相关证据使用 fake host、fake transport 和合成 fixture。
