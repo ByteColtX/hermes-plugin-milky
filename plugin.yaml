@@ -10,7 +10,7 @@ python_dependencies:
 description: >-
   Hermes platform plugin for Milky QQ over HTTP Action and SSE; supports friend/group messages,
   text, CQ-compatible mentions/replies, native media, file uploads, QQ Action tools, and
-  manual sticker maintenance with optional sticker sending.
+  manual sticker maintenance with bounded sticker search and optional sticker sending.
 author: ByteColtX
 provides_tools:
   - send_profile_like
@@ -39,6 +39,7 @@ provides_tools:
   - get_friend_info
   - set_group_member_special_title
   - sticker_send
+  - sticker_search
 requires_env:
   - name: MILKY_BASE_URL
     description: "Milky HTTP(S) base URL, e.g. http://127.0.0.1:3000"

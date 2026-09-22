@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import random
+import re
 import sqlite3
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
@@ -23,6 +24,9 @@ from .validation import read_validated_image_file, validate_library_name
 
 _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
+_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+DEFAULT_SEARCH_LIMIT = 5
+MAX_SEARCH_LIMIT = 10
 _ALLOWED_EMOTIONS = frozenset(
     {
         "joy",
@@ -56,6 +60,22 @@ class StickerQuery:
     intent: str | None = None
     emotion: str | None = None
     tags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class StickerSendRequest:
+    """经过严格校验的查询或精确 ID 发送请求。"""
+
+    query: StickerQuery | None = None
+    sticker_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StickerSearchRequest:
+    """经过严格校验的只读搜索请求。"""
+
+    query: StickerQuery
+    limit: int = DEFAULT_SEARCH_LIMIT
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +128,11 @@ def parse_sticker_query(args: object) -> StickerQuery:
         value = args["intent"]
         if not isinstance(value, str) or not value.strip() or len(value) > 64:
             raise ValueError("intent is invalid")
+        if _looks_like_resource(value):
+            raise ValueError("intent is invalid")
         intent = value.strip()
+        if not normalize_sticker_text(intent):
+            raise ValueError("intent is invalid")
 
     emotion: str | None = None
     if "emotion" in args:
@@ -124,7 +148,7 @@ def parse_sticker_query(args: object) -> StickerQuery:
             raise ValueError("tags are invalid")
         normalized_tags: list[str] = []
         for tag in value:
-            if not isinstance(tag, str) or not tag.strip():
+            if not isinstance(tag, str) or not tag.strip() or _looks_like_resource(tag):
                 raise ValueError("tags are invalid")
             normalized = normalize_sticker_text(tag)
             if not normalized or len(normalized) > 16 or normalized in normalized_tags:
@@ -135,6 +159,49 @@ def parse_sticker_query(args: object) -> StickerQuery:
     if intent is None and emotion is None and not tags:
         raise ValueError("query is empty")
     return StickerQuery(intent=intent, emotion=emotion, tags=tags)
+
+
+def _looks_like_resource(value: str) -> bool:
+    """拒绝把 Tool 文本字段当作本地路径或远端资源引用。"""
+
+    return (
+        "://" in value or value.startswith(("/", "\\")) or bool(re.match(r"^[A-Za-z]:[\\/]", value))
+    )
+
+
+def parse_sticker_send_request(args: object) -> StickerSendRequest:
+    """校验 sticker_send 的互斥查询和 ID 参数，不访问外部状态。"""
+
+    if not isinstance(args, Mapping):
+        raise TypeError("request is not an object")
+    if "sticker_id" in args:
+        if len(args) != 1:
+            raise ValueError("sticker_id cannot be mixed with query fields")
+        value = args["sticker_id"]
+        if not isinstance(value, str) or not _ID_RE.fullmatch(value):
+            raise ValueError("sticker_id is invalid")
+        return StickerSendRequest(sticker_id=value)
+    return StickerSendRequest(query=parse_sticker_query(args))
+
+
+def parse_sticker_search_request(args: object) -> StickerSearchRequest:
+    """校验 sticker_search 的有界参数，不访问外部状态。"""
+
+    if not isinstance(args, Mapping):
+        raise TypeError("search request is not an object")
+    allowed = {"intent", "emotion", "tags", "limit"}
+    if set(args) - allowed:
+        raise ValueError("search request contains unknown fields")
+    limit = DEFAULT_SEARCH_LIMIT
+    if "limit" in args:
+        value = args["limit"]
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError("limit is invalid")
+        if not 1 <= value <= MAX_SEARCH_LIMIT:
+            raise ValueError("limit is out of range")
+        limit = value
+    query_args = {key: args[key] for key in ("intent", "emotion", "tags") if key in args}
+    return StickerSearchRequest(query=parse_sticker_query(query_args), limit=limit)
 
 
 def tokenize_sticker_text(value: str, tokenizer: Any | None = None) -> tuple[str, ...]:
@@ -152,23 +219,27 @@ def tokenize_sticker_text(value: str, tokenizer: Any | None = None) -> tuple[str
     return tuple(normalized_tokens)
 
 
-def _decode_tags(value: object) -> tuple[str, ...]:
-    """解码当前生效的 tags；非法库字段不作为匹配输入。"""
+def _decode_tags(value: object) -> tuple[str, ...] | None:
+    """解码并验证当前生效的 tags；非法字段不作为候选。"""
 
     if not isinstance(value, str):
-        return ()
+        return None
     try:
         decoded = json.loads(value)
     except json.JSONDecodeError:
-        return ()
-    if not isinstance(decoded, list):
-        return ()
+        return None
+    if not isinstance(decoded, list) or len(decoded) > 5:
+        return None
     result: list[str] = []
+    normalized_seen: set[str] = set()
     for tag in decoded:
-        if isinstance(tag, str):
-            normalized = normalize_sticker_text(tag)
-            if normalized:
-                result.append(normalized)
+        if not isinstance(tag, str):
+            return None
+        normalized = normalize_sticker_text(tag)
+        if not normalized or len(tag) > 16 or len(normalized) > 16 or normalized in normalized_seen:
+            return None
+        normalized_seen.add(normalized)
+        result.append(tag)
     return tuple(result)
 
 
@@ -193,9 +264,10 @@ class StickerSendService:
 
         store = self._new_store()
         try:
-            store.open(read_only=True, create_dirs=False)
-            if store.connection is None or store.paths is None:
+            if not self._open_existing_for_read(store):
                 return False
+            assert store.connection is not None
+            assert store.paths is not None
             candidates = self._read_candidates(store.connection, store.paths, require_file=True)
             return bool(candidates)
         except (StickerStorageError, StickerUnsupportedError, OSError, sqlite3.Error):
@@ -203,8 +275,103 @@ class StickerSendService:
         finally:
             store.close()
 
-    async def send(self, query: StickerQuery, chat_key: str, sender: object) -> dict[str, object]:
-        """选择一张受控贴纸、claim 统计并执行一次 Milky send Action。"""
+    def search(
+        self, query: StickerSearchRequest | StickerQuery, chat_key: str
+    ) -> dict[str, object]:
+        """只读搜索当前可见贴纸并返回有界元数据。"""
+
+        try:
+            chat_key = validate_sticker_chat_key(chat_key)
+        except ValueError:
+            return {"status": "unsupported"}
+        if isinstance(query, StickerQuery):
+            request = StickerSearchRequest(query)
+        elif isinstance(query, StickerSearchRequest):
+            request = query
+        else:
+            return {"status": "invalid_input"}
+        if not isinstance(request.query, StickerQuery):
+            return {"status": "invalid_input"}
+        if not isinstance(request.limit, int) or isinstance(request.limit, bool):
+            return {"status": "invalid_input"}
+        if not 1 <= request.limit <= MAX_SEARCH_LIMIT:
+            return {"status": "invalid_input"}
+        if (
+            request.query.intent is None
+            and request.query.emotion is None
+            and not request.query.tags
+        ):
+            return {"status": "invalid_input"}
+
+        store = self._new_store()
+        try:
+            if not self._open_existing_for_read(store):
+                return {"status": "unsupported"}
+            if store.connection is None or store.paths is None:
+                return {"status": "unsupported"}
+            candidates = self._read_candidates(store.connection, store.paths, require_file=True)
+            matches = self._match_candidates(candidates, request.query, jieba)
+            ordered = sorted(matches, key=_search_rank)
+            items = [_search_item(match.candidate) for match in ordered[: request.limit]]
+            return (
+                {"status": "ok", "items": items}
+                if items
+                else {
+                    "status": "no_match",
+                    "items": [],
+                }
+            )
+        except StickerUnsupportedError:
+            return {"status": "unsupported"}
+        except (StickerStorageError, OSError, sqlite3.Error):
+            return {"status": "storage_error"}
+        except Exception:  # noqa: BLE001 - 搜索边界不泄漏底层错误
+            return {"status": "storage_error"}
+        finally:
+            store.close()
+
+    async def send(
+        self,
+        query: StickerQuery | StickerSendRequest | str,
+        chat_key: str,
+        sender: object,
+    ) -> dict[str, object]:
+        """选择或精确解析一张贴纸，claim 统计并执行一次发送。"""
+
+        request: StickerSendRequest
+        if isinstance(query, StickerQuery):
+            request = StickerSendRequest(query=query)
+        elif isinstance(query, str):
+            if not _ID_RE.fullmatch(query):
+                return {"status": "invalid_input"}
+            request = StickerSendRequest(sticker_id=query)
+        elif isinstance(query, StickerSendRequest):
+            request = query
+        else:
+            return {"status": "invalid_input"}
+        if (request.query is None) == (request.sticker_id is None):
+            return {"status": "invalid_input"}
+        if request.query is not None and not isinstance(request.query, StickerQuery):
+            return {"status": "invalid_input"}
+        if request.sticker_id is not None and (
+            not isinstance(request.sticker_id, str) or not _ID_RE.fullmatch(request.sticker_id)
+        ):
+            return {"status": "invalid_input"}
+        if (
+            request.query is not None
+            and request.query.intent is None
+            and request.query.emotion is None
+            and not request.query.tags
+        ):
+            return {"status": "invalid_input"}
+        try:
+            chat_key = validate_sticker_chat_key(chat_key)
+        except ValueError:
+            return {"status": "unsupported"}
+
+        send_sticker = getattr(sender, "send_sticker", None)
+        if not callable(send_sticker):
+            return {"status": "unsupported"}
 
         store = self._new_store()
         try:
@@ -212,15 +379,18 @@ class StickerSendService:
                 return {"status": "unsupported"}
             if store.connection is None or store.paths is None:
                 return {"status": "unsupported"}
-            candidates = self._read_candidates(store.connection, store.paths, require_file=False)
-            matches = self._match_candidates(candidates, query, jieba)
-            selected = self._select_candidate(store.connection, matches, chat_key)
-            if selected is None:
-                return {"status": "no_match"}
-
-            send_sticker = getattr(sender, "send_sticker", None)
-            if not callable(send_sticker):
-                return {"status": "unsupported"}
+            if request.sticker_id is not None:
+                selected = self._read_candidate_by_id(
+                    store.connection, store.paths, request.sticker_id
+                )
+            else:
+                candidates = self._read_candidates(
+                    store.connection, store.paths, require_file=False
+                )
+                matches = self._match_candidates(candidates, request.query or StickerQuery(), jieba)
+                selected = self._select_candidate(store.connection, matches, chat_key)
+                if selected is None:
+                    return {"status": "no_match"}
             uri = self._materialize_selected(store.paths, selected)
             self._claim_use(store.connection, store.paths, selected, chat_key)
             result = await send_sticker(chat_key, uri)
@@ -243,12 +413,23 @@ class StickerSendService:
             return {"status": "malformed"}
         except StickerSendStorageFailure as error:
             return {"status": error.status}
-        except (StickerUnsupportedError, StickerStorageError, sqlite3.Error):
+        except StickerUnsupportedError:
+            return {"status": "unsupported"}
+        except (StickerStorageError, sqlite3.Error):
             return {"status": "storage_error"}
         except OSError:
             return {"status": "storage_error"}
+        except Exception:  # noqa: BLE001 - 发送边界不泄漏底层错误
+            return {"status": "storage_error"}
         finally:
             store.close()
+
+    async def send_id(self, sticker_id: str, chat_key: str, sender: object) -> dict[str, object]:
+        """按持久化 opaque ID 精确发送一张贴纸。"""
+
+        if not isinstance(sticker_id, str) or not _ID_RE.fullmatch(sticker_id):
+            return {"status": "invalid_input"}
+        return await self.send(StickerSendRequest(sticker_id=sticker_id), chat_key, sender)
 
     def _new_store(self) -> StickerStore:
         data_factory = self._data_dir_factory
@@ -267,6 +448,16 @@ class StickerSendService:
             data_dir_factory=data_factory,
             db_factory=db_factory,
         )
+
+    @staticmethod
+    def _open_existing_for_read(store: StickerStore) -> bool:
+        """以不创建、不迁移的方式打开并检查现有贴纸库。"""
+
+        store.open(read_only=True, create_dirs=False)
+        if store.connection is None or store.paths is None:
+            return False
+        _validate_read_schema(store.connection)
+        return True
 
     @staticmethod
     def _open_existing_for_write(store: StickerStore) -> bool:
@@ -310,32 +501,39 @@ class StickerSendService:
 
         result: list[_StickerCandidate] = []
         for row in rows:
-            if not _valid_candidate_index(row, paths, require_file=require_file):
-                continue
-            tags = _decode_tags(row[6])
-            if not isinstance(row[0], str) or not isinstance(row[1], str):
-                continue
-            if (
-                not isinstance(row[5], str)
-                or not isinstance(row[7], str)
-                or isinstance(row[4], bool)
-                or not isinstance(row[4], int)
-            ):
-                continue
-            result.append(
-                _StickerCandidate(
-                    sticker_id=row[0],
-                    file_sha256=row[1],
-                    image_format=str(row[2]),
-                    mime_type=str(row[3]),
-                    size_bytes=int(row[4]),
-                    emotion=row[5],
-                    tags=tags,
-                    description=row[7],
-                    relative_path=row[9],
-                )
-            )
+            candidate = _candidate_from_row(row, paths, require_file=require_file)
+            if candidate is not None:
+                result.append(candidate)
         return result
+
+    @staticmethod
+    def _read_candidate_by_id(
+        connection: sqlite3.Connection, paths: StickerPaths, sticker_id: str
+    ) -> _StickerCandidate:
+        """按 ID 读取当前条目，并保留缺失文件与索引损坏的区别。"""
+
+        try:
+            row = connection.execute(
+                """
+                SELECT i.sticker_id, i.file_sha256, i.format, i.mime_type, i.size_bytes,
+                       i.emotion, i.tags_json, i.description,
+                       f.sha256, f.relative_path, f.mime_type, f.size_bytes
+                FROM sticker_items AS i
+                LEFT JOIN sticker_files AS f ON f.sha256 = i.file_sha256
+                WHERE i.sticker_id = ?
+                """,
+                (sticker_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise StickerStorageError("sticker lookup failed") from error
+        if row is None:
+            raise StickerSendStorageFailure("not_found")
+        if row[8] is None or row[9] is None:
+            raise StickerSendStorageFailure("storage_error")
+        candidate = _candidate_from_row(row, paths, require_file=False)
+        if candidate is None:
+            raise StickerSendStorageFailure("storage_error")
+        return candidate
 
     @staticmethod
     def _match_candidates(
@@ -353,7 +551,9 @@ class StickerSendService:
         for candidate in candidates:
             if query.emotion is not None and candidate.emotion != query.emotion:
                 continue
-            candidate_tags = set(candidate.tags)
+            candidate_tags = {
+                normalized for tag in candidate.tags if (normalized := normalize_sticker_text(tag))
+            }
             tag_hits = len(candidate_tags.intersection(query.tags))
             if query.tags and tag_hits == 0:
                 continue
@@ -532,6 +732,133 @@ def _valid_candidate_index(
     )
 
 
+def _candidate_from_row(
+    row: Sequence[object], paths: StickerPaths, *, require_file: bool
+) -> _StickerCandidate | None:
+    """将数据库行收敛为当前可见且元数据有界的候选。"""
+
+    if len(row) < 12 or not _valid_candidate_index(row, paths, require_file=require_file):
+        return None
+    sticker_id = row[0]
+    file_sha256 = row[1]
+    image_format = row[2]
+    mime_type = row[3]
+    size_bytes = row[4]
+    emotion = row[5]
+    description = row[7]
+    tags = _decode_tags(row[6])
+    relative_path = row[9]
+    if (
+        not isinstance(sticker_id, str)
+        or not _ID_RE.fullmatch(sticker_id)
+        or not isinstance(file_sha256, str)
+        or not isinstance(image_format, str)
+        or not isinstance(mime_type, str)
+        or isinstance(size_bytes, bool)
+        or not isinstance(size_bytes, int)
+        or size_bytes <= 0
+        or not isinstance(emotion, str)
+        or emotion not in _ALLOWED_EMOTIONS
+        or tags is None
+        or not isinstance(description, str)
+        or len(description) > 20
+        or _looks_like_resource(description)
+        or any(_looks_like_resource(tag) for tag in tags)
+        or not isinstance(relative_path, str)
+    ):
+        return None
+    return _StickerCandidate(
+        sticker_id=sticker_id,
+        file_sha256=file_sha256,
+        image_format=image_format,
+        mime_type=mime_type,
+        size_bytes=size_bytes,
+        emotion=emotion,
+        tags=tags,
+        description=description,
+        relative_path=relative_path,
+    )
+
+
+def _search_rank(match: _Match) -> tuple[int, int, int, str]:
+    """返回搜索使用的固定相关性和 ID 排序键。"""
+
+    layer_order = {"emotion": 0, "tags": 1, "partial_tokens": 2, "all_tokens": 3, "phrase": 4}
+    return (
+        -layer_order[match.layer],
+        -match.intent_token_hits,
+        -match.tag_hits,
+        match.candidate.sticker_id,
+    )
+
+
+def _search_item(candidate: _StickerCandidate) -> dict[str, object]:
+    """投影搜索允许交付的最小字段。"""
+
+    return {
+        "sticker_id": candidate.sticker_id,
+        "emotion": candidate.emotion,
+        "tags": list(candidate.tags),
+        "description": candidate.description,
+    }
+
+
+def _validate_read_schema(connection: sqlite3.Connection) -> None:
+    """只读验证搜索所需的 schema，不执行迁移或修复。"""
+
+    try:
+        version_row = connection.execute(
+            "SELECT value FROM sticker_schema_meta WHERE key = 'schema_version'"
+        ).fetchone()
+    except sqlite3.OperationalError as error:
+        if _is_missing_schema_object(error):
+            raise StickerUnsupportedError("incompatible schema") from error
+        raise StickerStorageError("schema read failed") from error
+    except sqlite3.DatabaseError as error:
+        raise StickerStorageError("schema read failed") from error
+    if version_row is None:
+        raise StickerUnsupportedError("incompatible schema")
+    try:
+        version = int(version_row[0])
+    except (TypeError, ValueError) as error:
+        raise StickerUnsupportedError("invalid schema version") from error
+    if version not in {1, 2, 3}:
+        raise StickerUnsupportedError("unsupported schema version")
+    required = {
+        "sticker_items": {
+            "sticker_id",
+            "file_sha256",
+            "format",
+            "mime_type",
+            "size_bytes",
+            "emotion",
+            "tags_json",
+            "description",
+        },
+        "sticker_files": {"sha256", "relative_path", "mime_type", "size_bytes"},
+    }
+    try:
+        for table, columns in required.items():
+            actual = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+            if not columns.issubset(actual):
+                raise StickerUnsupportedError("incompatible schema")
+    except StickerUnsupportedError:
+        raise
+    except sqlite3.OperationalError as error:
+        if _is_missing_schema_object(error):
+            raise StickerUnsupportedError("incompatible schema") from error
+        raise StickerStorageError("schema read failed") from error
+    except sqlite3.DatabaseError as error:
+        raise StickerStorageError("schema read failed") from error
+
+
+def _is_missing_schema_object(error: sqlite3.OperationalError) -> bool:
+    """识别可归类为 schema 不兼容的 SQLite 缺失对象错误。"""
+
+    message = str(error).casefold()
+    return "no such table" in message or "no such column" in message
+
+
 def _safe_library_path(
     paths: StickerPaths, relative_path: object, *, require_file: bool = True
 ) -> Path | None:
@@ -590,11 +917,17 @@ def validate_sticker_chat_key(value: object) -> str:
 
 
 __all__ = [
+    "DEFAULT_SEARCH_LIMIT",
+    "MAX_SEARCH_LIMIT",
     "StickerQuery",
+    "StickerSearchRequest",
+    "StickerSendRequest",
     "StickerSendService",
     "StickerSendStorageFailure",
     "normalize_sticker_text",
     "parse_sticker_query",
+    "parse_sticker_search_request",
+    "parse_sticker_send_request",
     "tokenize_sticker_text",
     "validate_sticker_chat_key",
 ]

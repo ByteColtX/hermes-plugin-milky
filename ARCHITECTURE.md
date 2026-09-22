@@ -29,7 +29,7 @@ hermes-plugin-milky/
 ├── session/                 # chat identity、Admission、dedup、buffer、上下文
 ├── state/                   # MuteTracker
 ├── outbound/                # sender、CQ、媒体、上传、拆分和 ToolSpec handler
-├── stickers/                # SQLite 贴纸库、维护命令和 sticker_send
+├── stickers/                # SQLite 贴纸库、维护命令和贴纸语义工具
 ├── slash_commands.py        # `/milky` 命令服务
 ├── skills/、scripts/        # bundled skill；smoke、prompt、face catalog 工具
 ├── tests/、openspec/        # 测试 fixture；当前 spec、change、归档历史和 evidence
@@ -51,7 +51,7 @@ hermes-plugin-milky/
 | 系统事件 | `inbound/system_events.py`、`session/context.py` | context FIFO、即时成员通知 |
 | 媒体和文件发送 | `outbound/sender.py`、`materialization.py`、`file_upload.py` | 本地文件边界、Milky Action |
 | QQ Agent 工具 | `outbound/tools.py`、`plugin.yaml`、`milky/client.py` | schema、allowlist、权限风险 |
-| 贴纸功能 | `stickers/`、`slash_commands.py` | SQLite、文件库、单次发送 |
+| 贴纸功能 | `stickers/`、`slash_commands.py` | SQLite、文件库、只读搜索和单次发送 |
 | 连接和停止 | `adapter.py`、`milky/event_stream.py`、`state/mute_tracker.py` | 同步、SSE、任务释放 |
 
 ## 2. 系统图
@@ -71,13 +71,13 @@ MilkyAdapter -> InboundPipeline -> Hermes Gateway -> Agent session/turn -> Outbo
 - Milky 是外部 QQ 协议边界；插件只通过 HTTP Action 和 SSE 与它通信。
 - SSE 不直接创建 Agent turn；普通消息必须经过 `InboundPipeline`。
 - ToolSpec 先经过固定 schema/handler，再调用受限的 client/sender；没有通用 Action catalog。
-- 贴纸数据库和文件目录只由显式贴纸维护或 `sticker_send` 使用。
+- 贴纸数据库和文件目录只由显式贴纸维护、`sticker_search` 或 `sticker_send` 使用。
 
 ## 3. 核心组件
 
 ### 3.1 注册入口和生命周期
 
-`register(ctx)` 一次性解析 `MilkyConfig`，注册 bundled skills、`/milky`、25 个 Milky Action ToolSpec、`sticker_send`，以及 Milky platform 和可选的 home-channel cron 元数据。
+`register(ctx)` 一次性解析 `MilkyConfig`，注册 bundled skills、`/milky`、25 个 Milky Action ToolSpec、`sticker_search`、`sticker_send`，以及 Milky platform 和可选的 home-channel cron 元数据。
 
 它还注册两个无网络的 `after_memory` prompt section：平台使用指导，以及当前 QQ 会话资料快照。注册阶段只组装 service/factory，不创建 HTTP client 请求、SSE、长期 task 或贴纸数据库访问。
 
@@ -180,15 +180,15 @@ get_friend_requests, accept_friend_request, reject_friend_request, get_group_fil
 accept_group_invitation, reject_group_invitation, get_group_files, get_friend_info, set_group_member_special_title
 ```
 
-另有语义工具 `sticker_send`。工具 schema 禁止未知字段并校验 QQ ID、消息序号、枚举和值域；插件不根据正文、关键词、Will 或事件隐式触发状态变更。
+另有语义工具 `sticker_search` 和 `sticker_send`。工具 schema 禁止未知字段并校验 QQ ID、消息序号、枚举和值域；插件不根据正文、关键词、Will 或事件隐式触发状态变更。搜索只返回有界元数据，发送支持查询或持久化 opaque ID。
 
 ### 3.6 贴纸子系统
 
 `/milky sticker` 提供 `add`、`list`、`edit`、`reanalyze`、`del`、`cleanup`、`reindex`。维护服务批量上限为 50，视觉分析并发上限为 10，图片输入、路径、格式、大小和 SHA-256 均校验。
 
-贴纸库只在显式命令或 `sticker_send` 首次需要时懒加载。数据库和文件目录不参与普通消息、SSE 或 Will。`StickerStore` 使用 plugin-data 下的 `stickers.db`，并维护 `sticker_items`、`sticker_files`、`sticker_send_usage`；图片位于受控的 inbox/library/junk 目录。
+贴纸库只在显式命令、`sticker_search` 或 `sticker_send` 首次需要时懒加载。数据库和文件目录不参与普通消息、SSE 或 Will。`StickerStore` 使用 plugin-data 下的 `stickers.db`，并维护 `sticker_items`、`sticker_files`、`sticker_send_usage`；图片位于受控的 inbox/library/junk 目录。
 
-`sticker_send` 在一次 Tool 调用中完成查询、候选选择、使用次数 claim、文件校验和一次发送。
+`sticker_search` 以只读方式校验现有库、复用查询匹配并返回有界候选，不改变使用统计或轮换状态。`sticker_send` 在一次 Tool 调用中完成查询或 ID 选择、使用次数 claim、文件校验和一次发送；ID 选择跳过匹配和轮换，但仍重新校验条目和文件。
 贴纸 SQLite 与文件移动不是单一事务，崩溃后需要 `cleanup` 或 `reindex` 修复孤儿状态。
 
 ## 4. 主要数据流
@@ -402,6 +402,6 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 | Will | 决定 `wait` 或 `trigger` 的 routing/willingness 策略 |
 | wait buffer / trigger batch / system context | wait buffer 是每 chat 有界 FIFO；trigger batch 是原子 drain 后交给 Hermes 的批次；system context 是 recall、nudge、member 等 context-only 事件 |
 | materialization | 将本地资源变成受控的发送输入；不是直接传本地路径 |
-| ToolSpec / `sticker_send` | ToolSpec 是固定名称、schema、handler 和检查函数组成的 Agent 工具；`sticker_send` 从本地贴纸库选择并发送一张图片 |
+| ToolSpec / 贴纸语义工具 | ToolSpec 是固定名称、schema、handler 和检查函数组成的 Agent 工具；`sticker_search` 从本地库返回有界元数据，`sticker_send` 选择并发送一张图片 |
 | `transport_unknown` | 网络失败且无法确认远端副作用是否已执行 |
 | `[SPLIT]` / `[SILENT]` / standalone sender | 出站分段标记 / Hermes core 的静默控制 / 没有 live adapter 时供 cron/home channel 使用的一次性 sender |

@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import json
 import logging
+import re
 import time
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -14,7 +15,8 @@ from milky.client import ActionError
 from milky.logging import render_event
 from stickers.sending import (
     StickerSendService,
-    parse_sticker_query,
+    parse_sticker_search_request,
+    parse_sticker_send_request,
     validate_sticker_chat_key,
 )
 
@@ -26,10 +28,29 @@ from .sender import (
 _ACTIVE_SENDER: MilkyOutboundSender | None = None
 _ACTIVE_STICKER_SERVICE: StickerSendService | None = None
 _MISSING = object()
+_STICKER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_STICKER_EMOTIONS = frozenset(
+    {
+        "joy",
+        "sadness",
+        "anger",
+        "surprise",
+        "fear",
+        "disgust",
+        "love",
+        "approval",
+        "confusion",
+        "neutral",
+        "mixed",
+        "unknown",
+    }
+)
 _STICKER_RESULT_STATUSES = frozenset(
     {
         "sent",
+        "ok",
         "no_match",
+        "not_found",
         "invalid_input",
         "missing_session_context",
         "unsupported",
@@ -673,7 +694,7 @@ SET_GROUP_MEMBER_SPECIAL_TITLE_SCHEMA = {
 
 STICKER_SEND_SCHEMA = {
     "name": "sticker_send",
-    "description": "发送一张贴纸/sticker/meme",
+    "description": "按查询条件或贴纸 ID 向当前会话发送一张贴纸",
     "parameters": {
         "type": "object",
         "properties": {
@@ -681,7 +702,7 @@ STICKER_SEND_SCHEMA = {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 64,
-                "description": "优先填写一个简短的贴纸意图，如：绷不住、哈哈、笑死",
+                "description": "简短意图",
             },
             "emotion": {
                 "type": "string",
@@ -699,14 +720,70 @@ STICKER_SEND_SCHEMA = {
                     "mixed",
                     "unknown",
                 ],
-                "description": "可选的严格情绪筛选；只有确定目标情绪时填写，不确定时省略",
+                "description": "严格情绪筛选",
             },
             "tags": {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 5,
                 "items": {"type": "string", "minLength": 1, "maxLength": 16},
-                "description": "贴纸标签筛选条件",
+                "description": "标签筛选",
+            },
+            "sticker_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_-]{1,128}$",
+                "description": "贴纸 ID，与查询条件互斥",
+            },
+        },
+        "required": [],
+        "additionalProperties": False,
+    },
+}
+
+STICKER_SEARCH_SCHEMA = {
+    "name": "sticker_search",
+    "description": "搜索贴纸，返回 ID、情绪、标签和描述",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "intent": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "description": "简短意图",
+            },
+            "emotion": {
+                "type": "string",
+                "enum": [
+                    "joy",
+                    "sadness",
+                    "anger",
+                    "surprise",
+                    "fear",
+                    "disgust",
+                    "love",
+                    "approval",
+                    "confusion",
+                    "neutral",
+                    "mixed",
+                    "unknown",
+                ],
+                "description": "严格情绪筛选",
+            },
+            "tags": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "items": {"type": "string", "minLength": 1, "maxLength": 16},
+                "description": "标签筛选",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10,
+                "description": "返回数量，默认 5，最多 10",
             },
         },
         "required": [],
@@ -741,6 +818,7 @@ TOOL_SPECS = (
     GET_FRIEND_INFO_SCHEMA,
     SET_GROUP_MEMBER_SPECIAL_TITLE_SCHEMA,
     STICKER_SEND_SCHEMA,
+    STICKER_SEARCH_SCHEMA,
 )
 
 
@@ -761,7 +839,7 @@ def unbind_sender() -> None:
 
 
 def register_tools(ctx: Any) -> None:
-    """向 Hermes 注册固定 Milky ToolSpec 和受限的 sticker_send。"""
+    """向 Hermes 注册固定 Milky ToolSpec 和受限的贴纸工具。"""
 
     global _ACTIVE_STICKER_SERVICE
     _ACTIVE_STICKER_SERVICE = StickerSendService(plugin_context=ctx)
@@ -796,6 +874,7 @@ def register_tools(ctx: Any) -> None:
         _handle_get_friend_info,
         _handle_set_group_member_special_title,
         _handle_sticker_send,
+        _handle_sticker_search,
     )
     for spec, handler in zip(TOOL_SPECS, handlers, strict=True):
         register_tool(
@@ -804,7 +883,9 @@ def register_tools(ctx: Any) -> None:
             schema=spec,
             handler=handler,
             check_fn=(
-                _sticker_tools_available if spec["name"] == "sticker_send" else _tools_available
+                _sticker_tools_available
+                if spec["name"] in {"sticker_send", "sticker_search"}
+                else _tools_available
             ),
             is_async=True,
             description=spec["description"],
@@ -1439,24 +1520,50 @@ async def _handle_sticker_send(args: object, **kwargs: Any) -> str:
     del kwargs
     started = time.perf_counter()
     try:
-        query = parse_sticker_query(args)
+        request = parse_sticker_send_request(args)
     except (TypeError, ValueError):
-        return _sticker_finish({"status": "invalid_input"}, started)
+        return _sticker_finish({"status": "invalid_input"}, started, "sticker_send")
 
     chat_key, context_status = _sticker_session_chat_key()
     if chat_key is None:
-        return _sticker_finish({"status": context_status}, started)
+        return _sticker_finish({"status": context_status}, started, "sticker_send")
     sender = _ACTIVE_SENDER
     service = _ACTIVE_STICKER_SERVICE
     if sender is None or service is None:
-        return _sticker_finish({"status": "unsupported"}, started)
+        return _sticker_finish({"status": "unsupported"}, started, "sticker_send")
     try:
-        result = await service.send(query, chat_key, sender)
+        result = await service.send(request, chat_key, sender)
     except asyncio.CancelledError:
         raise
     except Exception:  # noqa: BLE001 - Tool 边界不泄漏底层错误
         result = {"status": "storage_error"}
-    return _sticker_finish(result, started)
+    return _sticker_finish(result, started, "sticker_send")
+
+
+async def _handle_sticker_search(args: object, **kwargs: Any) -> str:
+    """校验当前 Milky session 并执行只读贴纸搜索。"""
+
+    del kwargs
+    started = time.perf_counter()
+    try:
+        request = parse_sticker_search_request(args)
+    except (TypeError, ValueError):
+        return _sticker_finish({"status": "invalid_input"}, started, "sticker_search")
+
+    chat_key, context_status = _sticker_session_chat_key()
+    if chat_key is None:
+        return _sticker_finish({"status": context_status}, started, "sticker_search")
+    sender = _ACTIVE_SENDER
+    service = _ACTIVE_STICKER_SERVICE
+    if sender is None or service is None:
+        return _sticker_finish({"status": "unsupported"}, started, "sticker_search")
+    try:
+        result = service.search(request, chat_key)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - Tool 边界不泄漏底层错误
+        result = {"status": "storage_error"}
+    return _sticker_finish(result, started, "sticker_search")
 
 
 def _sticker_session_chat_key() -> tuple[str | None, str]:
@@ -1494,31 +1601,97 @@ def _sticker_error(status: str) -> str:
     return json.dumps({"status": status}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def _sticker_result(result: Mapping[str, object]) -> str:
+def _sticker_result(result: Mapping[str, object], tool_name: str = "sticker_send") -> str:
     """只序列化贴纸 Tool 的固定安全结果字段。"""
 
-    allowed = {"status", "message_id"}
     status = result.get("status")
     if not isinstance(status, str) or status not in _STICKER_RESULT_STATUSES:
         return _sticker_error("malformed")
-    safe = {key: value for key, value in result.items() if key in allowed}
-    if status == "sent":
-        if not isinstance(safe.get("message_id"), str) or not safe["message_id"]:
+    if tool_name == "sticker_send":
+        if status == "ok":
             return _sticker_error("malformed")
-    elif set(safe) != {"status"}:
+        allowed = {"status", "message_id"}
+        safe = {key: value for key, value in result.items() if key in allowed}
+        if status == "sent":
+            if not isinstance(safe.get("message_id"), str) or not safe["message_id"]:
+                return _sticker_error("malformed")
+        elif set(safe) != {"status"}:
+            return _sticker_error("malformed")
+        return json.dumps(safe, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    if tool_name != "sticker_search":
         return _sticker_error("malformed")
-    return json.dumps(safe, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if status in {"sent", "not_found"}:
+        return _sticker_error("malformed")
+    if status not in {"ok", "no_match"}:
+        return json.dumps(
+            {"status": status}, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+    items = result.get("items")
+    if not isinstance(items, list) or len(items) > 10:
+        return _sticker_error("malformed")
+    if status == "ok":
+        if not items:
+            return _sticker_error("malformed")
+    elif status == "no_match":
+        if items:
+            return _sticker_error("malformed")
+    elif items:
+        return _sticker_error("malformed")
+    safe_items: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, Mapping) or set(item) != {
+            "sticker_id",
+            "emotion",
+            "tags",
+            "description",
+        }:
+            return _sticker_error("malformed")
+        sticker_id = item["sticker_id"]
+        emotion = item["emotion"]
+        tags = item["tags"]
+        description = item["description"]
+        if (
+            not isinstance(sticker_id, str)
+            or not _STICKER_ID_RE.fullmatch(sticker_id)
+            or not isinstance(emotion, str)
+            or emotion not in _STICKER_EMOTIONS
+            or not isinstance(tags, list)
+            or not isinstance(description, str)
+            or len(sticker_id) < 1
+            or len(sticker_id) > 128
+            or len(tags) > 5
+            or any(not isinstance(tag, str) or len(tag) > 16 for tag in tags)
+            or len(description) > 20
+        ):
+            return _sticker_error("malformed")
+        safe_items.append(
+            {
+                "sticker_id": sticker_id,
+                "emotion": emotion,
+                "tags": list(tags),
+                "description": description,
+            }
+        )
+    return json.dumps(
+        {"status": status, "items": safe_items},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
-def _sticker_finish(result: Mapping[str, object], started: float) -> str:
+def _sticker_finish(
+    result: Mapping[str, object], started: float, tool_name: str = "sticker_send"
+) -> str:
     """记录固定结果分类并返回安全的贴纸 Tool 回执。"""
 
     status = result.get("status")
     classification = (
         status if isinstance(status, str) and status in _STICKER_RESULT_STATUSES else "malformed"
     )
-    response = _sticker_result(result)
-    _log_tool_call("sticker_send", classification, started)
+    response = _sticker_result(result, tool_name)
+    _log_tool_call(tool_name, classification, started)
     return response
 
 
@@ -1750,6 +1923,7 @@ __all__ = [
     "SET_GROUP_MEMBER_MUTE_SCHEMA",
     "SET_GROUP_MEMBER_SPECIAL_TITLE_SCHEMA",
     "SET_GROUP_WHOLE_MUTE_SCHEMA",
+    "STICKER_SEARCH_SCHEMA",
     "STICKER_SEND_SCHEMA",
     "TOOL_SPECS",
     "bind_sender",

@@ -1000,18 +1000,18 @@ def test_client_delivers_http_non_json_and_classifies_unknown_transport_without_
     assert len(transport.requests) == 1
 
 
-def test_registered_handlers_cover_26_fixed_specs_and_dispatch_only_explicitly() -> None:
-    """注册应包含 26 个固定工具，且每个 handler 只调用对应 Action。"""
+def test_registered_handlers_cover_fixed_specs_and_dispatch_only_explicitly() -> None:
+    """注册应包含固定工具和两个贴纸语义工具，且每个 handler 只调用对应 Action。"""
 
     context = ToolContext()
     register_tools(context)
     names = [item["name"] for item in context.registered]
-    assert len(names) == 26
-    assert len(set(names)) == 26
+    assert len(names) == 27
+    assert len(set(names)) == 27
     assert names[9:17] == list(NEW_TOOL_NAMES)
     assert names[17:23] == list(GROUP_TOOL_NAMES)
     assert names[23:25] == list(ADDITIONAL_TOOL_NAMES)
-    assert names[25:] == ["sticker_send"]
+    assert names[25:] == ["sticker_send", "sticker_search"]
     assert all(item["toolset"] == "milky" for item in context.registered)
     assert all(item["is_async"] is True for item in context.registered)
 

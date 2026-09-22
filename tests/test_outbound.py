@@ -760,6 +760,7 @@ def test_tools_register_explicit_api_specs_and_validate_arguments() -> None:
         "get_friend_info",
         "set_group_member_special_title",
         "sticker_send",
+        "sticker_search",
     ]
     assert all(item["is_async"] is True for item in context.registered)
     assert {item["schema"]["name"] for item in context.registered} == set(names)

@@ -1,6 +1,6 @@
 ---
 name: milky-qq-action-tools
-description: Reference for Milky QQ Agent's 25 fixed Action ToolSpecs and the separate sticker_send semantic tool.
+description: Reference for Milky QQ Agent's 25 fixed Action ToolSpecs and the separate sticker semantic tools.
 metadata:
   short-description: Milky QQ 工具入参与权限
   keywords: "Milky, QQ, Hermes, ToolSpec, operationId, 好友, 好友资料, 好友请求, 合并转发, 私聊文件, 群聊, 群成员, 群文件, 专属头衔, 入群请求, 群邀请, group_id, user_id, special_title, initiator_uid, forward_id, file_hash, message_seq, notification_seq, invitation_seq, download_url"
@@ -12,10 +12,10 @@ metadata:
 请求为 `POST /api/{operationId}`；未列出的 Action、别名和任意 Action catalog 均不可调用。
 文字说明不注册工具，不执行也不扩大工具能力。
 
-`sticker_send` 是独立的语义 Tool，不属于这 25 个 Action。它只在当前 Milky task-local session 有效、
-贴纸库有可用文件时出现；`jieba>=0.42.1` 由插件运行时依赖提供，不按需导入。它只接受 `intent`、`emotion`、`tags`，不接受
-目标、贴纸 ID、路径或 URL。它依据当前生效元数据选择一张贴纸并只发送一个 `image` sticker segment；
-不存在 `sticker_search` 或任意 Action catalog。
+`sticker_search` 和 `sticker_send` 是独立的语义 Tool，不属于这 25 个 Action。它们只在当前 Milky task-local session 有效、
+贴纸库有可用文件时出现；`jieba>=0.42.1` 由插件运行时依赖提供，不按需导入。`sticker_search` 只接受 `intent`、`emotion`、
+`tags` 和有界 `limit`，返回 ID、情绪、标签和描述；`sticker_send` 接受互斥的 `intent`/`emotion`/`tags` 查询或 opaque `sticker_id`，
+不接受目标、路径或 URL。搜索是只读的，发送按当前会话只发送一个 `image` sticker segment；工具不开放任意 Action catalog。
 
 最终能力和参数校验以实际 ToolSpec、handler 和 Milky 契约为准。
 
@@ -29,6 +29,8 @@ metadata:
   就不要调用，也不能用时间戳、文件名或显示文本替代。
 - `forward_id`、`file_id`、`file_hash`、`initiator_uid` 必须是非空字符串；`parent_folder_id` 和群请求的
   `reason` 若传字符串也不能全空。好友请求的 `reason` 可为空；私聊 `file_hash` 是 TriSHA1。
+- `sticker_search` 至少需要一个查询条件；`limit` 为 `1..10`，省略时默认 5。`sticker_send` 的 `sticker_id` 为 1..128 个
+  ASCII 字母、数字、下划线或连字符，且与查询条件互斥。
 - `?` 表示可省略；schema 标为 nullable 的字段才可显式传 `null`，两者不会互相替换。`temp` 会话没有工具目标。
 
 省略可选字段时由 Milky 使用 schema 默认值；插件不主动把默认值写入请求 body。
@@ -49,7 +51,7 @@ metadata:
 | `get_group_files` | `{group_id: integer, parent_folder_id?: string|null}` | 查群文件和文件夹 |
 | `get_friend_info` | `{user_id: integer}` | 查好友资料；字段由目标服务定义，不支持 `no_cache` |
 
-查询只返回完整 Milky envelope，保留未知字段，不自动下载、缓存或解码文件。
+查询只返回完整 Milky envelope，保留未知字段，不自动下载、缓存或解码文件。`sticker_search` 只返回限定的贴纸元数据。
 
 ### 消息
 
@@ -108,4 +110,6 @@ metadata:
 - `rejected`，服务端返回了 envelope，但 Milky 业务拒绝；HTTP 200 不代表业务成功。
 - `malformed`，响应缺少工具要求的最小结构。
 - `transport_unknown`，客户端没有拿到可确认的结果，不能重试。
+- 贴纸搜索无匹配返回 `no_match`；精确 ID 不存在或不可见返回 `not_found`，文件缺失返回 `missing_file`，存储边界失败返回
+  `storage_error`。搜索不发送、不更新使用统计；发送成功仍只返回 `sent` 和 `message_id`。
 - `unsupported`，工具当前不可用。
