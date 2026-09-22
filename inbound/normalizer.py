@@ -223,6 +223,7 @@ def normalize_message(
             timestamp=message.time,
             segments=message.segments,
             text=extracted.strategy_text,
+            keyword_texts=extracted.keyword_texts,
             mention_kinds=_mention_kinds(extracted.mention_kinds),
             has_reply=extracted.has_reply,
             reply_message_seq=extracted.reply_message_seq,

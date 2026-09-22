@@ -67,7 +67,8 @@ def test_normalizer_preserves_all_known_segments_and_strategy_features() -> None
         '"labels":["测试",null]},"nested":{"enabled":true}}}]'
         "[xml:NOT SUPPORTED]### 中性内容"
     )
-    assert normalized.strategy_text == "中性文本@合成机器人@全体成员### 中性内容"
+    assert normalized.strategy_text == "中性文本### 中性内容"
+    assert normalized.will_input.keyword_texts == ("中性文本", "### 中性内容")
     assert normalized.mention_kinds == ("self", "all")
     assert normalized.mention_kind == "self"
     assert normalized.has_reply is True
@@ -158,7 +159,8 @@ def test_unavailable_face_catalog_does_not_affect_other_segments(
 
     assert result.value is not None
     assert result.value.body == "前[face:14]@全体成员[img:file_name=fixture-image-resource]"
-    assert result.value.strategy_text == "前@全体成员"
+    assert result.value.strategy_text == "前"
+    assert result.value.will_input.keyword_texts == ("前",)
 
 
 def test_normalizer_does_not_reload_face_catalog_per_message(

@@ -418,7 +418,7 @@ def calculate_score(current: float, input_value: WillInput, config: WillingnessC
     attributes += config.direct_gain if input_value.is_direct else 0
     multiplier = (
         config.keyword_multiplier
-        if has_keyword(input_value.text, config.interest_keywords)
+        if input_value.matches_keyword(config.interest_keywords)
         else config.default_multiplier
     )
     ratio = current / config.max_score
@@ -481,7 +481,7 @@ def should_force(input_value: WillInput, config: WillingnessConfig) -> bool:
         return True
     if config.quote_force and input_value.is_self_quote:
         return True
-    return has_keyword(input_value.text, config.force_keywords)
+    return input_value.matches_keyword(config.force_keywords)
 
 
 def _has_mention(input_value: WillInput) -> bool:

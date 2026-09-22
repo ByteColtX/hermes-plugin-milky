@@ -111,6 +111,7 @@ class ExtractedSegments:
     has_supported_content: bool = False
     metadata: JsonObject = field(default_factory=dict)
     quote_target_is_self: bool = False
+    keyword_texts: tuple[str, ...] = ()
 
 
 def extract_segments(
@@ -124,6 +125,8 @@ def extract_segments(
     labels = FACE_LABELS if face_labels is None else face_labels
     body_parts: list[str] = []
     strategy_parts: list[str] = []
+    keyword_texts: list[str] = []
+    text_run: list[str] = []
     mention_kinds: list[str] = []
     media_resource_references: list[MediaResourceReference] = []
     file_attachment_references: list[FileAttachmentReference] = []
@@ -139,24 +142,28 @@ def extract_segments(
     has_supported_content = False
 
     for segment_index, segment in enumerate(segments):
+        if not isinstance(segment, (TextSegment, MarkdownSegment)) and text_run:
+            keyword_texts.append("".join(text_run))
+            text_run.clear()
         if isinstance(segment, TextSegment):
             if segment.text:
                 has_supported_content = True
             body_parts.append(segment.text)
             strategy_parts.append(segment.text)
+            text_run.append(segment.text)
             continue
 
         if isinstance(segment, MarkdownSegment):
             has_supported_content = True
             body_parts.append(segment.content)
             strategy_parts.append(segment.content)
+            text_run.append(segment.content)
             continue
 
         if isinstance(segment, MentionSegment):
             has_supported_content = True
             display = _mention_display(segment)
             body_parts.append(display)
-            strategy_parts.append(display)
             if segment.user_id == self_id and "self" not in mention_kinds:
                 mention_kinds.append("self")
             continue
@@ -164,7 +171,6 @@ def extract_segments(
         if isinstance(segment, MentionAllSegment):
             has_supported_content = True
             body_parts.append("@全体成员")
-            strategy_parts.append("@全体成员")
             if "all" not in mention_kinds:
                 mention_kinds.append("all")
             continue
@@ -324,6 +330,8 @@ def extract_segments(
 
         _append_once(diagnostics, "unsupported_segment")
 
+    if text_run:
+        keyword_texts.append("".join(text_run))
     if not mention_kinds:
         mention_kinds.append("none")
     metadata = _safe_mapping(
@@ -337,6 +345,7 @@ def extract_segments(
     return ExtractedSegments(
         body="".join(body_parts),
         strategy_text="".join(strategy_parts),
+        keyword_texts=tuple(keyword_texts),
         mention_kinds=tuple(mention_kinds),
         has_reply=has_reply,
         reply_message_seq=reply_message_seq,

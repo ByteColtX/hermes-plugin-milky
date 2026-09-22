@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -28,6 +29,13 @@ class WillInput:
     has_image: bool
     is_self_quote: bool = False
     is_self_poke: bool = False
+    keyword_texts: tuple[str, ...] | None = None
+
+    def matches_keyword(self, keywords: Sequence[str]) -> bool:
+        """仅在连续文本区间内匹配；旧调用方的显式文本视为单一区间。"""
+
+        texts = (self.text,) if self.keyword_texts is None else self.keyword_texts
+        return any(keyword in text for text in texts for keyword in keywords)
 
     @property
     def mention_kind(self) -> MentionKind:

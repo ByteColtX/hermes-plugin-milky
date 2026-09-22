@@ -1420,3 +1420,52 @@ def test_same_chat_triggers_do_not_wait_for_the_previous_hermes_agent() -> None:
     assert message_ids == ["3001", "3002"]
     assert agent_finished is False
     assert resolve_count == 2
+
+
+@pytest.mark.parametrize("engine_name", ["routing", "willingness"])
+def test_mention_keyword_waits_until_authored_text_triggers(engine_name: str) -> None:
+    """提及名称只进入等待展示，正文关键词才触发资源和 Hermes 交接。"""
+
+    async def scenario() -> None:
+        if engine_name == "routing":
+            engine = RoutingWillEngine(RoutingConfig(keywords=("提醒",)))
+        else:
+            engine = WillingnessWillEngine(
+                WillingnessConfig(
+                    force_keywords=("提醒",),
+                    interest_keywords=("提醒",),
+                    text_gain=10,
+                    keyword_multiplier=2,
+                    probability_threshold=100,
+                ),
+                clock=lambda: 0.0,
+                random_fn=lambda: 0.99,
+            )
+        hermes = FakeHermes()
+        resolver = FakeResolver()
+        pipeline = make_pipeline(hermes, resolver, will_engine=engine)
+        mention = {"type": "mention", "data": {"user_id": 800000003, "name": "提醒小助手"}}
+        waiting = load_fixture("events/message_receive.group.all_segments.json")
+        waiting["data"]["message_seq"] = 9601
+        waiting["data"]["segments"] = [mention]
+        assert (await pipeline.handle_event(waiting)).classification == "wait"
+        assert pipeline.reply_costs == 0
+        assert resolver.calls == []
+        assert hermes.events == []
+        if isinstance(engine, WillingnessWillEngine):
+            assert engine.get_current_willingness("group:700000001") == 10
+
+        current = load_fixture("events/message_receive.group.all_segments.json")
+        current["data"]["message_seq"] = 9602
+        current["data"]["segments"] = [mention, {"type": "text", "data": {"text": "请提醒我"}}]
+        assert (await pipeline.handle_event(current)).classification == "trigger"
+        await pipeline.wait_idle()
+        assert pipeline.reply_costs == 1
+        assert resolver.calls == [("group:700000001", "9602")]
+        assert len(hermes.events) == 1
+        assert "@提醒小助手" in hermes.events[0].text
+        assert "@提醒小助手" in hermes.events[0].channel_context
+        assert "请提醒我" in hermes.events[0].text
+        assert "请提醒我" not in hermes.events[0].channel_context
+
+    asyncio.run(scenario())

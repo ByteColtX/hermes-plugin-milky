@@ -341,6 +341,14 @@ Will 决定一条消息是先等待，还是交给 Hermes：
 `MILKY_WILL_POLICY.engine` 只选择一套引擎。`routing` 和 `willingness` 共用消息特征、都输出
 `wait`/`trigger`，但**不会叠加运行**。
 
+三类关键词（`routing.keywords`、`willingness.forceKeywords` 和
+`willingness.interestKeywords`）只匹配当前消息顶层的 text、markdown 内容，按连续文本直接
+做子串匹配。结构化 @ 的显示名称、回退 QQ 号和“全体成员”展示文字不参与关键词匹配，
+也不会带来兴趣关键词倍率；直接 @Bot 的独立触发与提及增益仍按对应配置生效。
+用户在普通文本里手动输入 `@提醒小助手` 时，“提醒”仍可命中。相邻 text、markdown 可以
+组成关键词，但中间有 @、图片等非文本片段时不会跨过它拼接，例如“提”＋@某人＋“醒”
+不会命中“提醒”。未命中兴趣关键词时仍使用 `defaultMultiplier` 计算原有基础和属性增益。
+
 | 引擎 | 决策方式 | 适合场景 |
 | --- | --- | --- |
 | `routing`（默认） | 当前消息命中规则就触发，结果确定 | 希望行为可预测、方便排查 |

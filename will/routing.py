@@ -114,7 +114,7 @@ class RoutingWillEngine:
             matched_actions.append(self.config.mention_all)
         if input_value.is_self_quote:
             matched_actions.append(self.config.quote)
-        if any(keyword in input_value.text for keyword in self.config.keywords):
+        if input_value.matches_keyword(self.config.keywords):
             matched_actions.append("trigger")
         return "trigger" if "trigger" in matched_actions else "wait"
 
