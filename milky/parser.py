@@ -54,13 +54,6 @@ _KNOWN_SEGMENTS = {
     "xml",
     "markdown",
 }
-_SENSITIVE_KEYS = {
-    "access_token",
-    "authorization",
-    "cookie",
-    "password",
-    "token",
-}
 _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
 _MAX_SAFE_INTEGER = 9007199254740991
@@ -683,18 +676,12 @@ def _extras(source: Mapping[str, Any], known: set[str]) -> dict[str, Any]:
 
 
 def _freeze_mapping(source: Mapping[str, Any]) -> Mapping[str, Any]:
-    return MappingProxyType(
-        {
-            str(key): _freeze_value(value)
-            for key, value in source.items()
-            if str(key).casefold() not in _SENSITIVE_KEYS
-        }
-    )
+    return MappingProxyType({str(key): _freeze_value(value) for key, value in source.items()})
 
 
 def _freeze_value(value: Any) -> Any:
     if isinstance(value, Mapping):
         return _freeze_mapping(value)
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return tuple(_freeze_value(item) for item in value)
     return value

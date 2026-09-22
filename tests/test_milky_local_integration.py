@@ -530,14 +530,29 @@ def test_smoke_summary_never_exposes_file_uri_or_message_id() -> None:
 
     result = OutboundSendResult(
         success=False,
-        error="rejected: secret-message-id-or-file-uri",
+        error=(
+            "rejected: token=synthetic-token authorization=synthetic-auth "
+            "password=synthetic-password cookie=synthetic-cookie "
+            "url=https://fixture.invalid/secret free-text=synthetic-reason"
+        ),
         error_kind="rejected",
     )
     from scripts.milky_smoke import _send_summary
 
     summary = _send_summary(result)
     assert summary == {"status": "rejected"}
-    assert "secret" not in repr(summary)
+    rendered = repr(summary)
+    assert all(
+        marker not in rendered
+        for marker in (
+            "synthetic-token",
+            "synthetic-auth",
+            "synthetic-password",
+            "synthetic-cookie",
+            "https://fixture.invalid/secret",
+            "synthetic-reason",
+        )
+    )
 
 
 def test_smoke_write_request_requires_explicit_flag() -> None:

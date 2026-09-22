@@ -281,7 +281,7 @@ normalization MUST 不执行网络 I/O、文件系统访问、时钟读取或随
 
 ### Requirement: 未知内容和空消息必须安全降级
 
-未知 segment（包括扩展协议字段）SHALL 保留安全 raw 与诊断；未知 segment MUST NOT 使用 Milky schema 的 `[unknown]` 默认文本值；消息没有任何受支持正文、媒体资源或文件附件内容时 MUST 明确记录丢弃原因并停止。合法的 face、reply、媒体资源、文件附件、forward、market_face、light_app、xml 和 markdown 属于受支持结构化内容，即使其正文文本为空。
+未知 segment（包括扩展协议字段）SHALL 保留完整 raw 与诊断；raw 中的字段和值不得因通用敏感键名被删除，但未知 segment MUST NOT 使用 Milky schema 的 `[unknown]` 默认文本值；消息没有任何受支持正文、媒体资源或文件附件内容时 MUST 明确记录丢弃原因并停止。合法的 face、reply、媒体资源、文件附件、forward、market_face、light_app、xml 和 markdown 属于受支持结构化内容，即使其正文文本为空。
 
 #### Scenario: 未知 segment 与文本并存
 
@@ -317,7 +317,7 @@ normalization MUST 不执行网络 I/O、文件系统访问、时钟读取或随
 
 - **WHEN** 消息包含未知 segment 以及合法文本
 - **THEN** 文本和已支持 placeholder SHALL 保持可处理
-- **AND** 未知 segment SHALL 只进入安全诊断和 raw
+- **AND** 未知 segment SHALL 只进入诊断和 raw
 
 #### Scenario: 只有未知内容
 

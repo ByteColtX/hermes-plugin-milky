@@ -525,6 +525,13 @@ Action、Tool 和出站日志保留结果分类、已知状态码和 `duration_m
 `invalid_input`、`unsupported` 和 `transport_unknown` 是插件本地 Tool 结果分类。日志不可用或
 handler 失败不改变连接、重连、Gate/Will、扣费、发送和未知结果语义。
 
+协议 raw 保真与日志/输出最小化是两条独立边界：parser、入站规范化和 canonical 会保留远端已收到的
+字段和值，包括名称看起来像 `token`、`authorization`、`password` 或 `cookie` 的业务扩展；这些 raw
+字段不会因此进入正文、关键词、会话介绍、隐式工具调用或授权判断。Hermes logger 只接收插件选择的
+固定低敏元数据；Tool 结果、模型上下文和 session 持久化属于不同的宿主出口，插件不假设宿主会在每个
+出口自动清洗秘密，也不在插件日志中复制 raw。当前仓库的 fake host/fixture 证据不能替代真实 Hermes
+logger、Tool 结果后处理、模型上下文和 session 落盘验证。
+
 ## 常用运维
 
 ### Gateway 与 Hermes 状态
@@ -613,8 +620,8 @@ token 或密码，仅应在受控环境中短时使用。
 以 `dm:<id>`/`group:<id>` 隔离并使用有界进程内缓存；不同 Hermes user session 可以共享同一个 group
 介绍。介绍不会写入当前消息正文、历史 `channel_context`、platform hint 或出站正文。
 
-昵称、群名、描述和公告按不可信 metadata 处理：控制字符和换行会被中和并限制长度，未知扩展、
-raw、凭证、媒体 URL、文件路径和敏感正文不会渲染。Gate deny、wait、temp、系统事件、重复消息或
+昵称、群名、描述和公告按不可信 metadata 处理：控制字符和换行会被中和并限制长度，协议 raw、未知
+扩展、凭证字段、媒体 URL、文件路径和敏感正文不会渲染到会话介绍。Gate deny、wait、temp、系统事件、重复消息或
 资源/mapper 失败不登记介绍；缓存淘汰和资料缺失安全返回空 section。Hermes 已持久化 prompt 恢复
 时保留原介绍字节，显式 prompt rebuild 才使用当前本地快照；插件不提供实时刷新。
 

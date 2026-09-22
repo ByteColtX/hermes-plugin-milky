@@ -184,19 +184,25 @@ def test_make_dedup_key_rejects_missing_or_invalid_stable_seq() -> None:
         make_dedup_key(1, "private:2", "3")
 
 
-def test_canonical_drops_sensitive_raw_fields_without_dropping_message_fields() -> None:
-    """canonical raw 仅保留安全诊断字段，不扩散认证信息。"""
+def test_canonical_preserves_sensitive_named_raw_without_expanding_message_semantics() -> None:
+    """canonical raw 保留协议字段，但未知字段不进入正文或策略语义。"""
 
     payload = load_fixture("events/message_receive.friend.json")
     payload["data"]["authorization"] = "Bearer fixture-secret"
     payload["data"]["token"] = "fixture-secret"
+    payload["data"]["nested"] = {
+        "PASSWORD": "fixture-password",
+        "items": [{"cookie": "fixture-cookie"}],
+    }
 
     result = canonicalize_event(payload)
 
     assert result.value.body == "朋友消息"
-    assert "authorization" not in result.value.raw
-    assert "token" not in result.value.raw
-    assert "fixture-secret" not in repr(result.value.raw)
+    assert result.value.raw["authorization"] == "Bearer fixture-secret"
+    assert result.value.raw["token"] == "fixture-secret"
+    assert result.value.raw["nested"]["PASSWORD"] == "fixture-password"
+    assert result.value.raw["nested"]["items"][0]["cookie"] == "fixture-cookie"
+    assert result.value.will_input.text == "朋友消息"
 
 
 def test_ttl_dedup_is_bounded_expires_and_does_not_record_missing_key() -> None:

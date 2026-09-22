@@ -154,7 +154,7 @@ class MarkdownSegment(Segment):
 
 @dataclass(frozen=True, slots=True)
 class UnknownSegment(Segment):
-    """未知 segment，只保留安全 raw，不提供文本语义。"""
+    """未知 segment，保留协议 raw 但不提供文本语义。"""
 
     data: Any = field(default_factory=dict)
 
