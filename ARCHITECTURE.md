@@ -117,7 +117,12 @@ GET  <MILKY_BASE_URL>/event
 Authorization: Bearer <MILKY_ACCESS_TOKEN>
 ```
 
-HTTP 200 仍需校验 JSON、`status`、`retcode` 和所需 `data`。错误至少区分 `invalid_input`、`unsupported`、`rejected`、`malformed`、`http_error` 和 `transport_unknown`。可能有副作用的 Action 最多提交一次；超时或连接中断时不自动重试，因为远端结果可能未知。
+登录、群列表、成员状态同步、消息发送和文件上传等非 Tool Action 仍需校验 JSON、`status`、`retcode`
+和所需 `data`，并区分 `invalid_input`、`unsupported`、`rejected`、`malformed`、`http_error` 和
+`transport_unknown`。已注册 Tool 走独立的响应边界：网络前校验固定参数和 client 状态，取得响应体后
+按 UTF-8（无法解码的字节使用替换字符）直接交付字符串，不判断 HTTP/协议状态、不解析 envelope、
+不校验 `data`、不脱敏或重建结果；只有参数非法、Tool 不支持或没有取得响应体时才产生插件固定分类。
+可能有副作用的 Action 最多提交一次；超时或连接中断时不自动重试，因为远端结果可能未知。
 
 SSE 支持 `event:`、多行 `data:`、空行分帧、UTF-8、未知事件、handler 异常、EOF 和连接错误。
 receive loop 不等待慢 handler；handler 在停止时统一取消并等待，重连退避有界。
@@ -159,6 +164,12 @@ chat key 只接受 `dm:<十进制 QQ 号>` 和 `group:<十进制群号>`。`temp
 - `materialization.py` 和 `file_upload.py` 只读一次出站本地资源，并受启动时大小上限约束。
 - 图片、语音、视频和 document 可走 native media/file upload；插件不把本地路径直接交给 Milky。
 - `MILKY_LONG_TEXT_FORWARD_THRESHOLD` 大于 0 时，超长文本可与有序 native media 合成一个 forward。
+- 25 个 Milky Action ToolSpec 在取得响应体后原样交付字符串；Tool 不执行 envelope/DTO 解析、最小
+  `data` 校验、敏感键过滤、容器冻结、状态码包装或结果重建。非 Tool Action 保持既有校验与错误分类。
+
+Tool 字符串交给 Hermes core 后，core 可能运行 `transform_tool_result`、截断 JSON `error` 字段，
+或将超长结果落盘并以预览替换上下文内容。这些后置处理由宿主所有，不在插件契约内；插件不注册、
+规避或还原它们。
 
 manifest 中固定提供以下 25 个 Milky Action ToolSpec：
 
@@ -211,7 +222,9 @@ sequenceDiagram
 
 系统事件先进入 `system_events` observer，再写入 context FIFO；下一次同 chat trigger 时按 sequence 合并。只有成员事件开关开启且 session key 已确认，才可 `inject_message`。
 
-出站流程是 `Hermes response / MEDIA:/local/path` → split/format/校验目标 → 一次 materialize 或 upload → 一次 Action → `success`、`rejected` 或 `transport_unknown`。
+普通出站流程是 `Hermes response / MEDIA:/local/path` → split/format/校验目标 → 一次 materialize 或 upload → 一次 Action → `success`、`rejected` 或 `transport_unknown`。
+Tool 流程是固定 schema/handler → 参数和 client 状态校验 → 一次 Action → 已取得的响应字符串，或
+`invalid_input`、`unsupported`、`transport_unknown`；Tool 不把远端拒绝或 HTTP 错误改写为插件结果。
 
 `transport_unknown` 表示请求失败但无法确认远端是否已执行。插件不为了“修复”未知结果而自动重试可能有副作用的 Action。
 
@@ -235,7 +248,7 @@ sequenceDiagram
 
 ### Milky v1.3
 
-集成方式是 Bearer-authenticated HTTP Action 加 SSE `GET /event`。Action 既有查询，也有发送、禁言、踢人、好友和请求处理等副作用。请求参数、response envelope、`status`/`retcode`、typed data 和错误分类都在 `milky/client.py` 中校验。
+集成方式是 Bearer-authenticated HTTP Action 加 SSE `GET /event`。Action 既有查询，也有发送、禁言、踢人、好友和请求处理等副作用。非 Tool 请求的参数、response envelope、`status`/`retcode`、typed data 和错误分类在 `milky/client.py` 中校验；Tool 只在网络前校验参数，并把取得的 body 交给 Hermes core。
 
 **其他服务。** 仓库没有 WebSocket、Webhook、OneBot echo、独立视觉服务、STT 服务、云数据库或队列客户端的独立连接配置。贴纸视觉分析若由 Hermes plugin context 提供，其具体 provider、凭证和部署位置是 `Not evident from the repository`。
 
@@ -280,7 +293,7 @@ sequenceDiagram
 - allowlist 在入站 Gate 生效；被 Gate 拒绝的消息不增长 buffer、不修改 Will、不创建 turn。
 - ToolSpec `additionalProperties=false`，参数有明确类型、枚举、ID 和消息序号范围。
 - sticker 路径限制在 plugin-data library，拒绝路径穿越和不受控文件，并校验 regular file、格式、大小、SHA-256；出站本地资源只读取一次并受大小上限约束。
-- 日志、diagnostics 和 smoke 摘要不输出 token、Authorization、完整 body、正文、媒体 URL、本地路径、图片 bytes 或异常正文。
+- 日志、diagnostics 和 smoke 摘要不输出 token、Authorization、完整 body、正文、媒体 URL、本地路径、图片 bytes 或异常正文。Tool 结果本身不在插件侧脱敏，`access_token`、`authorization`、`cookie`、`password`、`token` 等字段可能随原始响应进入宿主上下文；上下文策略由 Hermes core 负责。
 
 ### 8.2 当前风险和未知项
 

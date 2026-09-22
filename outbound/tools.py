@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import fields, is_dataclass
 from typing import Any
 
 from milky.client import ActionError
 from milky.logging import render_event
-from milky.models import MilkyEnvelope
 from stickers.sending import (
     StickerSendService,
     parse_sticker_query,
@@ -1597,35 +1596,33 @@ async def _execute_action(
     try:
         result = await action()
         serialized = _serialize_result(result)
-        _log_tool_call(tool_name, _tool_result_classification(result), started)
+        _log_tool_call(
+            tool_name,
+            _tool_result_classification(result),
+            started,
+            status_code=getattr(result, "status_code", None),
+        )
         return serialized
     except asyncio.CancelledError:
         raise
     except (ActionError, TypeError, ValueError) as error:
-        serialized = _tool_error(_action_classification(error))
-        _log_tool_call(tool_name, _action_classification(error), started)
+        classification = _action_classification(error)
+        serialized = _tool_error(classification, log=False)
+        _log_tool_call(tool_name, classification, started)
         return serialized
     except Exception:  # noqa: BLE001 - 工具边界不回显底层异常
-        serialized = _tool_error("malformed")
-        _log_tool_call(tool_name, "malformed", started)
+        serialized = _tool_error("transport_unknown", log=False)
+        _log_tool_call(tool_name, "transport_unknown", started)
         return serialized
 
 
 def _serialize_result(result: object) -> str:
-    """把成功的 Milky envelope 原样转换为 JSON。"""
+    """直接返回 transport 解码的字符串，不重建或遍历结果。"""
 
-    if isinstance(result, MilkyEnvelope):
-        payload: dict[str, object] = {
-            "status": result.status,
-            "retcode": result.retcode,
-            "data": _json_value(result.data) if result.data is not None else None,
-        }
-        if result.message is not None:
-            payload["message"] = result.message
-        if result.wording is not None:
-            payload["wording"] = result.wording
-        payload.update(_json_value(result.extras))
-        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    if isinstance(result, str):
+        return result
+    if isinstance(result, (bytes, bytearray)):
+        return bytes(result).decode("utf-8", errors="replace")
     success = bool(getattr(result, "success", False))
     payload: dict[str, Any] = {"ok": success}
     if success:
@@ -1633,46 +1630,52 @@ def _serialize_result(result: object) -> str:
         if message_id is not None:
             payload["message_id"] = str(message_id)
     else:
-        payload["classification"] = getattr(result, "error_kind", None) or "malformed"
-        payload["error"] = "Milky tool operation failed"
+        classification = getattr(result, "error_kind", None)
+        if classification not in {"invalid_input", "unsupported", "transport_unknown"}:
+            classification = "transport_unknown"
+        payload["classification"] = classification
+        payload["error"] = {
+            "invalid_input": "tool input is invalid",
+            "unsupported": "tool is unavailable",
+            "transport_unknown": "tool result is unknown",
+        }[classification]
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-def _log_tool_call(tool_name: str, classification: str, started: float) -> None:
+def _log_tool_call(
+    tool_name: str,
+    classification: str,
+    started: float,
+    *,
+    status_code: object = None,
+) -> None:
     """记录 Tool 的低基数结果，不复制参数或结果对象。"""
 
-    level = logging.INFO if classification == "accepted" else logging.WARNING
+    level = logging.INFO if classification == "delivered" else logging.WARNING
+    fields: dict[str, object] = {
+        "tool": tool_name,
+        "action": tool_name,
+        "classification": classification,
+        "duration_ms": _duration_ms(started),
+    }
+    if status_code is not None:
+        fields["status_code"] = status_code
     logger.log(
         level,
-        render_event(
-            "milky.tool",
-            tool=tool_name,
-            action=tool_name,
-            classification=classification,
-            duration_ms=_duration_ms(started),
-        ),
+        render_event("milky.tool", fields),
     )
 
 
 def _tool_result_classification(result: object) -> str:
-    """把已确认的 Tool 返回对象转换为固定结果分类。"""
+    """把 Tool 返回对象转换为交付或本地失败分类。"""
 
-    if isinstance(result, MilkyEnvelope):
-        return "accepted" if result.status == "ok" and result.retcode == 0 else "rejected"
+    if isinstance(result, (str, bytes, bytearray)):
+        return "delivered"
     if isinstance(result, OutboundSendResult):
-        allowed = {
-            "accepted",
-            "invalid_input",
-            "rejected",
-            "http_error",
-            "malformed",
-            "transport_unknown",
-            "unsupported",
-        }
-        if result.error_kind in allowed:
+        if result.error_kind in {"invalid_input", "unsupported", "transport_unknown"}:
             return result.error_kind
-        return "accepted" if result.success else "malformed"
-    return "malformed"
+        return "delivered" if result.success else "transport_unknown"
+    return "transport_unknown"
 
 
 def _duration_ms(started: float) -> float:
@@ -1681,38 +1684,42 @@ def _duration_ms(started: float) -> float:
     return max(0.0, (time.perf_counter() - started) * 1000)
 
 
-def _json_value(value: object) -> object:
-    """将 DTO 和只读映射转换为可安全编码的 JSON 值。"""
-
-    if is_dataclass(value):
-        return {field.name: _json_value(getattr(value, field.name)) for field in fields(value)}
-    if isinstance(value, Mapping):
-        return {str(key): _json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
-    return value
-
-
 def _action_classification(error: BaseException) -> str:
-    """将 Action 异常收敛为工具允许的错误分类。"""
+    """将 Action 异常收敛为 Tool 允许的本地错误分类。"""
 
     classification = getattr(error, "classification", None)
-    allowed = {
-        "invalid_input",
-        "rejected",
-        "transport_unknown",
-        "malformed",
-        "unsupported",
-        "http_error",
-    }
-    return classification if classification in allowed else "malformed"
+    allowed = {"invalid_input", "unsupported", "transport_unknown"}
+    return classification if classification in allowed else "transport_unknown"
 
 
-def _tool_error(classification: str) -> str:
+def _tool_error(
+    classification: str,
+    *,
+    tool_name: str | None = None,
+    log: bool = True,
+) -> str:
     """创建工具本地错误，不回显任何输入值。"""
 
+    if classification not in {"invalid_input", "unsupported", "transport_unknown"}:
+        classification = "transport_unknown"
+    error = {
+        "invalid_input": "tool input is invalid",
+        "unsupported": "tool is unavailable",
+        "transport_unknown": "tool result is unknown",
+    }[classification]
+    if log:
+        if tool_name is None:
+            caller = inspect.currentframe()
+            caller = caller.f_back if caller is not None else None
+            function_name = caller.f_code.co_name if caller is not None else "unknown"
+            tool_name = (
+                function_name.removeprefix("_handle_")
+                if function_name.startswith("_handle_")
+                else "unknown"
+            )
+        _log_tool_call(tool_name, classification, time.perf_counter())
     return json.dumps(
-        {"ok": False, "classification": classification, "error": "tool input is invalid"},
+        {"ok": False, "classification": classification, "error": error},
         ensure_ascii=False,
         separators=(",", ":"),
     )

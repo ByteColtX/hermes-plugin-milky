@@ -520,9 +520,10 @@ hermes logs gateway -f
 ```
 
 Action、Tool 和出站日志保留结果分类、已知状态码和 `duration_ms`，不记录 token、Authorization、
-完整 URL、请求/响应 body、消息正文、媒体引用、路径、文件内容、Tool 原始参数或结果。Tool 调用方
-仍会收到既有 raw envelope。日志不可用或 handler 失败不改变连接、重连、Gate/Will、扣费、发送和
-未知结果语义。
+完整 URL、请求/响应 body、消息正文、媒体引用、路径、文件内容、Tool 原始参数或结果。Tool 日志
+使用 `delivered` 表示已取得远端响应；协议拒绝和 HTTP 错误也使用该分类并附已知状态码，只有
+`invalid_input`、`unsupported` 和 `transport_unknown` 是插件本地 Tool 结果分类。日志不可用或
+handler 失败不改变连接、重连、Gate/Will、扣费、发送和未知结果语义。
 
 ## 常用运维
 
@@ -736,7 +737,16 @@ Tool。参数只允许 `intent`、`emotion`、`tags`，目标来自当前 task-l
 - 好友请求、入群请求和群邀请的接受/拒绝。
 
 请求/邀请的接受和拒绝不会由通知、普通正文、关键词或 Will 自动触发，必须由 Agent 显式提供
-完整参数。未知执行结果返回 `transport_unknown`，不自动重试或更新本地状态。
+完整参数。25 个 Action Tool 只要取得响应体就把 UTF-8 解码后的字符串原样交给 Hermes core：
+不校验 HTTP 状态、`status`/`retcode`、`data` 结构，不重建 envelope，不附加状态码，也不脱敏
+`access_token`、`authorization`、`cookie`、`password`、`token`（任意大小写）字段。无法按 UTF-8
+解码的字节使用替换字符。参数非法、Tool 不支持或未取得响应体时分别返回 `invalid_input`、
+`unsupported` 或 `transport_unknown`；有副作用的调用最多提交一次且不自动重试。
+
+Tool 结果进入 Hermes core 后，宿主可能运行 `transform_tool_result`、截断 JSON `error` 字段，或
+把超长结果落盘并以预览替换上下文内容。这些后置处理由宿主负责，插件不注册、不规避，也不承诺
+最终进入模型上下文的内容与 Milky body 一致。原样交付可能使上述五类字段进入宿主转录或落盘，
+上下文策略由宿主负责。
 
 `sticker_send` 不属于上述 Action catalog；它不接受 `sticker_id`、`chat_id`、`session_id`、路径或 URL，
 也不限制 Agent 在不同调用中重复请求。它的 target、库读取、统计 claim 和单次发送由独立的贴纸 service 管理。
@@ -751,7 +761,7 @@ Tool。参数只允许 `intent`、`emotion`、`tags`，目标来自当前 task-l
 消息入口。断开时会取消 event、pipeline、TTL 任务，解除 sender/command 绑定，并关闭
 HTTP/SSE 资源。
 
-出站成功在插件侧使用远端 `data.message_seq` 的稳定字符串作为 `message_seq`，交给 Hermes 时映射为宿主要求的 `message_id`；协议拒绝、传输未知、
+非 Tool 出站成功在插件侧使用远端 `data.message_seq` 的稳定字符串作为 `message_seq`，交给 Hermes 时映射为宿主要求的 `message_id`；协议拒绝、传输未知、
 malformed 和 unsupported 会保持明确失败分类。缺少消息序号时不会伪造稳定去重 ID。
 
 ## API 与开发

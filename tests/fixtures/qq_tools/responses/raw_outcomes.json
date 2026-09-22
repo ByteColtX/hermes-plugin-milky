@@ -1,0 +1,18 @@
+{
+  "success": {"status": "ok", "retcode": 0, "data": {"future": true}},
+  "protocol_rejected": {"status": "failed", "retcode": 1001, "message": "synthetic-rejection"},
+  "sensitive": {
+    "access_token": "fixture-access-token",
+    "nested": {
+      "Authorization": "fixture-authorization",
+      "cookie": "fixture-cookie",
+      "Password": "fixture-password",
+      "TOKEN": "fixture-token"
+    },
+    "unknown": [null, "fixture"]
+  },
+  "array": ["fixture", {"token": "fixture-token"}],
+  "scalar": 42,
+  "null": null,
+  "empty": ""
+}

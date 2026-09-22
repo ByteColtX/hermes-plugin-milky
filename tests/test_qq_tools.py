@@ -13,7 +13,6 @@ import pytest
 from __init__ import register_tools
 from config import load_config
 from milky.client import ActionError, MilkyClient, TransportResponse
-from milky.models import MilkyEnvelope
 from milky.parser import parse_event
 from outbound.sender import MilkyOutboundSender
 from outbound.tools import TOOL_SPECS, bind_sender, unbind_sender
@@ -115,14 +114,14 @@ class ToolContext:
 
 
 class FakeToolClient:
-    """为 sender 提供可控的 raw Tool envelope。"""
+    """为 sender 提供可控的 raw Tool body。"""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
         self.error: ActionError | None = None
 
-    async def call_tool(self, action: str, params: dict[str, object]) -> MilkyEnvelope:
-        """记录一次显式 Action，返回对应的成功结构或固定失败。"""
+    async def call_tool(self, action: str, params: dict[str, object]) -> str:
+        """记录一次显式 Action，返回未重建的成功 body 或固定失败。"""
 
         self.calls.append((action, dict(params)))
         if self.error is not None:
@@ -149,12 +148,16 @@ class FakeToolClient:
             }
         else:
             data = {}
-        return MilkyEnvelope(
-            "ok",
-            0,
-            data,
-            message="fixture-message",
-            extras={"future_envelope": "fixture"},
+        return json.dumps(
+            {
+                "status": "ok",
+                "retcode": 0,
+                "data": data,
+                "message": "fixture-message",
+                "future_envelope": "fixture",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
 
 
@@ -493,7 +496,7 @@ def test_added_client_tool_params_are_rejected_before_network(
 
 
 def test_sender_added_tools_preserve_exact_params_and_raw_envelopes() -> None:
-    """sender 应为两个新增工具只委托同名 Action，并保留成功 envelope。"""
+    """sender 应为两个新增工具只委托同名 Action，并保留原始 body。"""
 
     client = FakeToolClient()
     sender = MilkyOutboundSender(client)
@@ -501,10 +504,10 @@ def test_sender_added_tools_preserve_exact_params_and_raw_envelopes() -> None:
     friend_result = asyncio.run(sender.get_friend_info(800000001))
     title_result = asyncio.run(sender.set_group_member_special_title(700000001, 800000001, ""))
 
-    assert isinstance(friend_result, MilkyEnvelope)
-    assert friend_result.data["opaque_extension"]["kind"] == "fixture"
-    assert isinstance(title_result, MilkyEnvelope)
-    assert title_result.data == {}
+    friend_payload = json.loads(friend_result)
+    title_payload = json.loads(title_result)
+    assert friend_payload["data"]["opaque_extension"]["kind"] == "fixture"
+    assert title_payload["data"] == {}
     assert client.calls == [
         ("get_friend_info", {"user_id": 800000001}),
         (
@@ -534,18 +537,10 @@ def test_sender_added_tool_invalid_params_do_not_call_client(call) -> None:
 
 
 @pytest.mark.parametrize(
-    ("payload_name", "expected"),
-    [
-        ("success", None),
-        ("rejected", "rejected"),
-        ("malformed_data", "malformed"),
-        ("malformed_non_object", "malformed"),
-    ],
+    "payload_name", ["success", "rejected", "malformed_data", "malformed_non_object"]
 )
-def test_friend_info_response_keeps_opaque_fields_and_classifies_errors(
-    payload_name: str, expected: str | None
-) -> None:
-    """好友资料只要求 object data，协议拒绝和损坏结构不报告成功。"""
+def test_friend_info_response_delivers_every_acquired_body(payload_name: str) -> None:
+    """好友资料的任意已取得 body 都逐字交付。"""
 
     outcomes = load_fixture("responses/friend_info_outcomes.json")
     payload = outcomes[payload_name]
@@ -553,15 +548,8 @@ def test_friend_info_response_keeps_opaque_fields_and_classifies_errors(
         load_config(DEFAULT_ENV), transport=FakeTransport([http_response(payload)])
     )
 
-    if expected is not None:
-        with pytest.raises(ActionError) as error_info:
-            asyncio.run(client.call_tool("get_friend_info", {"user_id": 800000001}))
-        assert error_info.value.classification == expected
-        return
-
     result = asyncio.run(client.call_tool("get_friend_info", {"user_id": 800000001}))
-    assert result.data["opaque_extension"] == "fixture-friend-extension"
-    assert result.extras["future_envelope"] is True
+    assert result == json.dumps(payload)
 
 
 @pytest.mark.parametrize(
@@ -575,23 +563,21 @@ def test_friend_info_response_keeps_opaque_fields_and_classifies_errors(
         ),
     ],
 )
-def test_added_client_tool_success_shapes_reject_wrong_data(
+def test_added_client_tool_success_shapes_are_delivered_unchanged(
     action: str, params: dict[str, object], payload: dict[str, object]
 ) -> None:
-    """好友资料拒绝空对象，专属头衔拒绝非空成功 data。"""
+    """好友资料和专属头衔不再校验成功 data 的形状。"""
 
     transport = FakeTransport([http_response(payload)])
     client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
 
-    with pytest.raises(ActionError) as error_info:
-        asyncio.run(client.call_tool(action, params))
-
-    assert error_info.value.classification == "malformed"
+    result = asyncio.run(client.call_tool(action, params))
+    assert result == json.dumps(payload)
     assert len(transport.requests) == 1
 
 
-def test_friend_info_http_unsupported_boundary_is_http_error_without_redaction_leak() -> None:
-    """公开未确认的好友资料 Action 遇 HTTP 404 时保持明确错误边界。"""
+def test_friend_info_http_error_body_is_delivered_without_redaction_leak() -> None:
+    """好友资料 Action 遇 HTTP 404 时仍交付取得的 body。"""
 
     outcome = load_fixture("responses/friend_info_outcomes.json")["http_error"]
     transport = FakeTransport(
@@ -603,12 +589,9 @@ def test_friend_info_http_unsupported_boundary_is_http_error_without_redaction_l
     )
     client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
 
-    with pytest.raises(ActionError) as error_info:
-        asyncio.run(client.call_tool("get_friend_info", {"user_id": 800000001}))
-
-    assert error_info.value.classification == "http_error"
+    result = asyncio.run(client.call_tool("get_friend_info", {"user_id": 800000001}))
+    assert result == json.dumps({"status": "ok", "retcode": 0, "data": {}})
     assert len(transport.requests) == 1
-    assert "synthetic-http-error" not in str(error_info.value)
 
 
 def test_special_title_unknown_result_is_not_retried() -> None:
@@ -834,10 +817,10 @@ def test_client_rejects_invalid_new_tool_params_before_network(
         ("get_group_files", "folders", ["not-an-object"]),
     ],
 )
-def test_client_rejects_query_minimum_data_type_errors(
+def test_client_delivers_query_minimum_data_type_errors(
     action: str, data_field: str, bad_value: object
 ) -> None:
-    """查询最小 data 字段错误应分类为 malformed。"""
+    """查询最小 data 字段错误仍按原始 body 交付。"""
 
     params = {
         "get_forwarded_messages": {"forward_id": "fixture-forward-id"},
@@ -858,14 +841,12 @@ def test_client_rejects_query_minimum_data_type_errors(
         load_config(DEFAULT_ENV), transport=FakeTransport([http_response(envelope(data))])
     )
 
-    with pytest.raises(ActionError) as error_info:
-        asyncio.run(client.call_tool(action, params))
-
-    assert error_info.value.classification == "malformed"
+    result = asyncio.run(client.call_tool(action, params))
+    assert result == json.dumps(envelope(data))
 
 
-def test_client_preserves_query_raw_envelope_and_rejects_nonempty_management_data() -> None:
-    """查询保留未知字段，管理 Action 的非空 data 不得假成功。"""
+def test_client_preserves_query_and_management_bodies() -> None:
+    """查询和管理 Action 都保留未知字段及非空 data。"""
 
     query = load_fixture("responses/query_ok.json")["get_private_file_download_url"]
     query_client = MilkyClient(
@@ -877,17 +858,18 @@ def test_client_preserves_query_raw_envelope_and_rejects_nonempty_management_dat
             {"user_id": 800000001, "file_id": "fixture-file", "file_hash": "fixture-hash"},
         )
     )
-    assert result.data["download_url"] == "fixture-download-url"
-    assert result.data["future_data"] == {"kind": "fixture"}
-    assert result.extras["future_envelope"] is True
+    assert json.loads(result)["data"]["download_url"] == "fixture-download-url"
+    assert json.loads(result)["data"]["future_data"] == {"kind": "fixture"}
+    assert json.loads(result)["future_envelope"] is True
 
     management = load_fixture("responses/management_outcomes.json")["malformed_data"]
     management_client = MilkyClient(
         load_config(DEFAULT_ENV), transport=FakeTransport([http_response(management)])
     )
-    with pytest.raises(ActionError) as error_info:
-        asyncio.run(management_client.call_tool("quit_group", {"group_id": 700000001}))
-    assert error_info.value.classification == "malformed"
+    management_result = asyncio.run(
+        management_client.call_tool("quit_group", {"group_id": 700000001})
+    )
+    assert management_result == json.dumps(management)
 
 
 def test_client_preserves_group_query_raw_envelopes_and_unknown_fields() -> None:
@@ -902,7 +884,7 @@ def test_client_preserves_group_query_raw_envelopes_and_unknown_fields() -> None
     )
     client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
 
-    async def call_all() -> tuple[MilkyEnvelope, MilkyEnvelope]:
+    async def call_all() -> tuple[str, str]:
         """调用两个群文件查询 Action。"""
 
         download = await client.call_tool(
@@ -913,12 +895,14 @@ def test_client_preserves_group_query_raw_envelopes_and_unknown_fields() -> None
         return download, files
 
     download, files = asyncio.run(call_all())
-    assert download.data["download_url"] == "fixture-group-download-url"
-    assert download.data["future_data"] == {"kind": "fixture"}
-    assert download.extras["future_envelope"] == "fixture-group-envelope"
-    assert files.data["files"][0]["future"] is True
-    assert files.data["folders"][0]["future"] == "value"
-    assert files.data["future_data"] == "fixture-files-extension"
+    download_payload = json.loads(download)
+    files_payload = json.loads(files)
+    assert download_payload["data"]["download_url"] == "fixture-group-download-url"
+    assert download_payload["data"]["future_data"] == {"kind": "fixture"}
+    assert download_payload["future_envelope"] == "fixture-group-envelope"
+    assert files_payload["data"]["files"][0]["future"] is True
+    assert files_payload["data"]["folders"][0]["future"] == "value"
+    assert files_payload["data"]["future_data"] == "fixture-files-extension"
 
 
 @pytest.mark.parametrize(
@@ -928,21 +912,17 @@ def test_client_preserves_group_query_raw_envelopes_and_unknown_fields() -> None
         {"status": "ok", "retcode": 0, "data": []},
     ],
 )
-def test_client_classifies_protocol_rejection_and_malformed_management_payload(
+def test_client_delivers_protocol_rejection_and_malformed_management_payload(
     payload: dict[str, object],
 ) -> None:
-    """HTTP 200 的协议拒绝和 data 类型错误必须保持分类差异。"""
+    """HTTP 200 的协议拒绝和 data 类型错误都原样交付。"""
 
     client = MilkyClient(
         load_config(DEFAULT_ENV), transport=FakeTransport([http_response(payload)])
     )
 
-    with pytest.raises(ActionError) as error_info:
-        asyncio.run(client.call_tool("delete_friend", {"user_id": 800000001}))
-
-    assert error_info.value.classification == (
-        "rejected" if payload["status"] == "failed" else "malformed"
-    )
+    result = asyncio.run(client.call_tool("delete_friend", {"user_id": 800000001}))
+    assert result == json.dumps(payload)
 
 
 @pytest.mark.parametrize(
@@ -972,26 +952,24 @@ def test_client_classifies_protocol_rejection_and_malformed_management_payload(
         ),
     ],
 )
-def test_group_management_results_keep_rejection_and_malformed_boundaries(
+def test_group_management_results_deliver_rejection_and_malformed_bodies(
     action: str, params: dict[str, object]
 ) -> None:
-    """四个群管理 Action 应区分协议拒绝和非空 data。"""
+    """群管理 Action 原样交付协议拒绝和非空 data。"""
 
     outcomes = load_fixture("responses/group_management_outcomes.json")
     rejected_client = MilkyClient(
         load_config(DEFAULT_ENV), transport=FakeTransport([http_response(outcomes["rejected"])])
     )
-    with pytest.raises(ActionError) as rejected_error:
-        asyncio.run(rejected_client.call_tool(action, params))
-    assert rejected_error.value.classification == "rejected"
+    rejected_result = asyncio.run(rejected_client.call_tool(action, params))
+    assert rejected_result == json.dumps(outcomes["rejected"])
 
     malformed_client = MilkyClient(
         load_config(DEFAULT_ENV),
         transport=FakeTransport([http_response(outcomes["malformed_data"])]),
     )
-    with pytest.raises(ActionError) as malformed_error:
-        asyncio.run(malformed_client.call_tool(action, params))
-    assert malformed_error.value.classification == "malformed"
+    malformed_result = asyncio.run(malformed_client.call_tool(action, params))
+    assert malformed_result == json.dumps(outcomes["malformed_data"])
 
 
 @pytest.mark.parametrize(
@@ -1003,7 +981,7 @@ def test_group_management_results_keep_rejection_and_malformed_boundaries(
         TimeoutError("timeout detail must not escape"),
     ],
 )
-def test_client_classifies_http_non_json_and_unknown_transport_without_retry(
+def test_client_delivers_http_non_json_and_classifies_unknown_transport_without_retry(
     response: TransportResponse | BaseException,
 ) -> None:
     """HTTP、非 JSON 和传输未知结果只提交一次且不暴露底层正文。"""
@@ -1011,12 +989,15 @@ def test_client_classifies_http_non_json_and_unknown_transport_without_retry(
     transport = FakeTransport([response])
     client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
 
-    with pytest.raises(ActionError) as error_info:
-        asyncio.run(client.call_tool("quit_group", {"group_id": 700000001}))
-
-    assert error_info.value.classification in {"http_error", "malformed", "transport_unknown"}
+    if isinstance(response, TransportResponse):
+        result = asyncio.run(client.call_tool("quit_group", {"group_id": 700000001}))
+        assert result == response.body.decode("utf-8", errors="replace")
+    else:
+        with pytest.raises(ActionError) as error_info:
+            asyncio.run(client.call_tool("quit_group", {"group_id": 700000001}))
+        assert error_info.value.classification == "transport_unknown"
+        assert "transport detail" not in str(error_info.value)
     assert len(transport.requests) == 1
-    assert "transport detail" not in str(error_info.value)
 
 
 def test_registered_handlers_cover_26_fixed_specs_and_dispatch_only_explicitly() -> None:
@@ -1314,8 +1295,8 @@ def test_group_management_unknown_result_is_not_retried(
     assert client.calls == [(tool_name, args)]
 
 
-def test_tool_log_does_not_copy_sensitive_result_but_returns_raw_envelope(caplog) -> None:
-    """Tool 调用方拿到 raw envelope，日志不复制结果内容。"""
+def test_tool_log_does_not_copy_sensitive_result_but_returns_raw_body(caplog) -> None:
+    """Tool 调用方拿到 raw body，日志不复制结果内容。"""
 
     context = ToolContext()
     register_tools(context)
@@ -1347,7 +1328,7 @@ def test_tool_log_does_not_copy_sensitive_result_but_returns_raw_envelope(caplog
     assert len(records) == 1
     message = records[0].getMessage()
     assert "tool=get_private_file_download_url" in message
-    assert "classification=accepted" in message
+    assert "classification=delivered" in message
     assert "duration_ms=" in message
     assert "fixture-download-url" not in message
     assert "fixture-file" not in message

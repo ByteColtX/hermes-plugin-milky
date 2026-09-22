@@ -89,6 +89,17 @@ class TransportResponse:
     headers: Mapping[str, str]
 
 
+class ToolResponse(str):
+    """保存 Tool 原样响应字符串及旁路 HTTP 状态码。"""
+
+    def __new__(cls, body: str, *, status_code: int | None = None) -> Self:
+        """创建与普通字符串相等、但带有日志元数据的结果。"""
+
+        value = str.__new__(cls, body)
+        value.status_code = status_code
+        return value
+
+
 class HttpTransport(Protocol):
     """定义可注入的异步 HTTP transport。"""
 
@@ -457,15 +468,73 @@ class MilkyClient:
         self,
         action: str,
         params: Mapping[str, Any] | None = None,
-    ) -> MilkyEnvelope:
-        """调用已注册 Tool 并返回完整 raw envelope。"""
+    ) -> ToolResponse:
+        """调用已注册 Tool，并只返回 transport 解码后的响应字符串。"""
 
-        if action not in _TOOL_ACTIONS:
+        if not isinstance(action, str) or action not in _TOOL_ACTIONS:
             raise ActionError("unsupported", action, "Action is not registered as a Tool")
+        if self._closed:
+            raise ActionError("unsupported", action, "client is closed")
         _validate_tool_params(action, params)
-        envelope = await self.call(action, params)
-        _validate_tool_response(action, envelope)
-        return envelope
+        return await self._call_tool_raw(action, params)
+
+    async def _call_tool_raw(
+        self,
+        action: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> ToolResponse:
+        """发送 Tool 请求并在取得 body 后直接解码交付。"""
+
+        if params is None:
+            request_params: Mapping[str, Any] = {}
+        elif isinstance(params, Mapping):
+            request_params = params
+        else:
+            raise ActionError("invalid_input", action, "parameters must be an object")
+        try:
+            body = json.dumps(
+                dict(request_params), ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            raise ActionError(
+                "invalid_input", action, "parameters are not JSON serializable"
+            ) from None
+
+        status_code: int | None = None
+        try:
+            response = await self._transport.request(
+                "POST",
+                self._config.action_url(action),
+                {**self._config.auth_headers, "Content-Type": "application/json"},
+                body,
+                self._timeout,
+            )
+        except asyncio.CancelledError:
+            raise
+        except (TimeoutError, OSError) as error:
+            raise ActionError(
+                "transport_unknown",
+                action,
+                "request outcome is unknown",
+                phase=_safe_transport_phase(getattr(error, "phase", "unknown")),
+            ) from None
+        except Exception:  # noqa: BLE001 - 传输细节不得泄漏
+            raise ActionError(
+                "transport_unknown", action, "request outcome is unknown", phase="unknown"
+            ) from None
+
+        if not isinstance(response, TransportResponse):
+            raise ActionError("transport_unknown", action, "request outcome is unknown")
+        status_code = response.status_code
+        if isinstance(response.body, bytes):
+            decoded = response.body.decode("utf-8", errors="replace")
+        elif isinstance(response.body, bytearray):
+            decoded = bytes(response.body).decode("utf-8", errors="replace")
+        elif isinstance(response.body, str):
+            decoded = response.body
+        else:
+            raise ActionError("transport_unknown", action, "request outcome is unknown")
+        return ToolResponse(decoded, status_code=status_code)
 
     async def get_impl_info(self) -> str:
         """获取并原样返回已校验的 ``get_impl_info`` JSON 响应。"""
@@ -662,8 +731,8 @@ class MilkyClient:
         )
         return _parse_send_result(envelope, "send_private_message")
 
-    async def send_profile_like(self, user_id: object, count: object = _MISSING) -> MilkyEnvelope:
-        """向好友发送名片点赞，并校验 Action 的对象响应。"""
+    async def send_profile_like(self, user_id: object, count: object = _MISSING) -> ToolResponse:
+        """向好友发送名片点赞，并原样交付 Tool 响应。"""
 
         params: dict[str, Any] = {
             "user_id": _validate_id(
@@ -685,10 +754,10 @@ class MilkyClient:
                     maximum=_MAX_SAFE_INTEGER,
                 )
             )
-        return await self.call("send_profile_like", params)
+        return await self.call_tool("send_profile_like", params)
 
-    async def send_friend_nudge(self, user_id: object, is_self: object = _MISSING) -> MilkyEnvelope:
-        """向好友发送戳一戳，并校验可选的 ``is_self``。"""
+    async def send_friend_nudge(self, user_id: object, is_self: object = _MISSING) -> ToolResponse:
+        """向好友发送戳一戳，并原样交付 Tool 响应。"""
 
         params: dict[str, Any] = {
             "user_id": _validate_id(
@@ -703,10 +772,10 @@ class MilkyClient:
             if is_self is not None and not isinstance(is_self, bool):
                 raise ActionError("invalid_input", "send_friend_nudge", "is_self is invalid")
             params["is_self"] = is_self
-        return await self.call("send_friend_nudge", params)
+        return await self.call_tool("send_friend_nudge", params)
 
-    async def send_group_nudge(self, group_id: object, user_id: object) -> MilkyEnvelope:
-        """向群成员发送戳一戳。"""
+    async def send_group_nudge(self, group_id: object, user_id: object) -> ToolResponse:
+        """向群成员发送戳一戳，并原样交付 Tool 响应。"""
 
         params = {
             "group_id": _validate_id(
@@ -724,10 +793,10 @@ class MilkyClient:
                 maximum=_MAX_QQ_ID,
             ),
         }
-        return await self.call("send_group_nudge", params)
+        return await self.call_tool("send_group_nudge", params)
 
-    async def recall_group_message(self, group_id: object, message_seq: object) -> MilkyEnvelope:
-        """撤回群消息；调用方负责决定是否再次尝试。"""
+    async def recall_group_message(self, group_id: object, message_seq: object) -> ToolResponse:
+        """撤回群消息，并原样交付 Tool 响应。"""
 
         params = {
             "group_id": _validate_id(
@@ -744,7 +813,7 @@ class MilkyClient:
                 maximum=_MAX_SAFE_INTEGER,
             ),
         }
-        return await self.call("recall_group_message", params)
+        return await self.call_tool("recall_group_message", params)
 
     async def get_message(
         self, message_scene: object, peer_id: object, message_seq: object
@@ -770,15 +839,13 @@ class MilkyClient:
             {"message_scene": scene, "peer_id": peer_value, "message_seq": sequence},
         )
 
-    async def get_forwarded_messages(self, forward_id: object) -> MilkyEnvelope:
-        """按 forward ID 查询完整转发内容。"""
+    async def get_forwarded_messages(self, forward_id: object) -> ToolResponse:
+        """按 forward ID 查询并原样交付响应体。"""
 
-        envelope = await self.call(
+        return await self.call_tool(
             "get_forwarded_messages",
             {"forward_id": _validate_text(forward_id, "forward_id", "get_forwarded_messages")},
         )
-        _validate_tool_response("get_forwarded_messages", envelope)
-        return envelope
 
     async def get_resource_temp_url(self, resource_id: object) -> MilkyEnvelope:
         """按资源 ID 查询临时引用地址。"""
@@ -788,10 +855,10 @@ class MilkyClient:
             {"resource_id": _validate_text(resource_id, "resource_id", "get_resource_temp_url")},
         )
 
-    async def get_group_file_download_url(self, group_id: object, file_id: object) -> MilkyEnvelope:
-        """按群号和文件 ID 查询群文件下载地址。"""
+    async def get_group_file_download_url(self, group_id: object, file_id: object) -> ToolResponse:
+        """按群号和文件 ID 查询并原样交付下载地址响应。"""
 
-        envelope = await self.call(
+        return await self.call_tool(
             "get_group_file_download_url",
             {
                 "group_id": _validate_id(
@@ -804,16 +871,14 @@ class MilkyClient:
                 "file_id": _validate_text(file_id, "file_id", "get_group_file_download_url"),
             },
         )
-        _validate_tool_response("get_group_file_download_url", envelope)
-        return envelope
 
     async def get_group_files(
         self,
         group_id: object,
         *,
         parent_folder_id: object = _MISSING,
-    ) -> MilkyEnvelope:
-        """查询群文件和文件夹列表，并保留完整协议 envelope。"""
+    ) -> ToolResponse:
+        """查询群文件和文件夹列表，并原样交付响应体。"""
 
         params: dict[str, Any] = {
             "group_id": _validate_tool_integer(
@@ -828,9 +893,7 @@ class MilkyClient:
             params["parent_folder_id"] = _validate_optional_nonempty_tool_text(
                 parent_folder_id, "parent_folder_id", "get_group_files"
             )
-        envelope = await self.call("get_group_files", params)
-        _validate_tool_response("get_group_files", envelope)
-        return envelope
+        return await self.call_tool("get_group_files", params)
 
     async def accept_group_request(
         self,
@@ -839,7 +902,7 @@ class MilkyClient:
         group_id: object,
         *,
         is_filtered: object = _MISSING,
-    ) -> MilkyEnvelope:
+    ) -> ToolResponse:
         """接受入群请求；只在调用方明确提供完整参数时提交。"""
 
         params = _group_request_params(
@@ -849,9 +912,7 @@ class MilkyClient:
             group_id,
             is_filtered=is_filtered,
         )
-        envelope = await self.call("accept_group_request", params)
-        _validate_tool_response("accept_group_request", envelope)
-        return envelope
+        return await self.call_tool("accept_group_request", params)
 
     async def reject_group_request(
         self,
@@ -861,7 +922,7 @@ class MilkyClient:
         *,
         is_filtered: object = _MISSING,
         reason: object = _MISSING,
-    ) -> MilkyEnvelope:
+    ) -> ToolResponse:
         """拒绝入群请求；reason 仅作为明确的协议参数传递。"""
 
         params = _group_request_params(
@@ -875,13 +936,11 @@ class MilkyClient:
             params["reason"] = _validate_optional_nonempty_tool_text(
                 reason, "reason", "reject_group_request"
             )
-        envelope = await self.call("reject_group_request", params)
-        _validate_tool_response("reject_group_request", envelope)
-        return envelope
+        return await self.call_tool("reject_group_request", params)
 
     async def accept_group_invitation(
         self, group_id: object, invitation_seq: object
-    ) -> MilkyEnvelope:
+    ) -> ToolResponse:
         """接受群邀请；只在显式调用时提交一次。"""
 
         params = {
@@ -898,13 +957,11 @@ class MilkyClient:
                 "accept_group_invitation",
             ),
         }
-        envelope = await self.call("accept_group_invitation", params)
-        _validate_tool_response("accept_group_invitation", envelope)
-        return envelope
+        return await self.call_tool("accept_group_invitation", params)
 
     async def reject_group_invitation(
         self, group_id: object, invitation_seq: object
-    ) -> MilkyEnvelope:
+    ) -> ToolResponse:
         """拒绝群邀请；只在显式调用时提交一次。"""
 
         params = {
@@ -921,9 +978,7 @@ class MilkyClient:
                 "reject_group_invitation",
             ),
         }
-        envelope = await self.call("reject_group_invitation", params)
-        _validate_tool_response("reject_group_invitation", envelope)
-        return envelope
+        return await self.call_tool("reject_group_invitation", params)
 
     async def get_private_file_download_url(
         self,
@@ -932,8 +987,8 @@ class MilkyClient:
         file_hash: object,
         *,
         is_self_send: object = _MISSING,
-    ) -> MilkyEnvelope:
-        """按用户号、文件 ID 和 hash 查询私聊文件下载地址。"""
+    ) -> ToolResponse:
+        """按用户号、文件 ID 和 hash 查询并原样交付响应体。"""
 
         params: dict[str, Any] = {
             "user_id": _validate_tool_integer(
@@ -954,12 +1009,7 @@ class MilkyClient:
                     "is_self_send is invalid",
                 )
             params["is_self_send"] = is_self_send
-        envelope = await self.call(
-            "get_private_file_download_url",
-            params,
-        )
-        _validate_tool_response("get_private_file_download_url", envelope)
-        return envelope
+        return await self.call_tool("get_private_file_download_url", params)
 
     async def kick_group_member(
         self,
@@ -967,7 +1017,7 @@ class MilkyClient:
         user_id: object,
         *,
         reject_add_request: object = _MISSING,
-    ) -> MilkyEnvelope:
+    ) -> ToolResponse:
         """将群成员移出群聊；调用方负责确认高影响操作。"""
 
         params: dict[str, Any] = {
@@ -992,14 +1042,12 @@ class MilkyClient:
                     "invalid_input", "kick_group_member", "reject_add_request is invalid"
                 )
             params["reject_add_request"] = reject_add_request
-        envelope = await self.call("kick_group_member", params)
-        _validate_tool_response("kick_group_member", envelope)
-        return envelope
+        return await self.call_tool("kick_group_member", params)
 
-    async def quit_group(self, group_id: object) -> MilkyEnvelope:
+    async def quit_group(self, group_id: object) -> ToolResponse:
         """退出指定群聊；调用方负责确认高影响操作。"""
 
-        envelope = await self.call(
+        return await self.call_tool(
             "quit_group",
             {
                 "group_id": _validate_tool_integer(
@@ -1011,13 +1059,11 @@ class MilkyClient:
                 )
             },
         )
-        _validate_tool_response("quit_group", envelope)
-        return envelope
 
-    async def delete_friend(self, user_id: object) -> MilkyEnvelope:
+    async def delete_friend(self, user_id: object) -> ToolResponse:
         """删除好友关系；调用方负责确认高影响操作。"""
 
-        envelope = await self.call(
+        return await self.call_tool(
             "delete_friend",
             {
                 "user_id": _validate_tool_integer(
@@ -1029,16 +1075,14 @@ class MilkyClient:
                 )
             },
         )
-        _validate_tool_response("delete_friend", envelope)
-        return envelope
 
     async def get_friend_requests(
         self,
         *,
         limit: object = _MISSING,
         is_filtered: object = _MISSING,
-    ) -> MilkyEnvelope:
-        """查询好友请求列表并保留原始协议 envelope。"""
+    ) -> ToolResponse:
+        """查询好友请求列表并原样交付响应体。"""
 
         params: dict[str, Any] = {}
         if limit is not _MISSING:
@@ -1056,14 +1100,12 @@ class MilkyClient:
             if is_filtered is not None and not isinstance(is_filtered, bool):
                 raise ActionError("invalid_input", "get_friend_requests", "is_filtered is invalid")
             params["is_filtered"] = is_filtered
-        envelope = await self.call("get_friend_requests", params)
-        _validate_tool_response("get_friend_requests", envelope)
-        return envelope
+        return await self.call_tool("get_friend_requests", params)
 
-    async def get_friend_info(self, user_id: object) -> MilkyEnvelope:
-        """查询指定好友信息，并保留目标服务返回的 opaque object。"""
+    async def get_friend_info(self, user_id: object) -> ToolResponse:
+        """查询指定好友信息并原样交付响应体。"""
 
-        envelope = await self.call(
+        return await self.call_tool(
             "get_friend_info",
             {
                 "user_id": _validate_tool_integer(
@@ -1075,15 +1117,13 @@ class MilkyClient:
                 )
             },
         )
-        _validate_tool_response("get_friend_info", envelope)
-        return envelope
 
     async def accept_friend_request(
         self,
         initiator_uid: object,
         *,
         is_filtered: object = _MISSING,
-    ) -> MilkyEnvelope:
+    ) -> ToolResponse:
         """接受好友请求；调用方负责确认高影响操作。"""
 
         params: dict[str, Any] = {
@@ -1099,9 +1139,7 @@ class MilkyClient:
                     "invalid_input", "accept_friend_request", "is_filtered is invalid"
                 )
             params["is_filtered"] = is_filtered
-        envelope = await self.call("accept_friend_request", params)
-        _validate_tool_response("accept_friend_request", envelope)
-        return envelope
+        return await self.call_tool("accept_friend_request", params)
 
     async def reject_friend_request(
         self,
@@ -1109,7 +1147,7 @@ class MilkyClient:
         *,
         is_filtered: object = _MISSING,
         reason: object = _MISSING,
-    ) -> MilkyEnvelope:
+    ) -> ToolResponse:
         """拒绝好友请求；调用方负责确认高影响操作。"""
 
         params: dict[str, Any] = {
@@ -1129,17 +1167,15 @@ class MilkyClient:
             if reason is not None and not isinstance(reason, str):
                 raise ActionError("invalid_input", "reject_friend_request", "reason is invalid")
             params["reason"] = reason
-        envelope = await self.call("reject_friend_request", params)
-        _validate_tool_response("reject_friend_request", envelope)
-        return envelope
+        return await self.call_tool("reject_friend_request", params)
 
     async def set_group_member_special_title(
         self,
         group_id: object,
         user_id: object,
         special_title: object,
-    ) -> MilkyEnvelope:
-        """设置群成员专属头衔并原样保留字符串值。"""
+    ) -> ToolResponse:
+        """设置群成员专属头衔并原样交付响应体。"""
 
         if not isinstance(special_title, str):
             raise ActionError(
@@ -1164,9 +1200,7 @@ class MilkyClient:
             ),
             "special_title": special_title,
         }
-        envelope = await self.call("set_group_member_special_title", params)
-        _validate_tool_response("set_group_member_special_title", envelope)
-        return envelope
+        return await self.call_tool("set_group_member_special_title", params)
 
     async def upload_group_file(
         self,
@@ -1515,58 +1549,6 @@ def _validate_tool_params(action: str, params: Mapping[str, Any] | None) -> None
             raise ActionError("invalid_input", action, "reason is invalid")
 
 
-def _validate_tool_response(action: str, envelope: MilkyEnvelope) -> None:
-    """校验显式 Tool Action 的最小成功 data 结构。"""
-
-    data = envelope.data
-    if not isinstance(data, Mapping):
-        raise ActionError("malformed", action, "response data is malformed")
-    if action == "get_forwarded_messages":
-        messages = data.get("messages")
-        if not _is_object_array(messages):
-            raise ActionError("malformed", action, "response messages are malformed")
-    elif action in {"get_private_file_download_url", "get_group_file_download_url"}:
-        if not isinstance(data.get("download_url"), str):
-            raise ActionError("malformed", action, "response download_url is malformed")
-    elif action == "get_group_files":
-        if not _is_object_array(data.get("files")) or not _is_object_array(data.get("folders")):
-            raise ActionError("malformed", action, "response files or folders are malformed")
-    elif action == "get_friend_requests":
-        if not _is_object_array(data.get("requests")):
-            raise ActionError("malformed", action, "response requests are malformed")
-    elif action == "get_friend_info" and not data:
-        raise ActionError("malformed", action, "response data is malformed")
-    elif (
-        action
-        in {
-            "kick_group_member",
-            "quit_group",
-            "delete_friend",
-            "accept_friend_request",
-            "reject_friend_request",
-            "set_group_member_special_title",
-            "accept_group_request",
-            "reject_group_request",
-            "accept_group_invitation",
-            "reject_group_invitation",
-        }
-        and data
-    ):
-        raise ActionError("malformed", action, "response data is not an empty object")
-    elif action in {"get_group_info", "get_group_member_list", "get_group_member_info"}:
-        try:
-            parse_action_response(
-                {
-                    "status": envelope.status,
-                    "retcode": envelope.retcode,
-                    "data": envelope.data,
-                },
-                action,
-            )
-        except ParseError:
-            raise ActionError("malformed", action, "response data is malformed") from None
-
-
 def _validate_tool_integer(
     value: object,
     field: str,
@@ -1629,16 +1611,6 @@ def _group_request_params(
             raise ActionError("invalid_input", action, "is_filtered is invalid")
         params["is_filtered"] = is_filtered
     return params
-
-
-def _is_object_array(value: object) -> bool:
-    """确认协议数组由对象元素组成，同时不改变其 raw 内容。"""
-
-    return (
-        isinstance(value, Sequence)
-        and not isinstance(value, (str, bytes, bytearray))
-        and all(isinstance(item, Mapping) for item in value)
-    )
 
 
 def _validate_segments(value: object, action: str) -> list[Mapping[str, Any]]:
@@ -1705,6 +1677,7 @@ __all__ = [
     "MilkyActionError",
     "MilkyClient",
     "SendResult",
+    "ToolResponse",
     "TransportResponse",
     "materialize_media_uri",
     "validate_media_uri",

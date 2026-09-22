@@ -44,7 +44,7 @@ from outbound.tools import bind_sender, unbind_sender
 
 @dataclass
 class FakeOutboundClient:
-    """记录出站 Action，并提供可控的脱敏结果。"""
+    """记录出站 Action，并为 Tool 返回原始响应字符串。"""
 
     message_sequences: list[int] = field(default_factory=lambda: [101, 102, 103, 104])
     error: ActionError | None = None
@@ -111,7 +111,7 @@ class FakeOutboundClient:
         return MilkyEnvelope("ok", 0, {"file_id": "uploaded-private-file"})
 
     async def call(self, action: str, params: dict[str, Any]) -> MilkyEnvelope:
-        """返回保留扩展字段的 raw Tool envelope。"""
+        """兼容旧的通用 Action fake。"""
 
         self.calls.append((action, dict(params)))
         if self.error is not None:
@@ -145,6 +145,49 @@ class FakeOutboundClient:
             data,
             message="fixture-result-message",
             extras={"envelope_extension": "fixture-envelope-extension"},
+        )
+
+    async def call_tool(self, action: str, params: dict[str, Any]) -> str:
+        """记录显式 Tool，并返回未重建的 JSON body。"""
+
+        self.calls.append((action, dict(params)))
+        if self.error is not None:
+            raise self.error
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if action == "get_group_info":
+            data = {
+                "group": {"group_id": params["group_id"], "group_name": "合成群"},
+                "data_extension": "fixture-data-extension",
+            }
+        elif action == "get_group_member_list":
+            data = {
+                "members": [
+                    {"user_id": 900000001, "group_id": params["group_id"], "nickname": "合成成员"}
+                ],
+                "data_extension": "fixture-data-extension",
+            }
+        elif action == "get_group_member_info":
+            data = {
+                "member": {
+                    "user_id": params["user_id"],
+                    "group_id": params["group_id"],
+                    "nickname": "合成成员",
+                },
+                "data_extension": "fixture-data-extension",
+            }
+        else:
+            data = {"data_extension": "fixture-data-extension"}
+        return json.dumps(
+            {
+                "status": "ok",
+                "retcode": 0,
+                "data": data,
+                "message": "fixture-result-message",
+                "envelope_extension": "fixture-envelope-extension",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
 
     async def send_profile_like(self, user_id: int, count: object = None) -> MilkyEnvelope:
@@ -664,7 +707,7 @@ def test_sender_does_not_retry_recall_or_unknown_transport() -> None:
     sender = MilkyOutboundSender(client)
 
     recall_result = asyncio.run(sender.recall_group_message("group:700000001", "123"))
-    assert recall_result.status == "ok"
+    assert json.loads(recall_result)["status"] == "ok"
     assert client.calls == [("recall_group_message", {"group_id": 700000001, "message_seq": 123})]
 
     client.error = ActionError("transport_unknown", "send_group_message", "unknown")
@@ -851,8 +894,8 @@ def test_profile_like_tool_omits_optional_count_when_not_provided() -> None:
     assert client.calls == [("send_profile_like", {"user_id": 800000001})]
 
 
-def test_tool_logs_only_result_metadata_and_returns_complete_raw_envelope(caplog) -> None:
-    """Tool 日志只保留结果元数据，调用方仍收到完整 raw envelope。"""
+def test_tool_logs_only_result_metadata_and_returns_complete_raw_body(caplog) -> None:
+    """Tool 日志只保留结果元数据，调用方仍收到完整 raw body。"""
 
     context = ToolContext()
     register_tools(context)
@@ -881,7 +924,7 @@ def test_tool_logs_only_result_metadata_and_returns_complete_raw_envelope(caplog
     message = records[0].getMessage()
     assert "tool=get_group_info" in message
     assert "action=get_group_info" in message
-    assert "classification=accepted" in message
+    assert "classification=delivered" in message
     assert "duration_ms=" in message
     assert "data_extension" not in message
     assert "fixture-envelope-extension" not in message
@@ -909,9 +952,11 @@ def test_tool_parameter_error_does_not_call_action_or_log_remote_result(caplog) 
         "error": "tool input is invalid",
     }
     assert client.calls == []
-    assert not [
+    records = [
         record for record in caplog.records if record.name == "hermes_plugins.milky.outbound.tools"
     ]
+    assert len(records) == 1
+    assert "classification=invalid_input" in records[0].getMessage()
 
 
 def test_outbound_fixture_directory_contains_sanitized_action_envelopes() -> None:

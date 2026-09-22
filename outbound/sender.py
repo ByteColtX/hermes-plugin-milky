@@ -414,14 +414,11 @@ class MilkyOutboundSender:
         params: Mapping[str, object],
         fallback: Callable[[], Any],
     ) -> object:
-        """调用已注册 Tool 的 raw client 入口，并兼容旧 fake client。"""
+        """调用已注册 Tool 的 raw client 入口，并兼容 typed fake client。"""
 
         call_tool = getattr(self._client, "call_tool", None)
         if callable(call_tool):
             return await _maybe_await(call_tool(action, params))
-        call = getattr(self._client, "call", None)
-        if callable(call):
-            return await _maybe_await(call(action, params))
         return await _maybe_await(fallback())
 
     async def _execute_tool_action(
@@ -430,19 +427,16 @@ class MilkyOutboundSender:
         params: Mapping[str, object],
         fallback: Callable[[], Any],
     ) -> object:
-        """执行一次显式 Tool Action，并把失败收敛为固定结果。"""
+        """执行一次显式 Tool Action，并直接交付 transport 结果。"""
 
         try:
-            result = await self._call_tool(action, params, fallback)
-            envelope = _action_success(result)
-            _validate_tool_response(action, envelope)
-            return envelope
+            return await self._call_tool(action, params, fallback)
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
             return _failure(_error_classification(error), _safe_reason(error))
         except Exception:  # noqa: BLE001 - 工具边界不回显底层异常
-            return _failure("malformed", "tool action failed")
+            return _failure("transport_unknown", "tool action outcome is unknown")
 
     async def get_group_info(self, group_id: object, *, no_cache: bool | None = False) -> object:
         """查询群信息并保留 Milky 的原始成功 envelope。"""
@@ -691,14 +685,14 @@ class MilkyOutboundSender:
             user_value = _qq_id(user_id, "user_id")
             if count is _MISSING:
                 params = {"user_id": user_value}
-                envelope = await self._call_tool(
+                result = await self._call_tool(
                     "send_profile_like",
                     params,
                     lambda: self._client.send_profile_like(user_value),
                 )
             elif count is None:
                 params = {"user_id": user_value, "count": None}
-                envelope = await self._call_tool(
+                result = await self._call_tool(
                     "send_profile_like",
                     params,
                     lambda: self._client.send_profile_like(user_value, None),
@@ -706,18 +700,18 @@ class MilkyOutboundSender:
             else:
                 count_value = _integer(count, "count")
                 params = {"user_id": user_value, "count": count_value}
-                envelope = await self._call_tool(
+                result = await self._call_tool(
                     "send_profile_like",
                     params,
                     lambda: self._client.send_profile_like(user_value, count_value),
                 )
-            return _action_success(envelope)
+            return result
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
             return _failure(_error_classification(error), _safe_reason(error))
         except Exception:  # noqa: BLE001
-            return _failure("malformed", "profile like failed")
+            return _failure("transport_unknown", "profile like outcome is unknown")
 
     async def nudge(
         self,
@@ -725,7 +719,7 @@ class MilkyOutboundSender:
         *,
         user_id: object = None,
         is_self: object = None,
-    ) -> OutboundSendResult:
+    ) -> object:
         """按 dm/group namespace 执行好友或群戳一戳 Action。"""
 
         try:
@@ -738,13 +732,13 @@ class MilkyOutboundSender:
                 if is_self is not None and not isinstance(is_self, bool):
                     raise ActionError("invalid_input", "send_friend_nudge", "is_self is invalid")
                 if is_self is None:
-                    envelope = await self._call_tool(
+                    result = await self._call_tool(
                         "send_friend_nudge",
                         {"user_id": parsed.peer_id},
                         lambda: self._client.send_friend_nudge(parsed.peer_id),
                     )
                 else:
-                    envelope = await self._call_tool(
+                    result = await self._call_tool(
                         "send_friend_nudge",
                         {"user_id": parsed.peer_id, "is_self": is_self},
                         lambda: self._client.send_friend_nudge(parsed.peer_id, is_self),
@@ -753,26 +747,21 @@ class MilkyOutboundSender:
                 if is_self is not None:
                     raise ActionError("invalid_input", "send_group_nudge", "is_self is unsupported")
                 target_user = _qq_id(user_id, "user_id")
-                envelope = await self._call_tool(
+                result = await self._call_tool(
                     "send_group_nudge",
                     {"group_id": parsed.peer_id, "user_id": target_user},
                     lambda: self._client.send_group_nudge(parsed.peer_id, target_user),
                 )
-            result = _action_success(envelope)
             return result
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
             result = _failure(_error_classification(error), _safe_reason(error))
-            if "parsed" in locals() and parsed.scene == "group" and _is_remote_failure(error):
-                self._schedule_group_failure(parsed)
             return result
         except Exception:  # noqa: BLE001
-            if "parsed" in locals() and parsed.scene == "group":
-                self._schedule_group_failure(parsed)
-            return _failure("malformed", "nudge failed")
+            return _failure("transport_unknown", "nudge outcome is unknown")
 
-    async def recall_group_message(self, target: object, message_seq: object) -> OutboundSendResult:
+    async def recall_group_message(self, target: object, message_seq: object) -> object:
         """撤回合法群消息且只调用一次，不自动重试。"""
 
         try:
@@ -782,23 +771,19 @@ class MilkyOutboundSender:
                     "unsupported", "recall_group_message", "target scene is unsupported"
                 )
             sequence = _integer(message_seq, "message_seq")
-            envelope = await self._call_tool(
+            result = await self._call_tool(
                 "recall_group_message",
                 {"group_id": parsed.peer_id, "message_seq": sequence},
                 lambda: self._client.recall_group_message(parsed.peer_id, sequence),
             )
-            return _action_success(envelope)
+            return result
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
             result = _failure(_error_classification(error), _safe_reason(error))
-            if _is_remote_failure(error) and "parsed" in locals():
-                self._schedule_group_failure(parsed)
             return result
         except Exception:  # noqa: BLE001
-            if "parsed" in locals():
-                self._schedule_group_failure(parsed)
-            return _failure("malformed", "recall failed")
+            return _failure("transport_unknown", "recall outcome is unknown")
 
     async def get_forwarded_messages(self, forward_id: object) -> object:
         """查询合并转发消息并保留完整成功 envelope。"""
@@ -1450,66 +1435,6 @@ def _integer(
         if minimum <= converted <= maximum:
             return converted
     raise ActionError("invalid_input", "tool", f"{field} is invalid")
-
-
-def _action_success(envelope: object) -> object:
-    """确认显式 Action 已返回原始成功 envelope。"""
-
-    if not isinstance(envelope, MilkyEnvelope):
-        raise ActionError("malformed", "tool", "response envelope is malformed")
-    return envelope
-
-
-def _validate_tool_response(action: str, envelope: MilkyEnvelope) -> None:
-    """在 sender 边界重复确认新增 Tool 的最小响应结构。"""
-
-    if not isinstance(envelope.data, Mapping):
-        raise ActionError("malformed", action, "response data is malformed")
-    if action == "get_forwarded_messages":
-        messages = envelope.data.get("messages")
-        if not _is_object_sequence(messages):
-            raise ActionError("malformed", action, "response messages are malformed")
-    elif action in {"get_private_file_download_url", "get_group_file_download_url"}:
-        if not isinstance(envelope.data.get("download_url"), str):
-            raise ActionError("malformed", action, "response download_url is malformed")
-    elif action == "get_group_files":
-        if not _is_object_sequence(envelope.data.get("files")) or not _is_object_sequence(
-            envelope.data.get("folders")
-        ):
-            raise ActionError("malformed", action, "response files or folders are malformed")
-    elif action == "get_friend_requests":
-        requests = envelope.data.get("requests")
-        if not _is_object_sequence(requests):
-            raise ActionError("malformed", action, "response requests are malformed")
-    elif action == "get_friend_info" and not envelope.data:
-        raise ActionError("malformed", action, "response data is malformed")
-    elif (
-        action
-        in {
-            "kick_group_member",
-            "quit_group",
-            "delete_friend",
-            "set_group_member_special_title",
-            "accept_friend_request",
-            "reject_friend_request",
-            "accept_group_request",
-            "reject_group_request",
-            "accept_group_invitation",
-            "reject_group_invitation",
-        }
-        and envelope.data
-    ):
-        raise ActionError("malformed", action, "response data is not an empty object")
-
-
-def _is_object_sequence(value: object) -> bool:
-    """确认响应数组由对象元素组成。"""
-
-    return (
-        isinstance(value, Sequence)
-        and not isinstance(value, (str, bytes, bytearray))
-        and all(isinstance(item, Mapping) for item in value)
-    )
 
 
 def _success(
