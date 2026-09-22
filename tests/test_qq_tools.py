@@ -873,7 +873,7 @@ def test_client_preserves_query_and_management_bodies() -> None:
 
 
 def test_sensitive_named_fields_match_between_action_and_tool_paths() -> None:
-    """同一响应字段在通用 Action 和 Tool 路径中应保持一致。"""
+    """同一响应字段在通用 Action 和 Tool 原样路径中应保持一致。"""
 
     payload = {
         "status": "ok",
@@ -895,11 +895,13 @@ def test_sensitive_named_fields_match_between_action_and_tool_paths() -> None:
 
     action_result = asyncio.run(action_client.call("get_friend_info", params))
     tool_result = asyncio.run(tool_client.call_tool("get_friend_info", params))
+    tool_payload = json.loads(tool_result)
 
-    assert action_result.data == tool_result.data
+    assert tool_payload["data"] == action_result.data
     assert action_result.data["TOKEN"] == "synthetic-token"
     assert action_result.data["nested"]["Authorization"] == "synthetic-authorization"
     assert action_result.extras["PASSWORD"] == "synthetic-password"
+    assert tool_payload["PASSWORD"] == action_result.extras["PASSWORD"]
 
 
 def test_client_preserves_group_query_raw_envelopes_and_unknown_fields() -> None:
