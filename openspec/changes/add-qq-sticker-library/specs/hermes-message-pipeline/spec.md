@@ -2,7 +2,10 @@
 
 ### Requirement: Resource resolution MUST feed only current-message images to automatic sticker collection
 
-在既有资源 resolver 完成且 `MessageEvent` 交接前，pipeline MAY 为当前消息启动自动 sticker collection。该旁路 SHALL 只消费已经由 Hermes helper materialize 的当前顶层图片，不得重新查询远端资源、复制下载器、改变 `media_urls`/`media_types` 顺序或把自动收集 metadata 写入普通正文和历史 `channel_context`。自动收集失败不得阻断原有 Hermes handoff。
+在既有资源 resolver 完成且 `MessageEvent` 交接前，pipeline MAY 为当前消息启动自动 sticker collection。
+该旁路 SHALL 只消费已经由 Hermes helper materialize 的当前顶层图片，不得重新查询远端资源、复制下载器、
+改变 `media_urls`/`media_types` 顺序或把自动收集 metadata 写入普通正文和历史 `channel_context`。
+自动收集失败不得阻断原有 Hermes handoff。
 
 #### Scenario: Trigger batch starts automatic collection
 
@@ -26,7 +29,9 @@
 
 ### Requirement: Automatic sticker collection MUST respect existing ingress ordering
 
-自动 sticker collection MUST 在 canonical、dedup、admission、Gate 和 Will trigger 之后启动；wait、Gate deny、duplicate、temp 和非 `message_receive` 事件 SHALL 不进入自动收集流程。pipeline SHALL 不因 sticker library 复制 Hermes busy/follow-up/interrupt 队列。
+自动 sticker collection MUST 在 canonical、dedup、admission、Gate 和 Will trigger 之后启动；wait、Gate deny、
+duplicate、temp 和非 `message_receive` 事件 SHALL 不进入自动收集流程。pipeline SHALL 不因 sticker library
+复制 Hermes busy/follow-up/interrupt 队列。
 
 #### Scenario: Gate deny does not collect
 
@@ -44,3 +49,21 @@
 - **WHEN** Hermes handoff 已完成而视觉判定任务仍在运行
 - **THEN** 任务 MAY 在后台完成或被生命周期取消
 - **AND** 任务结果 SHALL 不修改已经交接的正文、媒体顺序、Gate、Will 或 reply cost
+
+### Requirement: Explicit manual sticker commands MUST remain separate from automatic collection
+
+显式 `/milky sticker add`、`edit`、`reanalyze`、`del`、`cleanup` 和 `reindex` SHALL 继续走已交付的命令维护路径，
+不进入普通 `message_receive` 的自动收集旁路。命令扫描的固定 inbox、library 和 junk 资源 SHALL 不被当作当前
+消息顶层图片重复提交；自动收集也 SHALL 不隐式调用或模拟任一手动维护命令。
+
+#### Scenario: Manual add does not double collect
+
+- **WHEN** command handler 收到显式 `/milky sticker add` 并扫描人工 inbox
+- **THEN** 系统 SHALL 只执行手动维护规范定义的校验、视觉和文件归宿
+- **AND** SHALL 不为该命令创建当前消息自动 collection staging 或新的 Agent turn
+
+#### Scenario: Automatic collection does not invoke maintenance
+
+- **WHEN** 普通当前消息图片通过资源解析并进入自动收集
+- **THEN** 系统 SHALL 只创建自动作用域条目或返回固定失败分类
+- **AND** SHALL 不扫描 inbox、不移动 junk、不执行 edit/reanalyze/del/cleanup/reindex

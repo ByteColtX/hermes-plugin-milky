@@ -1,41 +1,56 @@
 ## Why
 
-当前 Milky 插件已经提供独立的 `stickers.db`、显式 `/milky sticker` 人工维护流程和受限的
-`sticker_send`；但它还不会从当前入站图片自动收集贴纸，也没有按 QQ 会话隔离的 asset/entry
-模型、自动库的搜索/纠错工具。本 change 在现有库和发送边界上扩展能力，让系统在图片进入当前
-消息资源边界后自主判断是否是高质量贴纸，避免要求用户或 Agent 先发起收藏动作。
+当前插件已经交付了显式 `/milky sticker` 手动维护、独立 `stickers.db`、受控的
+`inbox/library/junk` 文件目录和贴纸发送能力，但普通入站图片仍不会沉淀为可复用条目。本 change
+在这套已交付的手动维护契约上增加自动收集和按会话可见性，而不是重做或替换现有贴纸库。
 
 ## What Changes
 
-- 在现有贴纸库上增加按图片内容 SHA-256 去重的 asset/entry 模型，分离共享文件实体和作用域内的分类条目；迁移必须保留已有人工条目、文件和使用统计。
-- 新增可配置的 sticker library scope；默认按当前 QQ 会话隔离，显式配置后才允许跨会话共享。
-- 新增固定的 `sticker_categories`、`sticker_search` 和 `sticker_forget` ToolSpec，并将现有
-  `sticker_send` 调整为新 library 契约；自动收藏是内部旁路，不开放任意资源 URI、文件路径或
-  Milky Action catalog。
-- 在资源解析成功后自动检查当前消息的顶层图片，先执行格式、大小和可读性过滤，再使用 Hermes 已有视觉能力判断贴纸质量；截图、新闻、聊天记录、文档、二维码、普通照片和低置信度图片不得进入长期库。
-- 复用 Hermes 入站资源 helper 和现有 Milky 出站 materialization；自动收藏不新增下载器或远端缓存，发送不绕过现有群聊/私聊路由和大小限制。
-- 使用 Hermes `plugin_db()` 和 `plugin_data_dir()` 保存元数据及 content-addressed 文件；提供导入、清理、重建索引和 dry-run 运维入口。
-- 支持自动分类、有限标签、质量判定、使用次数和最近使用时间；无法确认质量时跳过收藏而不是降低门槛。
-- 记录固定工具的授权、失败分类和低基数统计；不记录 token、远端媒体 URL、本地绝对路径、原始图片 bytes 或敏感正文。
+- 保留现有 `sticker_items`、`sticker_files`、`sticker_send_usage`、文件目录和
+  `/milky sticker add/list/edit/reanalyze/del/cleanup/reindex` 的可观察行为；已有条目、文件、
+  opaque ID、人工字段覆盖和使用统计必须在升级后保持可用。
+- 以增量 schema 扩展自动收集所需的内容资产、质量元数据和作用域条目；迁移不得把旧手动记录
+  直接改造成按会话条目，也不得因首次启用而重复导入或覆盖旧文件。
+- 在当前图片完成 Hermes 资源 materialization 后增加内部自动收集旁路，默认把新自动条目绑定到
+  当前 `dm:<peer_id>` 或 `group:<group_id>`；只有显式配置才允许自动条目进入 `global`。
+- 自动收集复用既有图片校验、受控文件存储、媒体大小和出站 materialization 边界，但使用内部
+  staging，不扫描或改写人工 `inbox/junk`，也不进入 Agent Tool、普通正文或主 Agent transcript。
+- 使用内容 hash 复用物理图片；同一作用域内不得产生重复自动条目，人工共享条目和其他作用域的
+  自动条目不得因此互相泄露分类、标签或使用统计。
+- 继续使用 Hermes 已有视觉能力执行严格的格式、质量、可复用性和隐私门控；未知、malformed、
+  超时或能力不可用时安全跳过，不降低手动维护的 `is_sticker` 入库门槛，也不报告假成功。
+- 增加固定的分类查询和自动条目纠错能力；`sticker_search` 与 `sticker_send` 沿用现有及
+  `add-sticker-search-and-id-send` 的 intent/emotion/tags、opaque ID 和一次发送契约，不在本
+  change 中重新定义互相冲突的 `category/keyword/index` 参数。`sticker_forget` 只允许删除当前
+  会话可见的自动条目，人工条目仍由显式维护命令管理。
+- 自动条目和既有人工条目共享统一的可恢复清理、缺失文件诊断和发送统计边界；发送统计沿用
+  现有“已发起发送调用后 claim 一次、远端结果不回滚”的语义。
+- 保持注册阶段无网络、无图片读取和无长期分类任务；维护命令不新增插件级 operator 身份配置，
+  自动旁路、Agent Tool 和出站目标仍必须使用已确认的当前会话边界。
 
 ## Capabilities
 
 ### New Capabilities
 
-- `qq-sticker-library`: 定义 QQ sticker 的导入、候选收藏、内容去重、作用域、分类/标签、搜索、发送、使用统计、清理和安全降级行为。
+- `qq-sticker-library`: 定义在既有手动库上增加自动收集、作用域可见性、质量门控、分类查询、自动条目纠错和兼容迁移的行为。
 
 ### Modified Capabilities
 
-- `hermes-message-pipeline`: 明确资源 resolver 完成后当前消息图片如何进入自动质量判定，并保持 Gate/Will、历史上下文、当前正文和 Hermes handoff 边界。
-- `qq-action-tools`: 在保留现有 `sticker_send` 的基础上增加固定、可审计的贴纸 ToolSpec，并定义自动收藏不经 Agent Tool、参数校验、当前会话目标和一次副作用调用边界。
-- `security-boundaries`: 增加自动收集输入的会话归属、作用域隔离、路径不可由 Agent 提交、发送/删除工具授权和安全日志要求。
-- `plugin-lifecycle`: 增加 sticker SQLite/file store 的懒加载、关闭、清理和重载语义，保持注册阶段无网络和无长期任务。
+- `hermes-message-pipeline`: 增加当前消息顶层图片进入自动收集旁路的边界，并保持显式手动命令路径独立。
+- `qq-action-tools`: 增加自动条目的固定查询/纠错工具，同时沿用既有贴纸搜索和发送契约。
+- `security-boundaries`: 区分自动/Agent 当前会话授权与既有手动命令不声明来源授权的边界。
+- `plugin-lifecycle`: 扩展手动贴纸库的懒加载、兼容迁移、自动任务取消和重载保留语义。
 
 ## Impact
 
-- 影响 `__init__.py`、`adapter.py`、`inbound/pipeline.py`、`inbound/hermes_mapper.py`、`milky/resources.py`、`outbound/tools.py` 和新增 sticker store/quality/service 模块。
-- 扩展现有 `plugin_db("hermes-plugin-milky", filename="stickers.db")` 与
-  `plugin_data_dir("hermes-plugin-milky")` 的持久化边界；必须兼容已有人工贴纸库，Hermes core 不修改。
-- 需要补充脱敏的 store、自动分类质量 fixture、任务生命周期、ToolSpec、跨会话授权、出站发送结果和 fake Hermes 集成测试，并同步 `ARCHITECTURE.md`、`README.md` 与相关主规范。
-- 与未完成的 `add-milky-relationship-system` 共享 `outbound/tools.py`、`inbound/pipeline.py` 和插件数据库生命周期；实现时必须保持两者表、hook 和错误边界相互隔离。
-- 非目标包括：复制 Hermes 下载/SSRF/cache、建立通用 `asset://` 资源仓库、修改 Hermes core、引入独立的 Agent queue/Will 系统、处理历史/reply/forward/wait 图片，以及提供绕过质量门控的强制收藏接口。
+- 影响 `inbound/pipeline.py`、`inbound/commands.py`、`outbound/tools.py`、贴纸维护/发送服务和
+  插件生命周期绑定；Hermes core、普通消息 handoff、Gate、Will、wait 和 sender 责任边界不变。
+- 扩展既有 `stickers.db` 与 plugin-data 下的受控文件库，必须兼容已交付的手动 schema、命令和
+  `sticker_send`，并使物理文件在人工条目和自动条目之间可恢复地共享。
+- 需要增加自动收集、作用域隔离、旧库迁移、工具参数、任务取消、质量拒绝和文件引用保护测试，
+  以及同步 `ARCHITECTURE.md`、`README.md`、manifest/skill 和相关主规范的任务。
+- 与 `add-sticker-search-and-id-send`、`add-milky-relationship-system` 共享工具注册或 pipeline
+  入口时，必须通过合并回归保持各自的表、hook、ToolSpec 和错误分类，不直接覆盖另一 change 的契约。
+- 非目标包括：把旧手动条目追溯迁移为按会话条目、复制 Hermes 下载/SSRF/cache、引入任意路径或
+  远端导入、开放任意 Action catalog、提供绕过质量门控的 Agent 收藏、改变手动命令的 operator
+  授权声明，或修改 Hermes core。
