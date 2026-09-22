@@ -29,13 +29,6 @@ from milky.models import (
 )
 
 JsonObject = Mapping[str, Any]
-_SENSITIVE_KEYS = {
-    "access_token",
-    "authorization",
-    "cookie",
-    "password",
-    "token",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,7 +180,7 @@ def extract_segments(
                     time=segment.time,
                     segments=segment.segments,
                     complete=complete,
-                    raw=_safe_mapping(segment.raw),
+                    raw=_freeze_mapping(segment.raw),
                     segment_index=segment_index,
                 )
             )
@@ -217,7 +210,7 @@ def extract_segments(
                     name=segment.summary,
                     mime_type=_extra_text(segment, "mime_type"),
                     file_size=_extra_nonnegative_int(segment, "file_size"),
-                    raw=_safe_mapping(segment.raw),
+                    raw=_freeze_mapping(segment.raw),
                     body_start=body_start,
                     body_end=body_start + len(marker),
                     segment_index=segment_index,
@@ -239,7 +232,7 @@ def extract_segments(
                     temp_url=segment.temp_url,
                     mime_type=_extra_text(segment, "mime_type"),
                     file_size=_extra_nonnegative_int(segment, "file_size"),
-                    raw=_safe_mapping(segment.raw),
+                    raw=_freeze_mapping(segment.raw),
                     body_start=body_start,
                     body_end=body_start + len(marker),
                     segment_index=segment_index,
@@ -259,7 +252,7 @@ def extract_segments(
                     temp_url=segment.temp_url,
                     mime_type=_extra_text(segment, "mime_type"),
                     file_size=_extra_nonnegative_int(segment, "file_size"),
-                    raw=_safe_mapping(segment.raw),
+                    raw=_freeze_mapping(segment.raw),
                     segment_index=segment_index,
                 )
             )
@@ -278,7 +271,7 @@ def extract_segments(
                     file_size=segment.file_size,
                     file_hash=segment.file_hash,
                     mime_type=_extra_text(segment, "mime_type"),
-                    raw=_safe_mapping(segment.raw),
+                    raw=_freeze_mapping(segment.raw),
                 )
             )
             continue
@@ -295,7 +288,7 @@ def extract_segments(
                     title=segment.title,
                     preview=segment.preview,
                     summary=segment.summary,
-                    raw=_safe_mapping(segment.raw),
+                    raw=_freeze_mapping(segment.raw),
                 )
             )
             continue
@@ -324,7 +317,7 @@ def extract_segments(
             continue
 
         if isinstance(segment, UnknownSegment):
-            unknown_segments.append(_safe_mapping(segment.raw))
+            unknown_segments.append(_freeze_mapping(segment.raw))
             _append_once(diagnostics, "unknown_segment")
             continue
 
@@ -334,7 +327,7 @@ def extract_segments(
         keyword_texts.append("".join(text_run))
     if not mention_kinds:
         mention_kinds.append("none")
-    metadata = _safe_mapping(
+    metadata = _freeze_mapping(
         {
             "unknown_segments": tuple(unknown_segments),
             "unknown_segment_types": tuple(
@@ -481,21 +474,15 @@ def _append_once(values: list[str], value: str) -> None:
         values.append(value)
 
 
-def _safe_mapping(value: Mapping[str, Any]) -> JsonObject:
-    return MappingProxyType(
-        {
-            str(key): _safe_value(item)
-            for key, item in value.items()
-            if str(key).casefold() not in _SENSITIVE_KEYS
-        }
-    )
+def _freeze_mapping(value: Mapping[str, Any]) -> JsonObject:
+    return MappingProxyType({str(key): _freeze_value(item) for key, item in value.items()})
 
 
-def _safe_value(value: Any) -> Any:
+def _freeze_value(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return _safe_mapping(value)
+        return _freeze_mapping(value)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return tuple(_safe_value(item) for item in value)
+        return tuple(_freeze_value(item) for item in value)
     return value
 
 

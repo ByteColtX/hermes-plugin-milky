@@ -32,7 +32,10 @@ def load_fixture(relative_path: str) -> object:
 def test_canonical_scene_metadata_is_whitelisted_for_prompt() -> None:
     """会话介绍只复制已校验实体的声明字段。"""
 
-    friend = canonicalize_event(load_fixture("events/message_receive.friend.json")).value
+    friend_payload = load_fixture("events/message_receive.friend.json")
+    friend_payload["data"]["friend"]["TOKEN"] = "fixture-token-value"
+    friend_payload["data"]["authorization"] = "fixture-authorization-value"
+    friend = canonicalize_event(friend_payload).value
     group = canonicalize_event(load_fixture("events/message_receive.group.all_segments.json")).value
 
     friend_metadata = build_session_metadata(friend)

@@ -25,13 +25,6 @@ from session.identity import (
 from will.input import MentionKind, WillInput
 
 JsonObject = Mapping[str, Any]
-_SENSITIVE_KEYS = {
-    "access_token",
-    "authorization",
-    "cookie",
-    "password",
-    "token",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,7 +186,7 @@ def _canonicalize_normalized(
     _validate_scene_entities(message)
     sender_name = _sender_name(message)
     diagnostics = normalized.diagnostics
-    metadata = _freeze_safe(
+    metadata = _freeze_value(
         {
             **dict(normalized.metadata),
             "scene": normalized.scene,
@@ -301,17 +294,15 @@ def _non_blank(value: str | None) -> str | None:
     return value or None
 
 
-def _freeze_safe(value: object) -> Any:
+def _freeze_value(value: object) -> Any:
     if isinstance(value, Mapping):
-        safe: dict[str, Any] = {}
+        frozen: dict[str, Any] = {}
         for key, item in value.items():
             key_text = str(key)
-            if key_text.casefold() in _SENSITIVE_KEYS:
-                continue
-            safe[key_text] = _freeze_safe(item)
-        return MappingProxyType(safe)
+            frozen[key_text] = _freeze_value(item)
+        return MappingProxyType(frozen)
     if isinstance(value, (list, tuple)):
-        return tuple(_freeze_safe(item) for item in value)
+        return tuple(_freeze_value(item) for item in value)
     return value
 
 

@@ -206,7 +206,7 @@ def test_temp_message_is_ignored_before_normalization() -> None:
 
 
 def test_unknown_segment_is_metadata_only_and_does_not_enter_strategy_text() -> None:
-    """未知 segment 只能进入安全诊断，不能变成正文或关键词。"""
+    """未知 segment 只能进入诊断 raw，不能变成正文或关键词。"""
 
     result = normalize_event(load_fixture("events/message_receive.group.unknown_extension.json"))
 
@@ -216,7 +216,39 @@ def test_unknown_segment_is_metadata_only_and_does_not_enter_strategy_text() -> 
     assert normalized.body == "保留文本"
     assert normalized.strategy_text == "保留文本"
     assert normalized.unknown_segments[0]["type"] == "future_segment_extension"
+    assert normalized.unknown_segments[0]["data"]["TOKEN"] == "fixture-token-value"
+    assert (
+        normalized.unknown_segments[0]["data"]["nested"]["items"][0]["PASSWORD"]
+        == "fixture-password-value"
+    )
     assert "unknown_segment" in normalized.diagnostics
+
+
+def test_normalizer_preserves_case_variants_and_nested_unknown_fields() -> None:
+    """规范化应保留未知字段的大小写、嵌套结构和不可变数组。"""
+
+    payload = load_fixture("events/message_receive.group.unknown_extension.json")
+    payload["data"]["segments"][1]["data"].update(
+        authorization="synthetic-authorization",
+        tOkEn="synthetic-token",
+        nested={"PASSWORD": "synthetic-password", "items": [{"Cookie": "synthetic-cookie"}]},
+    )
+
+    result = normalize_event(payload)
+
+    assert result.value is not None
+    normalized = result.value
+    unknown = normalized.segments[1]
+    assert isinstance(unknown, UnknownSegment)
+    assert unknown.raw["data"]["authorization"] == "synthetic-authorization"
+    assert unknown.raw["data"]["tOkEn"] == "synthetic-token"
+    assert unknown.raw["data"]["nested"]["PASSWORD"] == "synthetic-password"
+    assert unknown.raw["data"]["nested"]["items"][0]["Cookie"] == "synthetic-cookie"
+    assert normalized.unknown_segments[0]["data"]["nested"]["items"] == (
+        {"Cookie": "synthetic-cookie"},
+    )
+    assert normalized.body == "保留文本"
+    assert normalized.strategy_text == "保留文本"
 
 
 def test_unknown_only_message_is_dropped_with_explicit_reason() -> None:

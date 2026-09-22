@@ -142,6 +142,58 @@ def test_action_logs_classification_status_duration_without_response_body(caplog
     assert "https://fixture.invalid/milky" not in rendered
 
 
+def test_success_log_does_not_copy_sensitive_named_response_fields(caplog) -> None:
+    """成功响应含敏感命名字段时，日志仍只记录固定元数据。"""
+
+    response = TransportResponse(
+        200,
+        (
+            b'{"status":"ok","retcode":0,"data":{"TOKEN":"synthetic-token-value",'
+            b'"authorization":"synthetic-authorization-value","password":"synthetic-password-value",'
+            b'"cookie":"synthetic-cookie-value","url":"https://fixture.invalid/secret",'
+            b'"reason":"synthetic-free-text"}}'
+        ),
+        {},
+    )
+
+    class SensitiveTransport(_Transport):
+        """返回含敏感命名字段的合成成功响应。"""
+
+        def __init__(self) -> None:
+            self.responses = [response]
+
+    client = MilkyClient(
+        load_config(
+            {
+                "MILKY_BASE_URL": "https://fixture.invalid/milky",
+                "MILKY_ACCESS_TOKEN": "synthetic-client-token",
+            }
+        ),
+        transport=SensitiveTransport(),
+    )
+
+    with caplog.at_level(logging.INFO, logger="hermes_plugins.milky.client"):
+        result = asyncio.run(client.call("get_friend_info"))
+
+    assert result.data["TOKEN"] == "synthetic-token-value"
+    assert result.data["authorization"] == "synthetic-authorization-value"
+    assert result.data["password"] == "synthetic-password-value"
+    assert result.data["cookie"] == "synthetic-cookie-value"
+    assert result.data["url"] == "https://fixture.invalid/secret"
+    assert result.data["reason"] == "synthetic-free-text"
+    rendered = " ".join(record.getMessage() for record in caplog.records)
+    assert "classification=accepted" in rendered
+    for marker in (
+        "synthetic-token-value",
+        "synthetic-authorization-value",
+        "synthetic-password-value",
+        "synthetic-cookie-value",
+        "https://fixture.invalid/secret",
+        "synthetic-free-text",
+    ):
+        assert marker not in rendered
+
+
 def test_log_level_and_handler_failures_do_not_change_action_result(monkeypatch) -> None:
     """禁用 logger 时 Action 仍返回同样的协议结果。"""
 

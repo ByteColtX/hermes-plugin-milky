@@ -10,7 +10,17 @@
     "time": 1700000040,
     "segments": [
       {"type": "text", "data": {"text": "保留文本"}},
-      {"type": "future_segment_extension", "data": {"opaque": "仅供诊断"}}
+      {
+        "type": "future_segment_extension",
+        "data": {
+          "opaque": "仅供诊断",
+          "TOKEN": "fixture-token-value",
+          "nested": {
+            "Authorization": "fixture-authorization-value",
+            "items": [{"PASSWORD": "fixture-password-value", "cookie": "fixture-cookie-value"}]
+          }
+        }
+      }
     ],
     "group": {
       "group_id": 700000001,

@@ -20,7 +20,7 @@ Hermes 映射都基于同一份可审计的 canonical message，而不是各自�
 #### Scenario: 系统事件
 
 - **WHEN** 收到撤回、请求、通知、生命周期或未知事件
-- **THEN** 事件 SHALL 被观察并保留安全 raw 信息
+- **THEN** 事件 SHALL 被观察并保留协议 raw 信息
 - **AND** SHALL NOT 创建普通 Hermes MessageEvent 或触发 Agent
 
 ### Requirement: 场景和 chat key 必须命名空间隔离
@@ -40,13 +40,13 @@ Hermes 映射都基于同一份可审计的 canonical message，而不是各自�
 
 ### Requirement: canonical record 包含完整稳定身份
 
-每条可处理消息 MUST 提供 `platform`、`self_id`、`scene`、`chat_key`、`peer_id`、`sender_id`、字符串形式的 `message_seq`、Unix 秒时间戳、typed segments、正文、mention/quote 信号、分类后的 `media_resource_references`、`file_attachment_references`、forward/reply references、raw 和安全 metadata。`self_id` SHALL 来自事件的 `self_id` 并与启动时 `get_login_info.data.uin` 的身份一致；Milky `message_seq` SHALL 是 canonical 稳定序号的唯一来源，不得从时间、正文、`ingress_sequence` 或本地计数器推导。进入 Hermes boundary 时，该值才映射到宿主 `MessageEvent.message_id`。通过 friend/group 身份交叉校验后，record MUST 继续携带供会话介绍使用的场景资料；friend 只允许 `user_id`、`nickname`、`sex`，group 只允许 `group_id`、`group_name`、`member_count`、`description`、`announcement`。raw、extras、group member 和未知扩展 MUST NOT 成为会话介绍字段。
+每条可处理消息 MUST 提供 `platform`、`self_id`、`scene`、`chat_key`、`peer_id`、`sender_id`、字符串形式的 `message_seq`、Unix 秒时间戳、typed segments、正文、mention/quote 信号、分类后的 `media_resource_references`、`file_attachment_references`、forward/reply references、协议 raw 和受约束 metadata。raw 与未知扩展 SHALL 保留已接收字段和值，但 MUST NOT 成为会话介绍、正文、关键词、工具调用或授权判断的来源。`self_id` SHALL 来自事件的 `self_id` 并与启动时 `get_login_info.data.uin` 的身份一致；Milky `message_seq` SHALL 是 canonical 稳定序号的唯一来源，不得从时间、正文、`ingress_sequence` 或本地计数器推导。进入 Hermes boundary 时，该值才映射到宿主 `MessageEvent.message_id`。通过 friend/group 身份交叉校验后，record MUST 继续携带供会话介绍使用的场景资料；friend 只允许 `user_id`、`nickname`、`sex`，group 只允许 `group_id`、`group_name`、`member_count`、`description`、`announcement`。raw、extras、group member 和未知扩展 MUST NOT 成为会话介绍字段。
 
 #### Scenario: 时间和序号规范化
 
 - **WHEN** 协议消息提供可解析的时间和消息序号
 - **THEN** record SHALL 保存规范化 Unix 秒和 Milky 序号字符串
-- **AND** SHALL 保留足以诊断未知扩展的 raw 信息而不暴露凭证
+- **AND** SHALL 保留足以诊断未知扩展的 raw 信息；协议保真不得改变日志和会话介绍的最小化边界
 
 #### Scenario: 登录身份使用 uin
 

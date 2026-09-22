@@ -174,7 +174,7 @@ uid <user_id> left the group. Details: {"group_id": <group_id>, "user_id": <user
 #### Scenario: 未知事件
 
 - **WHEN** 收到未知事件类型
-- **THEN** 系统 SHALL 保留 type 和安全 raw 扩展并限速记录
+- **THEN** 系统 SHALL 保留 type 和协议 raw 扩展，并仅以固定低敏字段限速记录
 - **AND** SHALL 继续处理后续事件
 - **AND** SHALL NOT 注入普通消息上下文或触发 Agent
 

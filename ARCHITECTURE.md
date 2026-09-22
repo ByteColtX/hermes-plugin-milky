@@ -280,7 +280,9 @@ sequenceDiagram
 - allowlist 在入站 Gate 生效；被 Gate 拒绝的消息不增长 buffer、不修改 Will、不创建 turn。
 - ToolSpec `additionalProperties=false`，参数有明确类型、枚举、ID 和消息序号范围。
 - sticker 路径限制在 plugin-data library，拒绝路径穿越和不受控文件，并校验 regular file、格式、大小、SHA-256；出站本地资源只读取一次并受大小上限约束。
-- 日志、diagnostics 和 smoke 摘要不输出 token、Authorization、完整 body、正文、媒体 URL、本地路径、图片 bytes 或异常正文。
+- 协议 parser、入站规范化和 canonical 保留远端 raw 字段和值，不因通用敏感键名删除业务字段；raw
+  不进入正文、关键词、会话介绍或隐式工具调用。日志、diagnostics 和 smoke 摘要仍不输出 token、
+  Authorization、完整 body、正文、媒体 URL、本地路径、图片 bytes 或异常正文。
 
 ### 8.2 当前风险和未知项
 
@@ -290,7 +292,7 @@ sequenceDiagram
 
 ## 9. 可观测性、性能和扩展性
 
-**可观测性。** logger 命名空间为 `hermes_plugins.milky.*`，主要事件包括 lifecycle、action、sse、inbound、resource、outbound、mute 和 tool。日志使用固定分类、计数、耗时、HTTP status（可确认时）和安全序号；adapter、SSE、pipeline 有界 diagnostics，`scripts/milky_smoke.py` 提供脱敏摘要。
+**可观测性。** logger 命名空间为 `hermes_plugins.milky.*`，主要事件包括 lifecycle、action、sse、inbound、resource、outbound、mute 和 tool。日志使用固定分类、计数、耗时、HTTP status（可确认时）和安全序号；adapter、SSE、pipeline 有界 diagnostics，`scripts/milky_smoke.py` 提供固定元数据摘要。协议 raw 保真不等于日志脱敏：插件不创建独立日志脱敏器，也不把 raw、响应或异常正文复制到日志。Tool 结果、模型上下文和 session 持久化由 Hermes core 的对应出口决定，插件不声称这些出口会统一清洗秘密；真实宿主行为仍待集成验证。
 
 仓库没有 metrics、distributed tracing、error-reporting SDK、health endpoint、audit log、dashboard 或 alerting 配置证据。
 
@@ -330,7 +332,7 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 
 ### 10.2 测试架构
 
-测试位于 `tests/`，主要使用 fake Hermes host、fake HTTP/SSE transport、脱敏 JSON fixture、合成媒体、可注入时钟和随机源。覆盖边界包括：
+测试位于 `tests/`，主要使用 fake Hermes host、fake HTTP/SSE transport、合成 JSON fixture、合成媒体、可注入时钟和随机源。覆盖边界包括：
 
 | 范围 | 代表测试 |
 |---|---|
@@ -340,7 +342,7 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 | CQ、媒体、分块、sender、tools、mute | `test_cq_formatter.py`、`test_multimedia_outbound.py`、`test_outbound.py`、`test_qq_tools.py` |
 | prompt、model、slash、贴纸、HTTPX | `test_hermes_prompt_integration.py`、`test_model_control_integration.py`、`test_slash_commands.py`、`test_sticker_*.py`、`test_milky_local_integration.py` |
 
-测试证明本地模块契约、错误分类、脱敏和生命周期清理；不证明真实 QQ 权限、Milky 字段版本、真实媒体发送、视觉 provider、生产 CI 或部署行为。覆盖率阈值和 CI 执行环境是 `Not evident from the repository`。
+测试证明本地模块契约、错误分类、日志/输出最小化和生命周期清理；不证明真实 QQ 权限、Milky 字段版本、真实媒体发送、视觉 provider、Hermes 宿主日志/Tool 后处理/会话落盘、生产 CI 或部署行为。覆盖率阈值和 CI 执行环境是 `Not evident from the repository`。
 
 ## 11. 架构决策、风险和未来工作
 

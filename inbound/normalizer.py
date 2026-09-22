@@ -29,13 +29,6 @@ from .extractor import (
 )
 
 JsonObject = Mapping[str, Any]
-_SENSITIVE_KEYS = {
-    "access_token",
-    "authorization",
-    "cookie",
-    "password",
-    "token",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,7 +173,7 @@ def normalize_message(
     if message.message_seq is None:
         _append_once(diagnostics, "no_stable_message_seq")
 
-    metadata = _safe_mapping(
+    metadata = _freeze_mapping(
         {
             "event_type": "message_receive",
             "scene": message.message_scene,
@@ -211,7 +204,7 @@ def normalize_message(
         file_attachment_references=extracted.file_attachment_references,
         forward_references=extracted.forward_references,
         reply_references=extracted.reply_references,
-        raw=_safe_mapping(message.raw),
+        raw=_freeze_mapping(message.raw),
         metadata=metadata,
         diagnostics=tuple(diagnostics),
         will_input=WillInput(
@@ -288,21 +281,15 @@ def _append_once(values: list[str], value: str) -> None:
         values.append(value)
 
 
-def _safe_mapping(value: Mapping[str, Any]) -> JsonObject:
-    return MappingProxyType(
-        {
-            str(key): _safe_value(item)
-            for key, item in value.items()
-            if str(key).casefold() not in _SENSITIVE_KEYS
-        }
-    )
+def _freeze_mapping(value: Mapping[str, Any]) -> JsonObject:
+    return MappingProxyType({str(key): _freeze_value(item) for key, item in value.items()})
 
 
-def _safe_value(value: Any) -> Any:
+def _freeze_value(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return _safe_mapping(value)
+        return _freeze_mapping(value)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return tuple(_safe_value(item) for item in value)
+        return tuple(_freeze_value(item) for item in value)
     return value
 
 

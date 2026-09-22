@@ -277,18 +277,23 @@ def test_outer_milky_event_name_does_not_replace_business_event_type() -> None:
     assert event.outer_event_type == "milky_event"
 
 
-def test_parser_sanitizes_sensitive_unknown_raw() -> None:
-    """未知扩展可诊断保留，但不得把凭证字段带入 raw。"""
+def test_parser_preserves_sensitive_named_unknown_raw_and_freezes_nested_values() -> None:
+    """未知扩展完整保留字段，并冻结递归容器。"""
 
     payload = load_fixture("events/message_receive.group.unknown_extension.json")
     payload["data"]["segments"][1]["data"].update(
-        authorization="Bearer secret", access_token="secret"
+        Authorization="Bearer synthetic",
+        TOKEN="synthetic-token",
+        nested={"PaSsWoRd": "synthetic-password", "items": [{"COOKIE": "synthetic-cookie"}]},
     )
 
     unknown = parse_incoming_message(parse_event(payload)).value.segments[1]
     assert isinstance(unknown, UnknownSegment)
-    assert "authorization" not in unknown.data
-    assert "access_token" not in unknown.data
+    assert unknown.data["Authorization"] == "Bearer synthetic"
+    assert unknown.data["TOKEN"] == "synthetic-token"
+    assert unknown.data["nested"]["PaSsWoRd"] == "synthetic-password"
+    assert unknown.data["nested"]["items"][0]["COOKIE"] == "synthetic-cookie"
+    assert unknown.data["nested"]["items"] == ({"COOKIE": "synthetic-cookie"},)
 
 
 def test_unknown_segment_with_non_object_data_stays_raw_only() -> None:
