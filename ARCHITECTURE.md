@@ -392,7 +392,7 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 | 语言 | Python 3.13+ |
 | 协议 | Milky v1.3 HTTP Action + SSE |
 | 公开入口 | `__init__.py::register(ctx)` |
-| manifest/package version | manifest 2；package 1.8.0 |
+| manifest/package version | manifest 2；package 1.9.0 |
 | 维护者 | `ByteColtX`（manifest 和 pyproject author） |
 | 架构复核日期 | 2026-09-14 |
 | 部署目标 | Hermes Gateway；具体 hosting 为 `Not evident from the repository` |

@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.9.0] - 2026-09-23
+
+### 新增
+
+- 增加只读 `sticker_search`，并让 `sticker_send` 支持按持久化贴纸 ID 精确发送；继续校验当前会话、条目和文件，每次调用最多执行一次发送 Action。
+- 普通文本出站会精确拦截 Hermes 静默标记失败后的固定兜底提示，避免将内部提示发送到 QQ。
+
+### 变更与修复
+
+- Milky Tool 将 HTTP 响应正文原样交付调用方，不再由插件解析并重建 envelope 或过滤响应字段；插件日志仍不记录完整响应正文。
+- 修正 Will 关键词判断，只从可匹配的消息文本触发，避免结构化提及名称造成误触发或错误兴趣增益。
+- 静默兜底提示被拦截时不会产生 QQ 消息或远端消息 ID；适配器仍返回成功，Hermes Gateway 可能据此将投递记录为 delivered。
+
+### 验证与边界
+
+- 完整测试：`1004 passed, 3 skipped`；跳过项涉及当前环境缺少 Hermes host 或需显式启用的真实集成。
+- Ruff、格式检查、`uv build`、`uv lock --check`、`git diff --check` 和 `openspec validate --changes --strict` 通过；未连接真实 Hermes/Milky，也未执行真实消息发送。
+
 ## [1.8.0] - 2026-09-13
 
 ### 新增
