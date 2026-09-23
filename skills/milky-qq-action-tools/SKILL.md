@@ -51,7 +51,8 @@ metadata:
 | `get_group_files` | `{group_id: integer, parent_folder_id?: string|null}` | 查群文件和文件夹 |
 | `get_friend_info` | `{user_id: integer}` | 查好友资料；字段由目标服务定义，不支持 `no_cache` |
 
-查询只返回完整 Milky envelope，保留未知字段，不自动下载、缓存或解码文件。`sticker_search` 只返回限定的贴纸元数据。
+已注册 Action Tool 只要取得远端响应体，就将 UTF-8 解码后的原始内容交给调用方，保留未知字段；不自动下载、缓存或解码文件。
+`sticker_search` 只返回限定的贴纸元数据。
 
 ### 消息
 
@@ -104,12 +105,10 @@ metadata:
 
 ## 返回结果
 
-- 查询成功，返回完整 Milky envelope、`data` 和未知扩展字段。
+- 取得响应体，Tool 调用方收到原始响应内容；HTTP 状态、协议状态、JSON 形状和未知字段不在插件侧改写。
 - `invalid_input`，参数本地就不合法，且不会发网络请求。
-- `http_error`，HTTP 状态码不是成功状态；不要将它与业务拒绝混淆。
-- `rejected`，服务端返回了 envelope，但 Milky 业务拒绝；HTTP 200 不代表业务成功。
-- `malformed`，响应缺少工具要求的最小结构。
-- `transport_unknown`，客户端没有拿到可确认的结果，不能重试。
+- `unsupported`，工具未注册、client 未绑定或已关闭。
+- `transport_unknown`，请求进入 HTTP 边界但客户端没有拿到响应体，不能重试。
+- 已取得响应体的协议拒绝、HTTP 错误、非 JSON 或未知结构均按原始结果交付；`rejected`、`http_error` 和 `malformed` 不再是这些 Tool 的插件结果分类。
 - 贴纸搜索无匹配返回 `no_match`；精确 ID 不存在或不可见返回 `not_found`，文件缺失返回 `missing_file`，存储边界失败返回
   `storage_error`。搜索不发送、不更新使用统计；发送成功仍只返回 `sent` 和 `message_id`。
-- `unsupported`，工具当前不可用。

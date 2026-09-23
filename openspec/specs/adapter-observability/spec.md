@@ -182,7 +182,7 @@ URL、文件名、本地路径、文件内容、完整异常文本、异常参�
 #### Scenario: Tool 返回敏感结果
 
 - **WHEN** Tool 返回下载 URL、媒体 URL、自由文本或未知扩展字段
-- **THEN** Tool 调用方 SHALL 继续收到既有 raw envelope
+- **THEN** Tool 调用方 SHALL 继续收到已取得的远端原始响应体
 - **AND** 日志 SHALL 只记录 Tool 名称、分类、状态码和耗时，不复制结果内容
 
 #### Scenario: 失败日志需要 traceback

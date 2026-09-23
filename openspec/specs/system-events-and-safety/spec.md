@@ -238,7 +238,7 @@ context，不得丢弃事件；系统 SHALL 记录安全的 unsupported/failed �
 
 ### Requirement: 诊断不泄露秘密和不必要内容
 
-日志、异常、SendResult、fixture、快照和执行记录 MUST 不包含 token、Authorization header、真实媒体路径和敏感正文；诊断可以包含已确认的原始 chat key、message ID 和错误类别。Milky 日志 MUST 通过 `hermes_plugins.milky.*` 标准 logger 命名空间传播到 Hermes 宿主，并使用 `event=milky.*` 和固定低敏 `key=value` 字段。普通日志不得输出原始异常、请求参数、响应正文、URL、路径或媒体引用；Tool 日志不得复制原始入参或结果，成功 raw envelope 仍只交付给 Tool 调用方。动态值不得通过自由文本消息绕过低敏字段边界。
+日志、异常、SendResult、fixture、快照和执行记录 MUST 不包含 token、Authorization header、真实媒体路径和敏感正文；诊断可以包含已确认的原始 chat key、message ID 和错误类别。Milky 日志 MUST 通过 `hermes_plugins.milky.*` 标准 logger 命名空间传播到 Hermes 宿主，并使用 `event=milky.*` 和固定低敏 `key=value` 字段。普通日志不得输出原始异常、请求参数、响应正文、URL、路径或媒体引用；Tool 日志不得复制原始入参或结果，已取得的 Tool 响应体只交付给 Tool 调用方。动态值不得通过自由文本消息绕过低敏字段边界。
 
 #### Scenario: 认证失败
 
