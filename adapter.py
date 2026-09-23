@@ -21,6 +21,7 @@ from outbound.materialization import (
     prepare_materialization,
 )
 from outbound.sender import MilkyOutboundSender, OutboundSendResult, parse_outbound_target
+from outbound.text_interceptor import should_intercept_text
 from session import (
     BotIdentitySnapshot,
     ChatAdmissionCoordinator,
@@ -378,6 +379,9 @@ class MilkyAdapter(BasePlatformAdapter):
                 error="unsupported: adapter is disconnected",
                 error_kind="unsupported",
             )
+        if should_intercept_text(content):
+            # Gateway 只按 success 终结 obligation，因此此过滤仍可能记为 delivered。
+            return OutboundSendResult(success=True)
         return await self._outbound.send(chat_id, content, None, metadata)
 
     async def handle_message(self, event: object) -> None:

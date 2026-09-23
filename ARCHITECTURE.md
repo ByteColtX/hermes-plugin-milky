@@ -160,7 +160,7 @@ chat key 只接受 `dm:<十进制 QQ 号>` 和 `group:<十进制群号>`。`temp
 - `dm:<id>` 只路由到 `send_private_message`；`group:<id>` 只路由到 `send_group_message`。
 - 目标在网络请求前校验；非法或 `temp` 目标不回退到其他目标。
 - `formatter.py` 处理 CQ-compatible text、mention、reply 和 face；`chunking.py` 处理长度分块。
-- `splitting.py` 识别 `[SPLIT]`，最多产生 3 条有序消息；`[SILENT]` 由 Hermes core 处理。
+- `splitting.py` 识别 `[SPLIT]`，最多产生 3 条有序消息；`[SILENT]` 由 Hermes core 处理。普通文本出站会在 sender 前精确过滤 Hermes 的 silence-marker 兜底文案；命中时返回成功但不生成远端 message ID，Gateway 仍可能按既有 `success` 语义将 obligation 记为 delivered。
 - `materialization.py` 和 `file_upload.py` 只读一次出站本地资源，并受启动时大小上限约束。
 - 图片、语音、视频和 document 可走 native media/file upload；插件不把本地路径直接交给 Milky。
 - `MILKY_LONG_TEXT_FORWARD_THRESHOLD` 大于 0 时，超长文本可与有序 native media 合成一个 forward。
@@ -222,7 +222,7 @@ sequenceDiagram
 
 系统事件先进入 `system_events` observer，再写入 context FIFO；下一次同 chat trigger 时按 sequence 合并。只有成员事件开关开启且 session key 已确认，才可 `inject_message`。
 
-普通出站流程是 `Hermes response / MEDIA:/local/path` → split/format/校验目标 → 一次 materialize 或 upload → 一次 Action → `success`、`rejected` 或 `transport_unknown`。
+普通文本出站先精确检查已登记的完整拦截文案；命中时终止处理，不调用 Milky Action，也不返回远端 message ID。其余 `Hermes response / MEDIA:/local/path` 继续 split/format/校验目标 → 一次 materialize 或 upload → 一次 Action → `success`、`rejected` 或 `transport_unknown`。过滤结果可能被 Gateway 按 `SendResult.success` 记为 delivered。
 Tool 流程是固定 schema/handler → 参数和 client 状态校验 → 一次 Action → 已取得的响应字符串，或
 `invalid_input`、`unsupported`、`transport_unknown`；Tool 不把远端拒绝或 HTTP 错误改写为插件结果。
 
