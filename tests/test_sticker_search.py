@@ -102,7 +102,7 @@ def test_search_request_and_send_request_are_strict() -> None:
     assert parse_sticker_search_request({"tags": ["开心"]}).limit == 5
     assert parse_sticker_search_request({"emotion": "joy", "limit": 10}).limit == 10
     assert parse_sticker_send_request({"sticker_id": "opaque-id"}).sticker_id == "opaque-id"
-    for value in ({}, {"limit": True}, {"tags": ["开心"], "limit": 11}):
+    for value in ({"mode": "strict"}, {"limit": True}, {"tags": ["开心"], "limit": 11}):
         with pytest.raises((TypeError, ValueError)):
             parse_sticker_search_request(value)
     for value in (
@@ -176,6 +176,7 @@ def test_search_orders_all_matching_levels_and_applies_and_filters(tmp_path: Pat
         parse_sticker_search_request({"tags": ["不存在"]}), "group:700000001"
     ) == {
         "status": "no_match",
+        "match_mode": "strict",
         "items": [],
     }
 

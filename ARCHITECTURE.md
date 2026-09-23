@@ -188,7 +188,17 @@ accept_group_invitation, reject_group_invitation, get_group_files, get_friend_in
 
 贴纸库只在显式命令、`sticker_search` 或 `sticker_send` 首次需要时懒加载。数据库和文件目录不参与普通消息、SSE 或 Will。`StickerStore` 使用 plugin-data 下的 `stickers.db`，并维护 `sticker_items`、`sticker_files`、`sticker_send_usage`；图片位于受控的 inbox/library/junk 目录。
 
-`sticker_search` 以只读方式校验现有库、复用查询匹配并返回有界候选，不改变使用统计或轮换状态。`sticker_send` 在一次 Tool 调用中完成查询或 ID 选择、使用次数 claim、文件校验和一次发送；ID 选择跳过匹配和轮换，但仍重新校验条目和文件。
+`sticker_search` 以只读 SQLite 连接校验现有库，不创建目录、迁移、修复或调用 Milky/视觉服务，也不改变统计或轮换。
+有查询字段默认 strict，无查询默认 browse。strict 沿用相关性排序，零命中不兜底；显式 fallback 必须有 intent 与 emotion 或 tags，
+只忽略 intent，保留 emotion 精确条件与 tags OR 条件，按 tag 命中数降序、ID 升序；browse 禁止查询条件，按 ID 升序。
+结果仅含 status、match_mode、items，条目仅含 sticker_id、emotion、tags、description；limit 默认 5、最多 10。
+三种模式均过滤无效索引、缺失文件和越界元数据，不读取完整媒体或发送历史。
+`sticker_send` 在一次 Tool 调用中完成查询或 ID 选择、使用次数 claim、文件校验和一次发送；ID 选择跳过匹配和轮换，但仍重新校验条目和文件。
+严格查询发送无匹配时返回 no_match 和 alternatives：有 intent 与 emotion 或 tags 时，复用 fallback 规则返回最多 5 项，
+否则为空；不执行 claim、迁移或发送。发送在候选及文件校验后才打开写连接。候选元数据只作为不可信 Tool 数据交付。
+Action 的 http_error、malformed、transport_unknown 表示未确认发送成功，插件不自动重试或换图。
+工具定义和 bundled skill 只描述通用能力与契约；使用时机、调用流程和聊天偏好由用户的 SOUL 或 memory 配置。
+
 贴纸 SQLite 与文件移动不是单一事务，崩溃后需要 `cleanup` 或 `reindex` 修复孤儿状态。
 
 ## 4. 主要数据流

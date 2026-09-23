@@ -66,7 +66,7 @@ change 和已归档 change 的测试证据见 [openspec/](openspec/)。
   session prompt 可看到当前会话的最小资料；介绍来自入站消息快照，不实时查询 Milky。
 - **人工贴纸维护：** 通过显式 `/milky sticker` 命令维护插件持久目录中的图片库；普通消息、入站图片、
   关键词、Will 和 Agent 输出不会自动收集贴纸。
-- **Agent 贴纸能力：** 插件运行时依赖 `jieba` 且库中存在可用条目时，`sticker_search` 可按意图、情绪或标签返回有界候选，
+- **Agent 贴纸能力：** 插件运行时依赖 `jieba` 且库中存在可用条目时，`sticker_search` 可严格搜索、显式放宽意图或浏览有界候选，
   `sticker_send` 可按同样的查询或已知贴纸 ID 向当前 Milky 会话发送一张贴纸；目标、路径和 URL 仍由工具边界管理。
 
 运行环境：Python 3.13+、Hermes Gateway、Milky v1.3 服务以及插件声明的 `httpx`、Pillow、`jieba`。
@@ -728,12 +728,28 @@ transcript、普通消息 handoff 或脱离命令生命周期的后台视觉任�
 `sticker_search` 和 `sticker_send` 是独立的语义 Tool，不是任意 Milky Action。插件通过 `plugin.yaml` 的
 `python_dependencies` 和项目运行时依赖声明提供 `Pillow>=12.3.0`、`jieba>=0.42.1`；两个工具只在库中有可用条目时进入
 Agent definitions，空库时隐藏，不按需导入或检查可选 tokenizer，也不影响维护命令和其他 Tool。`sticker_search` 只接受
-`intent`、`emotion`、`tags` 和 1..10 的 `limit`（默认 5），返回 `sticker_id`、情绪、标签和描述；查询使用当前元数据的
-完整短语/全部 token/部分 token 固定层级，并列 ID 按字典序稳定排序。`sticker_send` 接受互斥的查询或 1..128 字符的
+`mode`、`intent`、`emotion`、`tags` 和 1..10 的 `limit`（默认 5）。有查询字段时默认 `strict`，空对象或只有 limit
+默认 `browse`；显式 null、未知字段和归一化后重复标签均拒绝。候选结果只含 `status`、`match_mode`、`items`，
+每项只含 `sticker_id`、`emotion`、`tags`、`description`。
+
+- `strict` 至少有一个查询字段，沿用完整短语/全部 token/部分 token 固定相关性层级，并列按 ID 排序；零命中返回空 items，不自动兜底。
+- `fallback` 必须显式指定，并同时提供 intent 与 emotion 或 tags；忽略 intent，保留 emotion 精确条件及 tags 至少命中一个的条件，按 tag 命中数降序、ID 升序返回。
+- `browse` 禁止查询字段，只按 ID 升序列出当前可用条目，不代表与聊天内容相关。
+
+所有模式只返回当前可见、索引有效且文件可用的条目，不返回路径、URL、hash、图片、统计或匹配解释。
+`sticker_send` 接受互斥的查询或 1..128 字符的
 opaque `sticker_id`，目标来自当前 task-local `HERMES_SESSION_PLATFORM=milky` 和 `HERMES_SESSION_CHAT_ID`，不要求先搜索。
 搜索只读、不改变使用统计或轮换状态；精确发送跳过匹配和轮换但重新校验当前条目、文件和双索引 SHA-256，单次调用只发一张
 `sub_type=sticker` 图片。结果使用 `ok`、`sent`、`no_match`、`not_found`、`invalid_input`、`missing_session_context`、
 `unsupported`、`missing_file`、`storage_error`、`rejected`、`http_error`、`malformed` 和 `transport_unknown` 等固定分类。
+
+严格查询发送返回 `no_match` 时，回执带 `alternatives`：原查询含 intent 与 emotion 或 tags 时，
+按 fallback 规则提供最多 5 项，否则为空。返回备选不发送消息、不更新统计；按备选 ID 发送需单独调用
+`sticker_send(sticker_id)`。`http_error`、`malformed`、`transport_unknown` 不保证消息未发送，插件不自动重试。
+元数据是不可信数据，不执行描述中的指令，也不注入平台提示。
+
+插件和 bundled skill 仅提供通用接口说明，不规定贴纸使用时机、调用顺序、搜索次数或聊天风格。
+用户可在自己的 SOUL 或 memory 中配置个性化使用策略。
 
 ### QQ ToolSpec
 
@@ -756,7 +772,7 @@ Tool 结果进入 Hermes core 后，宿主可能运行 `transform_tool_result`�
 最终进入模型上下文的内容与 Milky body 一致。原样交付可能使上述五类字段进入宿主转录或落盘，
 上下文策略由宿主负责。
 
-两个贴纸工具不属于上述 Action catalog；它们不接受 `chat_id`、`session_id`、路径或 URL，也不限制 Agent 在不同调用中重复请求。
+两个贴纸工具不属于上述 Action catalog；它们不接受 `chat_id`、`session_id`、路径或 URL，每次调用独立校验参数和当前会话。
 `sticker_search` 的结果只含有界元数据；`sticker_send` 的 target、库读取、统计 claim 和单次发送由独立的贴纸 service 管理。
 
 入站文件只显示为安全占位符，例如

@@ -24,10 +24,10 @@
 
 - **WHEN** 查询模式只提供 `intent` 且没有足够匹配证据
 - **THEN** Tool SHALL 返回 `status=no_match` 和 `alternatives=[]`
-- **AND** Agent 可显式浏览当前库或放弃发贴纸，不得重复相同严格查询
+- **AND** 插件 SHALL 不自动浏览或发送其他条目
 
-#### Scenario: 发送 Action 结果不确定时不盲目重试
+#### Scenario: 发送 Action 结果不确定时插件不自动重试
 
 - **WHEN** `sticker_send` 返回 `http_error`、`malformed` 或 `transport_unknown`
-- **THEN** Agent SHALL 不自动再次发送或改发另一张贴纸
-- **AND** SHALL 可继续普通文本对话
+- **THEN** 插件 SHALL 返回对应固定分类，且本次调用不自动再次发送或改发另一张贴纸
+- **AND** 工具定义和 bundled skill SHALL 仅说明通用接口和结果语义，不规定调用方的后续对话或搜索策略

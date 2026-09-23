@@ -91,15 +91,26 @@ class StickerStore:
             root = self._data_dir
             if root is None:
                 if self._data_dir_factory is None:
-                    from plugins.plugin_storage import plugin_data_dir
+                    if read_only:
+                        from hermes_constants import get_hermes_home
 
-                    root = plugin_data_dir(PLUGIN_NAME)
+                        root = get_hermes_home() / "plugin-data" / PLUGIN_NAME
+                    else:
+                        from plugins.plugin_storage import plugin_data_dir
+
+                        root = plugin_data_dir(PLUGIN_NAME)
                 else:
                     root = self._data_dir_factory()
             self.paths = StickerPaths.from_root(Path(root), create=create_dirs)
             if read_only and not (self.paths.root / STICKER_DB_FILENAME).is_file():
                 return self
-            if self._db_factory is None:
+            if read_only:
+                self.connection = sqlite3.connect(
+                    (self.paths.root / STICKER_DB_FILENAME).as_uri() + "?mode=ro",
+                    uri=True,
+                    check_same_thread=False,
+                )
+            elif self._db_factory is None:
                 if self._data_dir is not None or self._data_dir_factory is not None:
                     self.connection = sqlite3.connect(
                         self.paths.root / STICKER_DB_FILENAME, check_same_thread=False

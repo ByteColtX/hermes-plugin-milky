@@ -76,6 +76,7 @@ class StickerSearchRequest:
 
     query: StickerQuery
     limit: int = DEFAULT_SEARCH_LIMIT
+    mode: str = "strict"
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,7 +190,7 @@ def parse_sticker_search_request(args: object) -> StickerSearchRequest:
 
     if not isinstance(args, Mapping):
         raise TypeError("search request is not an object")
-    allowed = {"intent", "emotion", "tags", "limit"}
+    allowed = {"mode", "intent", "emotion", "tags", "limit"}
     if set(args) - allowed:
         raise ValueError("search request contains unknown fields")
     limit = DEFAULT_SEARCH_LIMIT
@@ -201,7 +202,18 @@ def parse_sticker_search_request(args: object) -> StickerSearchRequest:
             raise ValueError("limit is out of range")
         limit = value
     query_args = {key: args[key] for key in ("intent", "emotion", "tags") if key in args}
-    return StickerSearchRequest(query=parse_sticker_query(query_args), limit=limit)
+    mode = args.get("mode", "strict" if query_args else "browse")
+    if not isinstance(mode, str) or mode not in {"strict", "fallback", "browse"}:
+        raise ValueError("search mode is invalid")
+    if mode == "browse":
+        if query_args:
+            raise ValueError("browse cannot contain query fields")
+        query = StickerQuery()
+    else:
+        query = parse_sticker_query(query_args)
+        if mode == "fallback" and (query.intent is None or not (query.emotion or query.tags)):
+            raise ValueError("fallback requires intent and filters")
+    return StickerSearchRequest(query=query, limit=limit, mode=mode)
 
 
 def tokenize_sticker_text(value: str, tokenizer: Any | None = None) -> tuple[str, ...]:
@@ -296,11 +308,18 @@ class StickerSendService:
             return {"status": "invalid_input"}
         if not 1 <= request.limit <= MAX_SEARCH_LIMIT:
             return {"status": "invalid_input"}
-        if (
-            request.query.intent is None
-            and request.query.emotion is None
-            and not request.query.tags
-        ):
+        query_fields: dict[str, object] = {}
+        if request.query.intent is not None:
+            query_fields["intent"] = request.query.intent
+        if request.query.emotion is not None:
+            query_fields["emotion"] = request.query.emotion
+        if request.query.tags:
+            query_fields["tags"] = list(request.query.tags)
+        try:
+            request = parse_sticker_search_request(
+                {**query_fields, "mode": request.mode, "limit": request.limit}
+            )
+        except (TypeError, ValueError):
             return {"status": "invalid_input"}
 
         store = self._new_store()
@@ -310,17 +329,13 @@ class StickerSendService:
             if store.connection is None or store.paths is None:
                 return {"status": "unsupported"}
             candidates = self._read_candidates(store.connection, store.paths, require_file=True)
-            matches = self._match_candidates(candidates, request.query, jieba)
-            ordered = sorted(matches, key=_search_rank)
-            items = [_search_item(match.candidate) for match in ordered[: request.limit]]
-            return (
-                {"status": "ok", "items": items}
-                if items
-                else {
-                    "status": "no_match",
-                    "items": [],
-                }
-            )
+            items = self._search_items(candidates, request)
+            return {
+                "status": "ok" if items else "no_match",
+                "match_mode": request.mode,
+                "items": items,
+            }
+
         except StickerUnsupportedError:
             return {"status": "unsupported"}
         except (StickerStorageError, OSError, sqlite3.Error):
@@ -375,7 +390,7 @@ class StickerSendService:
 
         store = self._new_store()
         try:
-            if not self._open_existing_for_write(store):
+            if not self._open_existing_for_read(store):
                 return {"status": "unsupported"}
             if store.connection is None or store.paths is None:
                 return {"status": "unsupported"}
@@ -390,8 +405,26 @@ class StickerSendService:
                 matches = self._match_candidates(candidates, request.query or StickerQuery(), jieba)
                 selected = self._select_candidate(store.connection, matches, chat_key)
                 if selected is None:
-                    return {"status": "no_match"}
+                    alternatives: list[dict[str, object]] = []
+                    query = request.query
+                    if (
+                        query is not None
+                        and query.intent is not None
+                        and (query.emotion or query.tags)
+                    ):
+                        available = self._read_candidates(
+                            store.connection, store.paths, require_file=True
+                        )
+                        alternatives = self._search_items(
+                            available, StickerSearchRequest(query, mode="fallback")
+                        )
+                    return {"status": "no_match", "alternatives": alternatives}
             uri = self._materialize_selected(store.paths, selected)
+            store.close()
+            if not self._open_existing_for_write(store):
+                return {"status": "unsupported"}
+            assert store.connection is not None
+            assert store.paths is not None
             self._claim_use(store.connection, store.paths, selected, chat_key)
             result = await send_sticker(chat_key, uri)
             if bool(getattr(result, "success", False)):
@@ -584,6 +617,26 @@ class StickerSendService:
             matches.append(_Match(candidate, layer, hit_tokens, tag_hits))
         return matches
 
+    @classmethod
+    def _search_items(
+        cls, candidates: Sequence[_StickerCandidate], request: StickerSearchRequest
+    ) -> list[dict[str, object]]:
+        """按模式稳定排序，只返回白名单元数据且不读取使用历史。"""
+
+        if request.mode == "browse":
+            ordered = sorted(candidates, key=lambda item: item.sticker_id)
+        else:
+            query = request.query
+            if request.mode == "fallback":
+                query = StickerQuery(emotion=query.emotion, tags=query.tags)
+            matches = cls._match_candidates(candidates, query, jieba)
+            if request.mode == "fallback":
+                matches.sort(key=lambda match: (-match.tag_hits, match.candidate.sticker_id))
+            else:
+                matches.sort(key=_search_rank)
+            ordered = [match.candidate for match in matches]
+        return [_search_item(candidate) for candidate in ordered[: request.limit]]
+
     @staticmethod
     def _select_candidate(
         connection: sqlite3.Connection, matches: Sequence[_Match], chat_key: str
@@ -613,7 +666,16 @@ class StickerSendService:
                 if isinstance(row[0], str) and isinstance(row[1], str)
             }
         except sqlite3.Error as error:
-            raise StickerStorageError("sticker usage query failed") from error
+            version = connection.execute(
+                "SELECT value FROM sticker_schema_meta WHERE key = 'schema_version'"
+            ).fetchone()
+            if not (
+                isinstance(error, sqlite3.OperationalError)
+                and _is_missing_schema_object(error)
+                and version is not None
+                and str(version[0]) in {"1", "2"}
+            ):
+                raise StickerStorageError("sticker usage query failed") from error
 
         oldest_first = sorted(pool, key=lambda item: _usage_time(usage.get(item.sticker_id)))
         weights = [len(oldest_first) - index for index in range(len(oldest_first))]
