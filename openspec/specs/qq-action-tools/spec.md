@@ -68,17 +68,17 @@
 
 #### Scenario: 查询合并转发消息
 
-- **WHEN** Agent 以合法 `forward_id` 调用 `get_forwarded_messages`
+- **WHEN** Agent 以合法 `forward_id` 调用 `get_forwarded_messages`，远端返回包含数组和扩展字段的响应体
 - **THEN** 请求 SHALL 使用 `POST /api/get_forwarded_messages` 和 `{ "forward_id": "<forward-id>" }`
 - **AND** Tool 调用方 SHALL 收到响应体中的完整数组、扩展字段和其他内容
 - **AND** 工具 SHALL 不把转发内容自动注入当前 Hermes turn
 
 #### Scenario: 查询私聊文件下载链接
 
-- **WHEN** Agent 提供合法 `user_id`、`file_id`、`file_hash` 以及可选 `is_self_send`
+- **WHEN** Agent 提供合法 `user_id`、`file_id`、`file_hash` 以及可选 `is_self_send`，远端返回包含下载链接的响应体
 - **THEN** 请求 SHALL 使用 `POST /api/get_private_file_download_url`
 - **AND** Tool 调用方 SHALL 收到包含该链接及未知字段的原始响应体
-- **AND** 插件 SHALL 不在工具调用中下载、缓存、解码或改写该 URL
+- **AND** 插件 SHALL 不在工具调用中下载、缓存、解码、过滤或改写该 URL
 
 #### Scenario: 查询好友请求
 
@@ -106,12 +106,13 @@ MUST 只在对应 ToolSpec 被显式调用时执行。它们 MUST 分别调用�
 - **WHEN** Agent 显式调用 `kick_group_member` 并提供合法群号、成员 QQ 号和可选拒绝加群申请标记
 - **THEN** 工具 SHALL 调用 `/api/kick_group_member`
 - **AND** 只要取得远端响应体，Tool 调用方 SHALL 收到该响应体的原始内容
-- **AND** 系统 SHALL 不因该调用自动更新入站 Gate、群列表或其他本地状态
+- **AND** 系统 SHALL 不因该调用自动更新入站 Gate、群列表、禁言快照或其他本地状态
 
 #### Scenario: 退出群或删除好友
 
 - **WHEN** Agent 显式调用 `quit_group` 或 `delete_friend`
 - **THEN** 工具 SHALL 只向对应的目标 Action 发送合法 ID
+- **AND** 取得的远端响应体 SHALL 原样交给 Tool 调用方
 - **AND** SHALL 不回退到其他群、私聊或默认目标
 - **AND** SHALL 不因普通文本或 observe-only 事件执行同一操作
 
@@ -131,10 +132,9 @@ MUST 只在对应 ToolSpec 被显式调用时执行。它们 MUST 分别调用�
 
 #### Scenario: 状态变更请求结果未知
 
-- **WHEN** 状态变更 Action 已进入 HTTP 请求边界但客户端未取得可确认的完整响应
+- **WHEN** 状态变更 Action 的请求已发出，但连接中断、超时或读取失败导致远端是否执行未知
 - **THEN** 工具 SHALL 返回 `transport_unknown`
-- **AND** SHALL 只保留一次调用记录
-- **AND** SHALL NOT 自动重试或返回成功结果
+- **AND** SHALL 不把未知结果伪装成成功或远端拒绝
 
 ### Requirement: 工具必须统一处理生命周期、无响应分类和安全日志
 
@@ -181,15 +181,23 @@ Tool 调用方，不得被写入普通消息上下文或日志。
 #### Scenario: 未连接或已关闭
 
 - **WHEN** Agent 在工具 client 未绑定或已关闭时调用任一新增工具
-- **THEN** 工具 SHALL 在网络访问前返回 `unsupported` 或既有传输不可用分类
+- **THEN** 工具 SHALL 在网络访问前返回 `unsupported`
 - **AND** SHALL 不建立新连接、不发起 HTTP 请求
 - **AND** 日志 MAY 记录工具名称和固定分类，但不得伪造远端状态码或结果
 
 #### Scenario: 安全记录工具调用
 
-- **WHEN** 新增工具完成一次调用或得到可分类失败
-- **THEN** 日志 SHALL 只记录工具名称、固定结果分类、已知状态码、耗时和必要的低敏关联 ID
+- **WHEN** 新增工具完成一次调用或得到可记录的本地/传输结果
+- **THEN** 日志 SHALL 只记录工具名称、低基数结果分类、已知状态码、耗时和必要的低敏关联 ID
 - **AND** SHALL 不记录 token、Authorization、完整响应 body、下载 URL、完整敏感理由、本地路径、原始参数或原始结果
+
+#### Scenario: 未连接或未取得响应
+
+- **WHEN** Agent 在工具 client 未绑定或已关闭时调用任一新增工具，或请求进入 HTTP 边界后未取得远端响应体
+- **THEN** 工具 SHALL 分别返回 `unsupported` 或 `transport_unknown`
+- **AND** SHALL 不建立新连接、不自动重试、不伪造远端状态码或结果
+- **AND** 日志 MAY 记录工具名称和固定分类
+
 ### Requirement: `get_friend_info` 必须使用固定 operationId 和明确参数
 
 插件 MUST 注册名为 `get_friend_info` 的异步 ToolSpec，使用 `milky` 工具集，并且只调用
@@ -220,27 +228,28 @@ Tool 调用方，不得被写入普通消息上下文或日志。
 
 ### Requirement: `get_friend_info` 必须原样交付远端响应体
 
-`get_friend_info` 只要取得远端响应体，Tool 调用方 SHALL 收到其原始内容，无论 HTTP 状态、
-协议状态、JSON 形状、空对象、数组、显式 `null` 或未知字段为何。由于当前公开 Milky v1.3
-schema 未声明该 operation，插件不得擅自规定或改写好友资料内部字段；插件 MUST NOT 对响应体
-执行 envelope 校验、业务字段校验、敏感字段过滤、容器转换、JSON 重建、摘要、状态码附加或
-错误分类替换。查询结果不得自动写入普通入站上下文、本地好友状态或 Agent 指令。
+`get_friend_info` MUST 向 Tool 调用方返回远端响应体的完整原始内容。插件只允许在网络访问前
+校验 `user_id` 和在传输层确认是否取得响应体；不得擅自规定或改写好友资料内部字段，也不得对
+响应体执行 envelope/data 校验、敏感字段过滤、容器转换、JSON 重建或本地状态投影。只要取得
+响应体，即使其表示协议失败、HTTP 错误、`data` 缺失、为 `null`、为数组或不是 object，工具也
+MUST 原样交付；未取得响应体时才返回既有传输分类。查询结果不得自动写入普通入站上下文、
+本地好友状态或 Agent 指令。
 
 #### Scenario: 返回好友资料对象和扩展字段
 
-- **WHEN** 目标服务返回好友资料对象和扩展字段的响应体
+- **WHEN** 目标服务返回包含好友资料和未知扩展字段的响应体
 - **THEN** Tool SHALL 收到完整原始响应体
 - **AND** `data` 内的好友资料字段及未知扩展字段 SHALL 保持可用
 - **AND** 插件 SHALL 不把结果改造成摘要、正文或本地缓存状态
 
 #### Scenario: 查询结果结构未确认或损坏
 
-- **WHEN** 响应体的 `data` 缺失、为 `null`、为数组或其他非 object，或响应体不是 JSON
+- **WHEN** `get_friend_info` 返回的响应体缺少 `data`、为 `null`、为数组、为标量或不是合法 envelope
 - **THEN** 工具 SHALL 将已取得的响应体原样交给 Tool 调用方
-- **AND** SHALL 不伪造好友资料、不补默认字段且不返回 `malformed` 替代结果
+- **AND** SHALL 不伪造好友资料、不补默认字段且不返回插件自有 `malformed`
 
 #### Scenario: HTTP 200 仍表示协议拒绝
 
-- **WHEN** `get_friend_info` 返回协议拒绝、非成功 HTTP 状态或其他可取得的响应体
+- **WHEN** `get_friend_info` 返回 HTTP 200 但 envelope 的 `status` 非 `ok` 或 `retcode` 非零
 - **THEN** Tool 调用方 SHALL 收到完整原始响应体
-- **AND** SHALL 不把 HTTP 状态码或协议状态改造成插件自有错误分类
+- **AND** SHALL 不把 HTTP 状态码或协议状态改写成查询成功或固定拒绝结果

@@ -95,7 +95,7 @@ envelope、data、文件和文件夹字段，不得执行成功结构校验、�
 
 - **WHEN** Agent 调用 `get_group_files`，远端返回包含文件、文件夹数组或其他形状的响应体
 - **THEN** Tool SHALL 返回完整原始响应体
-- **AND** 每个数组中的协议字段和未知扩展字段 SHALL 保持可用
+- **AND** 响应中的协议字段和未知扩展字段 SHALL 保持可用
 - **AND** SHALL 不把列表自动写入入站上下文或本地缓存
 
 #### Scenario: 查询结果缺少历史最小结构或表示失败
@@ -103,6 +103,12 @@ envelope、data、文件和文件夹字段，不得执行成功结构校验、�
 - **WHEN** 响应体缺少 `data.download_url`、`data.files`、`data.folders`，不是 JSON object，不是 JSON，或表示协议拒绝/非成功 HTTP 状态
 - **THEN** 工具 SHALL 将已取得的响应体原样交给 Tool 调用方
 - **AND** SHALL 不返回 `malformed`、`rejected`、`http_error` 替代结果、查询成功摘要或伪造缺失字段
+
+#### Scenario: 查询结果缺少最小结构
+
+- **WHEN** 成功 envelope 缺少 `data.download_url`，或 `data.files`/`data.folders` 不是对象数组
+- **THEN** 工具 SHALL 返回已取得的原始响应体
+- **AND** SHALL 不报告查询成功或伪造缺失字段
 
 ### Requirement: 群请求和群邀请处理必须只由显式调用触发
 
@@ -229,7 +235,13 @@ access token、Authorization、完整响应或完整 `special_title`。
 
 #### Scenario: 变更结果未知时不重试
 
-- **WHEN** 请求已进入 HTTP 边界但客户端无法取得可确认的响应
+- **WHEN** 请求已进入 HTTP 边界但客户端未取得远端响应体
 - **THEN** 工具 SHALL 返回 `transport_unknown`
 - **AND** 同一次 Tool 调用 SHALL 只提交一次 Action
 - **AND** SHALL 不自动重发或返回成功结果
+
+#### Scenario: 成功设置返回空对象 envelope
+
+- **WHEN** 显式 Tool 调用得到 `status=ok`、`retcode=0` 且 `data` 为 `{}`
+- **THEN** Tool 调用方 SHALL 收到完整原始响应体
+- **AND** 系统 SHALL 不虚构本地群成员头衔或其他状态

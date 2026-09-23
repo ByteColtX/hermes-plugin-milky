@@ -305,6 +305,8 @@ normalization MUST 不执行网络 I/O、文件系统访问、时钟读取或随
 占位；unknown segment SHALL 不进入正文或关键词内容。reply/forward 的嵌套内容 SHALL 保留为
 引用数据，不得隐式并入当前消息正文。
 
+关键词匹配 MUST 只使用当前消息顶层 text 与 markdown 的内容，连续文本片段 SHALL 按顺序拼接；任意非文本片段 MUST 隔断匹配，不得跨越该片段拼造关键词。结构化 mention 的名称、回退 QQ 号、mention_all 的展示文字、其他结构化展示与引用嵌套内容 MUST NOT 参与关键词匹配。用户手动输入普通文本形式的 @名称 SHALL 仍按文本匹配。展示正文和独立提及信号 MUST 保持原语义。
+
 #### Scenario: 结构化 segment 生成稳定正文
 
 - **WHEN** friend 或 group 消息按顺序包含 text、mention、reply、image、file、forward、light_app
@@ -317,7 +319,7 @@ normalization MUST 不执行网络 I/O、文件系统访问、时钟读取或随
 
 - **WHEN** 消息包含未知 segment 以及合法文本
 - **THEN** 文本和已支持 placeholder SHALL 保持可处理
-- **AND** 未知 segment SHALL 只进入诊断和 raw
+- **AND** 未知 segment SHALL 只进入安全诊断和 raw
 
 #### Scenario: 只有未知内容
 
@@ -349,3 +351,15 @@ normalization MUST 不执行网络 I/O、文件系统访问、时钟读取或随
 - **WHEN** v1.3 消息只包含普通 text、mention 或 mention_all
 - **THEN** mention 特征 SHALL 只报告 self、all 或 none
 - **AND** SHALL 不从文本内容或 mention 名称生成 here 信号
+
+#### Scenario: 结构化提及文字不产生关键词命中
+
+- **WHEN** 关键词仅出现在结构化提及的名称、QQ 号或全体提及展示文字中
+- **THEN** 该内容 SHALL 不命中任何关键词规则
+- **AND** 普通文本和 Markdown 内的相同关键词 SHALL 仍可命中
+
+#### Scenario: 非文本片段隔断关键词
+
+- **WHEN** 当前消息为文本“提”、结构化提及、文本“醒”，关键词为“提醒”
+- **THEN** 系统 SHALL 不因拼接两侧文本命中“提醒”
+- **AND** 相邻 text 与 markdown 片段组成的“提醒” SHALL 正常命中
