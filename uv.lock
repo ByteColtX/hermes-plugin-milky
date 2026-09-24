@@ -43,7 +43,7 @@ wheels = [
 
 [[package]]
 name = "hermes-plugin-milky"
-version = "1.9.0"
+version = "1.9.1"
 source = { editable = "." }
 dependencies = [
     { name = "jieba" },

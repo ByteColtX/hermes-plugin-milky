@@ -136,7 +136,7 @@ hermes gateway restart
 
 当前工作区包含 `dashboard/manifest.json`、API 和 `dashboard/dist/` 预构建资源。
 已在固定版本的真实 Hermes 与 Debian 环境验证配置、视觉导入和浏览器维护流程；版本、证据类型及环境限制见
-[Dashboard evidence](openspec/changes/add-milky-web-dashboard/evidence.md)。
+[Dashboard evidence](openspec/changes/archive/2026-09-24-add-milky-web-dashboard/evidence.md)。
 已验证的宿主 core 为 `b3a1900e72a16da450ff637aaa37cc23f68992a6`，Web SDK 为 1.1.0；
 尚未确认最低 Hermes 发行版本。将完整 directory plugin 安装到宿主启用的用户插件位置，
 重启 Hermes Dashboard 后打开 Milky QQ；项目本地安装不足以挂载插件 Python API。

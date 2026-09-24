@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.9.1] - 2026-09-24
+
+### 新增
+
+- 增加 Hermes Dashboard 配置与贴纸图库管理：支持按 profile 查看和保存配置、凭证独立管理、图库浏览/预览、上传、批量维护及持久任务状态。
+- 贴纸搜索增加显式 `strict`、`fallback`、`browse` 模式；严格发送无匹配时可返回有界备选，仍需 Agent 显式选择贴纸 ID 才会发送。
+
+### 变更与边界
+
+- 配置来源统一为 settings、旧 config、当前 profile 环境和默认值；保存状态与运行态分开呈现，配置变更需重启 Gateway 生效。
+- Dashboard 已在 Hermes 0.21.4 环境验证；最低支持 Hermes 版本尚未确认。此次未发送真实 QQ 消息。
+
+### 验证
+
+- 完整测试：`1163 passed, 3 skipped`；真实 Hermes 宿主专项另有 3 项通过。
+- Ruff、格式检查、`uv build`、Dashboard build/check/test（3 passed）、`git diff --check` 和 OpenSpec 主规范严格校验（29 passed）通过。
+
 ## [1.9.0] - 2026-09-23
 
 ### 新增

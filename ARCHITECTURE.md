@@ -407,7 +407,7 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 | 语言 | Python 3.13+ |
 | 协议 | Milky v1.3 HTTP Action + SSE |
 | 公开入口 | `__init__.py::register(ctx)` |
-| manifest/package version | manifest 2；package 1.9.0 |
+| manifest/package version | manifest 2；package 1.9.1 |
 | 维护者 | `ByteColtX`（manifest 和 pyproject author） |
 | 架构复核日期 | 2026-09-24 |
 | 部署目标 | Hermes Gateway；具体 hosting 为 `Not evident from the repository` |
@@ -430,7 +430,7 @@ dashboard/plugin_api.py 由宿主已启用用户插件的 Dashboard 扩展加载
 Dashboard 不创建 Milky client，不通过普通消息、Will、SSE 自动触发维护。
 管理请求经宿主认证，再进入已确认 profile 的配置与 secret scope，所有库根均由该范围计算。
 缺少宿主能力返回 unsupported，不修补 core。实际验收状态见
-openspec/changes/add-milky-web-dashboard/evidence.md。
+openspec/changes/archive/2026-09-24-add-milky-web-dashboard/evidence.md。
 
 配置管理将统一解析结果投影为显式值、有效值、来源、可写性和版本；
 逐键调用宿主持久化后读回确认，凭证另走生命周期接口。不能提供跨入口条件事务或热更新保证。
