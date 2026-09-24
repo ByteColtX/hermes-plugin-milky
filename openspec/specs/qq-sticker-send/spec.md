@@ -13,8 +13,7 @@
 `jieba>=0.42.1`，且不得把 `jieba` 作为 optional extra 或按需导入。Agent 可见 definitions 只有在现有
 `stickers.db` 中存在当前可见、`sticker_files` 关联有效且 library 文件可用的条目时才包含该工具。
 空库检查不得创建目录或数据库。
-Tool 只接受 `intent`、`emotion`、`tags`；至少一个参数非空，额外字段、目标、贴纸 ID、路径和 URL MUST 在文件或网络访问前
-返回 `invalid_input`。
+Tool MUST 接受互斥的查询发送与精确 ID 发送：查询模式只接受 intent、emotion、tags，至少一个参数非空；ID 模式只接受 sticker_id。混用模式、额外字段、目标、路径和 URL MUST 在文件或网络访问前返回 invalid_input。
 
 #### Scenario: 空库隐藏工具
 
@@ -58,15 +57,33 @@ fallback。统计不等待远端结果，远端失败或未知不回滚统计。
 
 ### Requirement: 结果分类和生命周期
 
-成功返回 `status=sent` 和 Milky `message_id`，不得返回内部 `sticker_id`；没有候选返回 `no_match`。参数、上下文、文件、存储、协议拒绝、HTTP、
-malformed 和 transport unknown MUST 使用固定机器可读分类。注册、连接、SSE、普通 Agent 输出和 disconnect MUST 不打开贴纸 store、扫描 library、
-创建检索后台任务或执行网络 I/O；`jieba` 作为正常运行时依赖随插件模块加载，不得在 Tool discovery 中按需导入。
-过期 definition 和未连接 sender MUST fail closed。
+成功返回 `status=sent` 和 Milky `message_id`，不得返回内部 `sticker_id`；没有候选返回 `no_match`。参数、上下文、文件、存储、协议拒绝、HTTP、malformed 和 transport unknown MUST 使用固定机器可读分类。注册、连接、SSE、普通 Agent 输出和 disconnect MUST 不打开贴纸 store、扫描 library、创建检索后台任务或执行网络 I/O；`jieba` 作为正常运行时依赖随插件模块加载，不得在 Tool discovery 中按需导入。过期 definition 和未连接 sender MUST fail closed。
+
+查询发送模式没有足够匹配证据时 MUST 返回 `status=no_match` 和 `alternatives` 数组。当原查询同时包含 `intent` 与至少一个 `emotion` 或 `tags` 时，该数组 MUST 包含至多 5 个当前可见、文件有效的备选；备选 MUST 忽略 `intent` 匹配条件、保留显式 `emotion` 精确筛选和 `tags` 至少命中一个的条件，并按命中的请求 tag 数量降序、再按不透明 `sticker_id` 字典序稳定排序。其他无匹配情形 MUST 返回 `alternatives=[]`。每个备选 MUST 只包含 `sticker_id`、`emotion`、`tags` 和 `description`，不得包含路径、URL、hash、图片内容、统计或匹配解释。备选不是原查询的匹配结果；`sticker_send` MUST 不据此选择或发送贴纸，也不得更新使用统计。工具结果序列化 MUST 保留 `no_match` 的备选字段。
 
 #### Scenario: 未连接 sender
 
 - **WHEN** 过期 definition 或未连接 sender 调用 `sticker_send`
 - **THEN** Tool SHALL fail closed 且不得创建旁路连接
+
+#### Scenario: 严格发送无匹配时返回有限备选
+
+- **WHEN** 查询模式的 `sticker_send` 没有足够匹配证据，且原查询同时包含 `intent` 与 `emotion` 或 `tags`
+- **THEN** Tool SHALL 返回 `status=no_match` 和最多 5 个明确标为备选的当前可用条目
+- **AND** SHALL 不发送消息、不更新使用统计，且不得声称备选满足原 intent
+- **AND** 只有 Agent 显式选中某个 `sticker_id` 并再次调用工具时，才可进入精确发送路径
+
+#### Scenario: 只有 intent 无匹配时不伪造相关备选
+
+- **WHEN** 查询模式只提供 `intent` 且没有足够匹配证据
+- **THEN** Tool SHALL 返回 `status=no_match` 和 `alternatives=[]`
+- **AND** 插件 SHALL 不自动浏览或发送其他条目
+
+#### Scenario: 发送 Action 结果不确定时插件不自动重试
+
+- **WHEN** `sticker_send` 返回 `http_error`、`malformed` 或 `transport_unknown`
+- **THEN** 插件 SHALL 返回对应固定分类，且本次调用不自动再次发送或改发另一张贴纸
+- **AND** 工具定义和 bundled skill SHALL 仅说明通用接口和结果语义，不规定调用方的后续对话或搜索策略
 
 ### Requirement: `sticker_send` 只在贴纸库可用时暴露
 
@@ -92,14 +109,13 @@ MUST 只有在既有贴纸 store 中至少存在一个当前可见、具备有�
 
 ### Requirement: Agent 只能通过受限的 `sticker_send` Tool 请求发送
 
-插件 MUST 注册一个名为 `sticker_send` 的异步 Agent Tool。Tool MUST 只接受可选的 `intent`、
-`emotion` 和 `tags` 三类查询参数；三个参数均为空、缺失或只包含空白时 MUST 返回
+插件 MUST 注册一个名为 `sticker_send` 的异步 Agent Tool。Tool MUST 接受查询模式的 intent、emotion 和 tags，或只包含 sticker_id 的精确发送模式；查询模式的三个参数均为空、缺失或只包含空白时 MUST 返回
 `invalid_input`。`emotion` 若提供 MUST 是 `joy|sadness|anger|surprise|fear|disgust|love|approval|confusion|neutral|mixed|unknown`
 中的一个值；`intent` MUST 是不超过 64 个字符的非空短字符串；`tags` MUST 是包含 1 至 5 个非空
 字符串的数组，每个 tag 归一化后不得超过 16 个字符，重复的归一化 tag MUST 返回 `invalid_input`。
-Tool MUST 拒绝 `sticker_id`、`emoji_id`、`face_id`、`chat_id`、`session_id`、文件路径、远端媒体
+Tool MUST 拒绝 `emoji_id`、`face_id`、`chat_id`、`session_id`、文件路径、远端媒体
 URL 以及其他未声明字段，并在任何 Milky Action 或文件读取前返回 `invalid_input`。成功回执不得
-返回内部 `sticker_id`，Agent 也不得指定或读取该 ID。
+返回内部 `sticker_id`。ID 模式 MUST 只接受由 1 至 128 个 ASCII 字母、数字、下划线或连字符组成的不透明 sticker_id；非法 ID 或混用其他字段 MUST 在访问存储前返回 invalid_input。
 
 #### Scenario: Agent 只提供一个查询参数
 
@@ -115,7 +131,7 @@ URL 以及其他未声明字段，并在任何 Milky Action 或文件读取前�
 
 #### Scenario: Tool 参数包含目标或路径
 
-- **WHEN** Tool 参数包含 `sticker_id`、`emoji_id`、`face_id`、`chat_id`、`session_id`、任意路径、URL 或未知字段
+- **WHEN** Tool 参数包含 `emoji_id`、`face_id`、`chat_id`、`session_id`、任意路径、URL 或未知字段
 - **THEN** Tool SHALL 返回 `invalid_input`
 - **AND** SHALL 不读取文件、不打开贴纸 store 且不调用 Milky
 
@@ -311,3 +327,18 @@ Tool 成功时 MUST 返回 `status=sent` 和 Milky 返回的 `message_id`，且�
 - **WHEN** 参数、上下文、匹配、文件、存储或 Milky Action 任一边界失败
 - **THEN** Tool SHALL 返回对应固定分类
 - **AND** SHALL 不泄露路径、URL、凭证、完整参数、图片内容或底层异常正文
+
+### Requirement: 显式 ID 必须精确发送并重新校验
+
+Agent 显式提供 sticker_id 时，工具 MUST 只查找该条目，不参与查询匹配或轮换。ID 不存在 MUST 返回 not_found，文件缺失 MUST 返回 missing_file，索引或元数据损坏 MUST 返回 storage_error，不得自动换图。发送前 MUST 重新执行既有文件完整性、当前会话、统计和单次 Action 校验；搜索候选不是发送成功或持续可用的承诺。
+
+#### Scenario: 显式 ID 发送
+
+- **WHEN** Agent 只提供合法 sticker_id 且对应条目通过当前校验
+- **THEN** 工具 SHALL 只向可信当前会话发送该贴纸，并按既有边界更新一次统计
+- **AND** 成功结果 SHALL 只返回 status=sent 和 message_id
+
+#### Scenario: ID 失效或文件不可用
+
+- **WHEN** ID 不存在、文件缺失或索引损坏
+- **THEN** 工具 SHALL 返回对应固定分类，不调用发送 Action、不更新统计且不改发其他条目

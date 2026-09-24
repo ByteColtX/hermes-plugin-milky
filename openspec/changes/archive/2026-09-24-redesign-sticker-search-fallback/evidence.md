@@ -50,7 +50,7 @@
 任务 4.4 仍为 blocked / 未验证：本次没有明确的真实目标及单次发送授权，未执行真实 Milky ID 发送。
 搜索与 no_match 不发送的行为已由本地及真实宿主组件探针验证，不能据此声称真实 QQ 发送成功。
 继续此项需要明确目标 chat key 与发送授权，并在运行时 MILKY_ALLOWED_CHATS 内确认该目标。
-本 change 暂不归档。
+2026-09-24：用户明确接受任务 4.4 未完成，授权同步本次规范并以当前代码为准后归档。真实 Milky ID 发送仍为 blocked / 未验证，任务 4.4 保持未勾选；归档不代表该项验证通过。
 
 ## 合入 main 后的兼容验证
 
@@ -58,3 +58,12 @@
   只读候选选择与延迟打开写连接均在锁内，网络发送仍在释放锁后执行。
 - 合并后全量 uv run pytest -q -rs：1163 passed、3 skipped；跳过原因与上述三项一致。
 - Ruff、格式检查、暂存差异检查、OpenSpec 严格校验（6 个未归档 change）和 uv build 均通过。
+
+## 归档检查（2026-09-24）
+
+- 本次两个 delta 的所有 requirement 和 scenario 已逐块核对并同步到主规范。
+- 根据当前发送参数解析、ID 查找和文件校验代码，修正主规范中禁止显式 ID 的旧限制。
+- 前置 change add-sticker-search-and-id-send 的结果分类 delta 保留本次新增场景，避免未来同步回退。
+- 聚焦测试：uv run pytest -q -rs tests/test_sticker_search.py tests/test_sticker_fallback.py tests/test_sticker_send.py，101 passed，无 skip。
+- openspec validate --specs --strict：28 passed；openspec validate --changes --strict：6 passed；git diff --check：通过。
+- 任务 4.4 仍未完成，未执行真实 Milky 发送。
