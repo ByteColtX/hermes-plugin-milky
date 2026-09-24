@@ -13,7 +13,7 @@
 `jieba>=0.42.1`，且不得把 `jieba` 作为 optional extra 或按需导入。Agent 可见 definitions 只有在现有
 `stickers.db` 中存在当前可见、`sticker_files` 关联有效且 library 文件可用的条目时才包含该工具。
 空库检查不得创建目录或数据库。
-Tool MUST 接受互斥的查询发送与精确 ID 发送：查询模式只接受 intent、emotion、tags，至少一个参数非空；ID 模式只接受 sticker_id。混用模式、额外字段、目标、路径和 URL MUST 在文件或网络访问前返回 invalid_input。
+Tool SHALL 接受互斥的两种输入：至少一个有效 `intent`、`emotion`、`tags` 查询条件，或单独一个有效 `sticker_id`。额外字段、目标、路径、URL、混合模式和空输入 MUST 在文件或网络访问前返回 `invalid_input`。搜索返回的 opaque ID 可以用于精确发送，发送不要求先调用搜索。
 
 #### Scenario: 空库隐藏工具
 
@@ -33,10 +33,12 @@ Tool MUST 从 task-local `HERMES_SESSION_PLATFORM` 与 `HERMES_SESSION_CHAT_ID` 
 
 ### Requirement: 匹配使用当前元数据且相关性优先
 
-系统 MUST 只读取当前生效的 `emotion`、`tags`、`description` 以及有效 `sticker_files` 关联；`manual` 与 `vision` 来源不得改变
+查询发送模式下，系统 MUST 只读取当前生效的 `emotion`、`tags`、`description` 以及有效 `sticker_files` 关联；`manual` 与 `vision` 来源不得改变
 权重。`emotion` 严格筛选，多个请求 `tags` 为 OR，已提供字段之间为 AND。`intent` 使用统一 Unicode 归一化和本地 `jieba`
 分词，按完整短语、全部 token、部分 token 的固定层级比较，不计算数值分数或使用阈值。无情绪时必须存在 tag、短语或 token 证据；
 仅情绪查询可直接进入候选池。仅最终比较完全并列的候选可以使用当前 chat 的历史做软轮换，最近使用不得硬排除明显更优候选。
+
+ID 模式 MUST 精确解析指定条目，不执行上述词法匹配或候选轮换；其可见性、文件和发送校验仍然适用。
 
 #### Scenario: 相关性优先
 
@@ -109,13 +111,12 @@ MUST 只有在既有贴纸 store 中至少存在一个当前可见、具备有�
 
 ### Requirement: Agent 只能通过受限的 `sticker_send` Tool 请求发送
 
-插件 MUST 注册一个名为 `sticker_send` 的异步 Agent Tool。Tool MUST 接受查询模式的 intent、emotion 和 tags，或只包含 sticker_id 的精确发送模式；查询模式的三个参数均为空、缺失或只包含空白时 MUST 返回
-`invalid_input`。`emotion` 若提供 MUST 是 `joy|sadness|anger|surprise|fear|disgust|love|approval|confusion|neutral|mixed|unknown`
+插件 MUST 注册一个名为 `sticker_send` 的异步 Agent Tool。Tool MUST 接受互斥的查询模式或 ID 模式。查询模式只接受 `intent`、`emotion`、`tags`，且至少一个条件有效；ID 模式只接受 `sticker_id`，该值 MUST 是长度 1 至 128 且只包含 ASCII 字母、数字、下划线或连字符的字符串，不做 trim 或大小写转换。空输入、显式 null、ID 与任何查询字段并存 MUST 返回 `invalid_input`。`emotion` 若提供 MUST 是 `joy|sadness|anger|surprise|fear|disgust|love|approval|confusion|neutral|mixed|unknown`
 中的一个值；`intent` MUST 是不超过 64 个字符的非空短字符串；`tags` MUST 是包含 1 至 5 个非空
 字符串的数组，每个 tag 归一化后不得超过 16 个字符，重复的归一化 tag MUST 返回 `invalid_input`。
 Tool MUST 拒绝 `emoji_id`、`face_id`、`chat_id`、`session_id`、文件路径、远端媒体
 URL 以及其他未声明字段，并在任何 Milky Action 或文件读取前返回 `invalid_input`。成功回执不得
-返回内部 `sticker_id`。ID 模式 MUST 只接受由 1 至 128 个 ASCII 字母、数字、下划线或连字符组成的不透明 sticker_id；非法 ID 或混用其他字段 MUST 在访问存储前返回 invalid_input。
+返回 `sticker_id`；Agent 可以使用搜索结果中的 opaque ID，但该 ID 不代表目标授权。
 
 #### Scenario: Agent 只提供一个查询参数
 
@@ -128,6 +129,12 @@ URL 以及其他未声明字段，并在任何 Milky Action 或文件读取前�
 - **WHEN** Agent 同时提供 `emotion`、`tags` 和 `intent` 中的两个或三个参数
 - **THEN** 系统 SHALL 将每个已提供参数作为同一次匹配请求的约束
 - **AND** SHALL 不把未提供的参数补成默认值
+
+#### Scenario: ID 模式与查询模式互斥
+
+- **WHEN** Agent 单独提供合法 sticker_id，或同时提供 ID 与任一查询字段
+- **THEN** 单独 ID SHALL 进入精确发送；混合输入 SHALL 在读取库或联网前返回 invalid_input
+- **AND** SHALL 不静默忽略任一字段
 
 #### Scenario: Tool 参数包含目标或路径
 
@@ -167,7 +174,7 @@ Tool MUST 从 task-local session context 读取 `HERMES_SESSION_PLATFORM` 和
 
 ### Requirement: 候选匹配必须只使用当前生效元数据并以文本相关性为优先
 
-系统 MUST 只从当前可见且当前文件索引有效的 `sticker_items` 中检索，并只读取当前生效的
+查询发送模式下，系统 MUST 只从当前可见且当前文件索引有效的 `sticker_items` 中检索，并只读取当前生效的
 `emotion`、`tags` 和 `description`。字段来源为 `manual` 或 `vision` MUST 不改变匹配权重。
 提供 `emotion` 时，候选的当前 `emotion` MUST 严格相等；提供 `tags` 时，候选 MUST 至少
 精确命中一个请求 tag，多个请求 tag 之间是 OR 关系；提供 `intent` 时，候选 MUST 至少命中
@@ -211,11 +218,13 @@ token 命中，全部 token 命中高于部分 token 命中；同一层级内命
 
 ### Requirement: 语义相关性必须优先于曝光轮换
 
-系统 MUST 先按固定的无分数相关性层级确定最终候选池，再使用当前 chat key 的发送历史进行
+查询发送模式下，系统 MUST 先按固定的无分数相关性层级确定最终候选池，再使用当前 chat key 的发送历史进行
 多样性选择。只有最终层级和命中证据完全并列的候选才能进入轮换池。使用历史只能作为并列候选
 之间的软偏好，MUST NOT 硬排除最近使用的贴纸，也 MUST NOT 让明显较差的候选超过明显更匹配
 的候选。并列时，未使用或较久未使用者可以获得更高选择概率，同等使用历史下允许随机选择；
 候选只有一张且满足最低证据时 SHALL 发送。
+
+ID 模式 MUST 跳过匹配排序和轮换，近期使用不得阻止精确发送指定条目。
 
 #### Scenario: 更匹配的贴纸最近刚发送
 
@@ -309,7 +318,7 @@ Tool 可以被 Agent 在不同调用中重复调用，不得设置 Agent turn �
 ### Requirement: 工具结果和诊断必须使用固定安全分类
 
 Tool 成功时 MUST 返回 `status=sent` 和 Milky 返回的 `message_id`，且不得返回内部
-`sticker_id`；无候选时返回 `status=no_match`。缺少可信上下文、参数非法、文件缺失、存储
+`sticker_id`；查询模式无候选时返回 `status=no_match`，ID 模式不存在或不可见时返回 `status=not_found`。该回执限制只适用于发送，搜索结果可以包含 opaque ID。缺少可信上下文、参数非法、文件缺失、存储
 失败、Milky 协议拒绝、HTTP 错误、malformed 和 transport unknown MUST 使用固定机器可读
 分类，不得把 HTTP 200、Action 调用完成或统计更新成功单独描述为用户已看到消息。日志和
 异常 MUST 不包含 token、Authorization、完整参数、媒体 URL、本地路径、图片 bytes、完整远端
@@ -342,3 +351,35 @@ Agent 显式提供 sticker_id 时，工具 MUST 只查找该条目，不参与�
 
 - **WHEN** ID 不存在、文件缺失或索引损坏
 - **THEN** 工具 SHALL 返回对应固定分类，不调用发送 Action、不更新统计且不改发其他条目
+
+### Requirement: 按 ID 发送必须精确解析并重新验证条目
+
+ID 模式 MUST 使用既有持久化 opaque 条目 ID，保持编辑、重新分析和重启前后身份稳定，不把 ID 解释为路径、URL、候选序号或内容 hash。发送 MUST 重新读取当前可见条目并应用与查询发送相同的文件、大小、完整性及发送边界；不得因 ID 来自搜索而跳过检查，也不要求存在短期搜索缓存或最近一次搜索记录。
+
+合法但不存在、已删除或当前不可见的 ID MUST 返回 not_found；可见条目已知文件缺失 MUST 返回 missing_file，文件索引损坏、完整性失败或存储访问失败 MUST 返回 storage_error。存储整体不可用沿用 unsupported。前述失败 MUST 不发送、不增加使用统计、不改发其他条目。搜索后、发送前删除或替换条目 SHALL 重新验证并安全失败，不使用过期搜索内容替代当前校验。通过校验进入发送边界后 SHALL 沿用现有 claim 统计和一次发送语义；远端失败或未知不回滚统计。
+
+#### Scenario: 搜索后按 ID 发送
+
+- **WHEN** Agent 使用搜索返回的有效 ID 显式发送，其他条目相关性更高或该条目刚使用过
+- **THEN** 系统 SHALL 精确发送指定条目到当前可信会话，不重新匹配或轮换
+- **AND** SHALL 只执行一次发送并按既有规则记录一次使用
+
+#### Scenario: 搜索后条目删除
+
+- **WHEN** ID 曾出现在搜索结果中但发送前条目已删除
+- **THEN** 系统 SHALL 返回 not_found，不发送、不计数、不换图
+
+#### Scenario: 搜索后文件失效
+
+- **WHEN** 条目仍可见但文件缺失或完整性校验失败
+- **THEN** 系统 SHALL 分别返回 missing_file 或 storage_error，不发送、不计数、不换图
+
+#### Scenario: 不依赖搜索缓存
+
+- **WHEN** 当前上下文已有有效工具返回 ID，且插件重启后该条目仍然可见可用
+- **THEN** Agent SHALL 可直接按 ID 发送，不需要重新搜索
+
+#### Scenario: ID 不能改变目标
+
+- **WHEN** ID 有效但当前会话上下文缺失、非法或非 Milky
+- **THEN** 系统 SHALL 在读取库及联网前返回既有上下文错误，不以 ID 推断或回退发送目标
