@@ -15,6 +15,7 @@ from milky.client import ActionError
 from milky.logging import render_event
 from stickers.sending import (
     StickerSendService,
+    normalize_sticker_text,
     parse_sticker_search_request,
     parse_sticker_send_request,
     validate_sticker_chat_key,
@@ -694,7 +695,7 @@ SET_GROUP_MEMBER_SPECIAL_TITLE_SCHEMA = {
 
 STICKER_SEND_SCHEMA = {
     "name": "sticker_send",
-    "description": "按查询条件或贴纸 ID 向当前会话发送一张贴纸",
+    "description": "按查询或 ID 向当前会话发送一张贴纸；无匹配返回备选，需显式选 ID 发送",
     "parameters": {
         "type": "object",
         "properties": {
@@ -744,10 +745,18 @@ STICKER_SEND_SCHEMA = {
 
 STICKER_SEARCH_SCHEMA = {
     "name": "sticker_search",
-    "description": "搜索贴纸，返回 ID、情绪、标签和描述",
+    "description": "只读搜索贴纸，返回模式及候选 ID、情绪、标签和描述",
     "parameters": {
         "type": "object",
         "properties": {
+            "mode": {
+                "type": "string",
+                "enum": ["strict", "fallback", "browse"],
+                "description": (
+                    "strict 严格匹配；fallback 忽略 intent、保留情绪和标签；browse 浏览。"
+                    "默认有查询为 strict，无查询为 browse"
+                ),
+            },
             "intent": {
                 "type": "string",
                 "minLength": 1,
@@ -776,16 +785,42 @@ STICKER_SEARCH_SCHEMA = {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 5,
+                "uniqueItems": True,
                 "items": {"type": "string", "minLength": 1, "maxLength": 16},
-                "description": "标签筛选",
+                "description": "至少命中一个标签，归一化后不可重复",
             },
             "limit": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 10,
-                "description": "返回数量，默认 5，最多 10",
+                "description": "返回数量，默认 5",
             },
         },
+        "oneOf": [
+            {
+                "properties": {"mode": {"const": "strict"}},
+                "anyOf": [
+                    {"required": ["intent"]},
+                    {"required": ["emotion"]},
+                    {"required": ["tags"]},
+                ],
+            },
+            {
+                "properties": {"mode": {"const": "fallback"}},
+                "required": ["mode", "intent"],
+                "anyOf": [{"required": ["emotion"]}, {"required": ["tags"]}],
+            },
+            {
+                "properties": {"mode": {"const": "browse"}},
+                "not": {
+                    "anyOf": [
+                        {"required": ["intent"]},
+                        {"required": ["emotion"]},
+                        {"required": ["tags"]},
+                    ]
+                },
+            },
+        ],
         "required": [],
         "additionalProperties": False,
     },
@@ -1607,38 +1642,45 @@ def _sticker_result(result: Mapping[str, object], tool_name: str = "sticker_send
     status = result.get("status")
     if not isinstance(status, str) or status not in _STICKER_RESULT_STATUSES:
         return _sticker_error("malformed")
+    safe: dict[str, object] = {"status": status}
     if tool_name == "sticker_send":
         if status == "ok":
             return _sticker_error("malformed")
-        allowed = {"status", "message_id"}
-        safe = {key: value for key, value in result.items() if key in allowed}
         if status == "sent":
-            if not isinstance(safe.get("message_id"), str) or not safe["message_id"]:
+            message_id = result.get("message_id")
+            if not isinstance(message_id, str) or not message_id:
                 return _sticker_error("malformed")
-        elif set(safe) != {"status"}:
+            safe["message_id"] = message_id
+        elif "message_id" in result:
             return _sticker_error("malformed")
-        return json.dumps(safe, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if status == "no_match":
+            alternatives = _sticker_safe_items(result.get("alternatives"), limit=5)
+            if alternatives is None:
+                return _sticker_error("malformed")
+            safe["alternatives"] = alternatives
+    elif tool_name == "sticker_search":
+        if status in {"sent", "not_found"}:
+            return _sticker_error("malformed")
+        if status in {"ok", "no_match"}:
+            mode = result.get("match_mode")
+            if not isinstance(mode, str) or mode not in {"strict", "fallback", "browse"}:
+                return _sticker_error("malformed")
+            items = _sticker_safe_items(result.get("items"), limit=10)
+            if items is None or bool(items) != (status == "ok"):
+                return _sticker_error("malformed")
+            safe.update(match_mode=mode, items=items)
+    else:
+        return _sticker_error("malformed")
+    return json.dumps(safe, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
-    if tool_name != "sticker_search":
-        return _sticker_error("malformed")
-    if status in {"sent", "not_found"}:
-        return _sticker_error("malformed")
-    if status not in {"ok", "no_match"}:
-        return json.dumps(
-            {"status": status}, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        )
-    items = result.get("items")
-    if not isinstance(items, list) or len(items) > 10:
-        return _sticker_error("malformed")
-    if status == "ok":
-        if not items:
-            return _sticker_error("malformed")
-    elif status == "no_match":
-        if items:
-            return _sticker_error("malformed")
-    elif items:
-        return _sticker_error("malformed")
+
+def _sticker_safe_items(items: object, *, limit: int) -> list[dict[str, object]] | None:
+    """校验搜索和发送备选共用的有界元数据，不截断非法字段。"""
+
+    if not isinstance(items, list) or len(items) > limit:
+        return None
     safe_items: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
     for item in items:
         if not isinstance(item, Mapping) or set(item) != {
             "sticker_id",
@@ -1646,7 +1688,7 @@ def _sticker_result(result: Mapping[str, object], tool_name: str = "sticker_send
             "tags",
             "description",
         }:
-            return _sticker_error("malformed")
+            return None
         sticker_id = item["sticker_id"]
         emotion = item["emotion"]
         tags = item["tags"]
@@ -1654,17 +1696,22 @@ def _sticker_result(result: Mapping[str, object], tool_name: str = "sticker_send
         if (
             not isinstance(sticker_id, str)
             or not _STICKER_ID_RE.fullmatch(sticker_id)
+            or sticker_id in seen_ids
             or not isinstance(emotion, str)
             or emotion not in _STICKER_EMOTIONS
             or not isinstance(tags, list)
-            or not isinstance(description, str)
-            or len(sticker_id) < 1
-            or len(sticker_id) > 128
             or len(tags) > 5
-            or any(not isinstance(tag, str) or len(tag) > 16 for tag in tags)
+            or any(not isinstance(tag, str) or not 1 <= len(tag) <= 16 for tag in tags)
+            or not isinstance(description, str)
             or len(description) > 20
         ):
-            return _sticker_error("malformed")
+            return None
+        normalized_tags = [normalize_sticker_text(tag) for tag in tags]
+        if any(not tag or len(tag) > 16 for tag in normalized_tags) or len(
+            set(normalized_tags)
+        ) != len(normalized_tags):
+            return None
+        seen_ids.add(sticker_id)
         safe_items.append(
             {
                 "sticker_id": sticker_id,
@@ -1673,12 +1720,7 @@ def _sticker_result(result: Mapping[str, object], tool_name: str = "sticker_send
                 "description": description,
             }
         )
-    return json.dumps(
-        {"status": status, "items": safe_items},
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    return safe_items
 
 
 def _sticker_finish(
