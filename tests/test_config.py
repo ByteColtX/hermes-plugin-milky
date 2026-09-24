@@ -466,3 +466,71 @@ def test_manifest_declares_only_the_new_environment_contract_and_tools() -> None
         assert manifest.count(f"  - {tool_name}") == 1
     for old_name in ("milky_profile_like", "milky_nudge", "milky_recall_group_message"):
         assert old_name not in manifest
+
+
+def test_settings_priorities_native_disable_and_whole_will() -> None:
+    from config import resolve_settings
+
+    result = resolve_settings(
+        settings={
+            "allowed_chats": [],
+            "session_buffer_size": 0,
+            "group_member_event_notifications": False,
+            "will_policy": {"engine": "routing"},
+        },
+        legacy={"base_url": "http://127.0.0.1:4001"},
+        environment={
+            "MILKY_BASE_URL": "http://127.0.0.1:4002",
+            "MILKY_ALLOWED_CHATS": "dm:123",
+            "MILKY_WILL_POLICY": '{"routing":{"mention":"wait"}}',
+        },
+    )
+    assert result["effective"]["base_url"] == "http://127.0.0.1:4001"
+    assert result["effective"]["allowed_chats"] == []
+    assert result["effective"]["session_buffer_size"] == 0
+    assert result["effective"]["group_member_event_notifications"] is False
+    assert result["effective"]["will_policy"]["routing"]["mention"] == "trigger"
+    assert result["sources"]["base_url"] == "legacy"
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"base_url": None},
+        {"allowed_chats": "dm:1"},
+        {"session_buffer_size": True},
+        {"group_member_event_notifications": "false"},
+        {"will_policy": None},
+        {"unknown": 1},
+    ],
+)
+def test_invalid_high_priority_never_falls_back(settings) -> None:
+    from config import resolve_settings
+
+    with pytest.raises(ValueError):
+        resolve_settings(settings=settings, environment=DEFAULT_ENV)
+
+
+def test_partial_setup_validates_without_token() -> None:
+    from config import resolve_settings
+
+    assert resolve_settings(settings={"base_url": "http://127.0.0.1:4000"})["effective"]["base_url"]
+    assert resolve_settings(allow_missing=True)["effective"]["base_url"] == ""
+
+
+def test_yaml_only_address_is_valid_with_scoped_secret() -> None:
+    config = load_config(
+        {"MILKY_ACCESS_TOKEN": "synthetic-secret"},
+        settings={"base_url": "http://127.0.0.1:4000", "allowed_chats": []},
+    )
+    assert config.base_url == "http://127.0.0.1:4000"
+    assert config.allowed_chats == frozenset()
+
+
+@pytest.mark.parametrize("source", ["settings", "legacy", "environment"])
+def test_explicit_empty_address_does_not_mean_missing(source) -> None:
+    from config import resolve_settings
+
+    kwargs = {source: {"MILKY_BASE_URL" if source == "environment" else "base_url": ""}}
+    with pytest.raises(ConfigError):
+        resolve_settings(**kwargs, allow_missing=True)

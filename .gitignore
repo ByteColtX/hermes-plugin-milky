@@ -13,3 +13,12 @@ wheels/
 
 
 CONTRIBUTING.md
+
+# Dashboard 构建依赖与随目录发布的资源
+node_modules/
+!dashboard/dist/
+!dashboard/dist/**
+
+# 本地浏览器验证产物
+.playwright-cli/
+output/playwright/

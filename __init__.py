@@ -152,7 +152,7 @@ def register(ctx: Any) -> None:
         ),
         check_fn=lambda: True,
         validate_config=lambda _platform_config: True,
-        required_env=["MILKY_BASE_URL", "MILKY_ACCESS_TOKEN"],
+        required_env=[],
         env_enablement_fn=lambda: _home_channel_enablement(milky_config),
         cron_deliver_env_var="MILKY_HOME_CHANNEL",
         standalone_sender_fn=standalone_sender,

@@ -602,3 +602,45 @@ module.register(object())
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_yaml_startup_keeps_one_snapshot_without_web_dependencies(monkeypatch):
+    """无旧地址环境时注册仍使用同一设置快照，Gateway 不导入 Web。"""
+    import builtins
+
+    monkeypatch.delenv("MILKY_BASE_URL", raising=False)
+    core = ModuleType("hermes_cli.config")
+    selected = {"base_url": "http://127.0.0.1:4000", "home_channel": "group:123"}
+    core.load_config_readonly = lambda: {
+        "plugins": {"entries": {"hermes-plugin-milky": {"settings": selected}}}
+    }
+    secrets = ModuleType("agent.secret_scope")
+    secrets.get_secret = lambda key: "synthetic-secret" if key == "MILKY_ACCESS_TOKEN" else None
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", core)
+    monkeypatch.setitem(sys.modules, "agent.secret_scope", secrets)
+    imported = builtins.__import__
+
+    def require_no_web(name, *args, **kwargs):
+        assert name.split(".")[0] not in {"fastapi", "starlette", "python_multipart", "dashboard"}
+        return imported(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", require_no_web)
+    captured = []
+    monkeypatch.setattr(
+        "outbound.standalone.make_standalone_sender",
+        lambda config: captured.append(config) or object(),
+    )
+    entry, module_name = load_plugin_entry()
+    try:
+        context = SkillAndPlatformContext()
+        entry.register(context)
+        registration = context.platforms[0]
+        selected["base_url"] = "http://127.0.0.1:5000"
+        adapter = registration["adapter_factory"](object())
+        assert adapter._config is captured[0]
+        assert adapter._config.base_url == "http://127.0.0.1:4000"
+        assert registration["required_env"] == []
+    finally:
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(f"{module_name}."):
+                sys.modules.pop(name, None)

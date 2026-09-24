@@ -32,5 +32,5 @@ Milky 当前依赖环境配置和命令维护表情包，复杂 Will 策略、�
 - 影响插件 manifest、配置层、根平台注册、表情包维护/存储边界及相关测试；新增 Dashboard 资源、后端适配与前端构建/交付检查。前端运行使用宿主提供的能力，开发构建依赖独立锁定，普通 Gateway 加载不引入 Web 依赖或后台任务。
 - 普通设置与凭证使用 core 的 profile 和托管策略；图库及任务属于同一 profile 的插件持久目录，不复制 Hermes 会话或入站资源存储。
 - 同步 README、ARCHITECTURE、相关主规范的 delta 和实施证据；现有声明“只有环境配置”“唯一公开入口”需按本 change 明确修订，不能留下文档与行为冲突。
-- 基于本地 Hermes core b3a1900e72 的文档与源码核对，Dashboard SDK、独立发现、认证请求、插件设置和持久存储接口存在；真实安装、profile 切换、任务关闭及视觉服务仍未集成验证，最低发行版本保持待验证。
-- 依赖当前已实现的人工共享图库，不依赖 add-qq-sticker-library 的自动收藏/会话隔离规划，也不合入 redesign-sticker-search-fallback；add-sticker-search-and-id-send 的未完成真实集成证据仍独立保留。此次只创建规划，不宣称上述功能已交付。
+- 基于 Hermes core `b3a1900e72a16da450ff637aaa37cc23f68992a6` 的文档与源码核对，Dashboard SDK、独立发现、认证请求、插件设置和持久存储接口存在；当前实现的真实宿主、profile 切换、任务关闭、代理前缀和视觉导入证据记录在 `evidence.md`，最低发行版本仍待映射。
+- 依赖当前已实现的人工共享图库，不依赖 `add-qq-sticker-library` 的自动收藏/会话隔离规划，也不合入 `redesign-sticker-search-fallback`；`add-sticker-search-and-id-send` 的未完成真实集成证据仍独立保留。本目录仍是未归档 change；Dashboard 实现和证据已在当前工作树中，主规范同步仍按归档流程处理。

@@ -18,6 +18,7 @@ import jieba
 
 from session.identity import CanonicalError, normalize_chat_key
 
+from .coordination import library_guard
 from .errors import StickerStorageError, StickerUnsupportedError
 from .storage import PLUGIN_NAME, StickerPaths, StickerStore
 from .validation import read_validated_image_file, validate_library_name
@@ -379,20 +380,23 @@ class StickerSendService:
                 return {"status": "unsupported"}
             if store.connection is None or store.paths is None:
                 return {"status": "unsupported"}
-            if request.sticker_id is not None:
-                selected = self._read_candidate_by_id(
-                    store.connection, store.paths, request.sticker_id
-                )
-            else:
-                candidates = self._read_candidates(
-                    store.connection, store.paths, require_file=False
-                )
-                matches = self._match_candidates(candidates, request.query or StickerQuery(), jieba)
-                selected = self._select_candidate(store.connection, matches, chat_key)
-                if selected is None:
-                    return {"status": "no_match"}
-            uri = self._materialize_selected(store.paths, selected)
-            self._claim_use(store.connection, store.paths, selected, chat_key)
+            with library_guard(store.paths.root):
+                if request.sticker_id is not None:
+                    selected = self._read_candidate_by_id(
+                        store.connection, store.paths, request.sticker_id
+                    )
+                else:
+                    candidates = self._read_candidates(
+                        store.connection, store.paths, require_file=False
+                    )
+                    matches = self._match_candidates(
+                        candidates, request.query or StickerQuery(), jieba
+                    )
+                    selected = self._select_candidate(store.connection, matches, chat_key)
+                    if selected is None:
+                        return {"status": "no_match"}
+                uri = self._materialize_selected(store.paths, selected)
+                self._claim_use(store.connection, store.paths, selected, chat_key)
             result = await send_sticker(chat_key, uri)
             if bool(getattr(result, "success", False)):
                 message_id = getattr(result, "message_id", None)

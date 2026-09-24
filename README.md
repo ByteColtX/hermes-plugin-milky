@@ -132,6 +132,50 @@ hermes gateway restart
 
 ## 配置
 
+### Dashboard 管理
+
+当前工作区包含 `dashboard/manifest.json`、API 和 `dashboard/dist/` 预构建资源。
+已在固定版本的真实 Hermes 与 Debian 环境验证配置、视觉导入和浏览器维护流程；版本、证据类型及环境限制见
+[Dashboard evidence](openspec/changes/add-milky-web-dashboard/evidence.md)。
+已验证的宿主 core 为 `b3a1900e72a16da450ff637aaa37cc23f68992a6`，Web SDK 为 1.1.0；
+尚未确认最低 Hermes 发行版本。将完整 directory plugin 安装到宿主启用的用户插件位置，
+重启 Hermes Dashboard 后打开 Milky QQ；项目本地安装不足以挂载插件 Python API。
+Gateway 与 Dashboard 分别拥有连接和任务生命周期，缺少 QQ 地址或凭证也可以访问配置页。
+
+普通配置逐个顶层键按 `plugins.entries.hermes-plugin-milky.settings` → 旧 `config` →
+当前 profile 的 `MILKY_*` 环境 → 默认值解析。settings 使用原生类型，Will 使用完整对象选源；
+非法高优先级值会报错。地址可放在 YAML，access token 仍由宿主凭证机制管理。
+例如在现有 `plugins` 配置中合并：
+
+```yaml
+plugins:
+  enabled: [hermes-plugin-milky]
+  entries:
+    hermes-plugin-milky:
+      settings:
+        base_url: http://127.0.0.1:3000
+        allowed_chats: ["group:123456"]
+        session_buffer_size: 20
+        group_member_event_notifications: false
+```
+
+页面明确选择 profile；保存普通设置与保持/替换/清除凭证是独立操作。
+保存前检查版本、逐字段核验保存结果，但 core 没有跨入口条件事务，不能保证检测全部竞争。
+保存成功只表示持久化；Gateway 重启后使用新快照，页面运行态保持 `unknown`。
+
+图库浏览为只读，预览通过宿主认证按可见 ID 获取。Web 上传与命令 inbox 分开：单图 10 MiB，
+每批最多 50 张及 100 MiB，每 profile 暂存配额 500 MiB；无活动引用的上传 7 天后可显式回收。
+上传后另行确认导入；失败项可重新明确提交或丢弃批次。编辑、删除、重新分析、清理和索引修复
+使用持久任务，每 profile 一个执行批次、最多 10 个排队。任务区分 `queued`、`running`、
+`succeeded`、`partial`、`failed`、`cancelled`、`interrupted`，历史保留 7 天且最多 1000 条。
+取消不撤销已提交条目，关闭和恢复不自动重放；过期请求返回 `expired`。
+
+回滚前停止新维护请求并关闭 Dashboard，保留图库、上传和任务记录。旧插件只读环境配置，
+需手动把要保留的普通 settings 转成原 `MILKY_*` 格式后再回滚，不删除宿主凭证。
+后端更新需要重启 Dashboard，刷新页面不能替换已加载 Python 路由。
+开发前端使用 `npm ci --prefix dashboard`、`npm run build --prefix dashboard`，
+`npm run check --prefix dashboard` 检查源码与预构建产物一致；Python wheel 不包含 directory plugin。
+
 ### Milky 最小配置
 
 建议将环境变量集中保存到 `~/.hermes/.env`：
@@ -151,7 +195,7 @@ MILKY_HOME_CHANNEL=group:123456789
 
 | 变量 | 必需 | 作用 |
 | --- | --- | --- |
-| `MILKY_BASE_URL` | 是 | Milky 服务基址；Action 使用 `<base>/api/{action}`，事件流使用 `<base>/event`。远程部署请使用 HTTPS。 |
+| `MILKY_BASE_URL` | 有效地址必需，环境可选 | Milky 服务基址，也可来自 YAML settings/config；Action 使用 `<base>/api/{action}`，事件流使用 `<base>/event`。远程部署请使用 HTTPS。 |
 | `MILKY_ACCESS_TOKEN` | 是 | Milky access token，只用于 Bearer 认证。 |
 | `MILKY_ALLOWED_CHATS` | 否 | 入站 chat key 白名单，支持具体 `group:<群号>`/`dm:<QQ号>` 以及 `group:*`/`dm:*`；通配符只匹配对应命名空间，可混用；留空表示允许所有会话进入。 |
 | `MILKY_WILL_POLICY` | 否 | 决定消息等待（`wait`）或触发（`trigger`）的嵌套 JSON 配置。 |

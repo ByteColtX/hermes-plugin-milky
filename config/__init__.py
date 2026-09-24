@@ -119,47 +119,126 @@ class MilkyConfig:
         }
 
 
-def load_config(environment: Mapping[str, str] | None = None) -> MilkyConfig:
-    """从环境映射一次性解析并校验 Milky 配置。"""
+SETTING_DEFAULTS = {
+    "base_url": None,
+    "allowed_chats": [],
+    "will_policy": _DEFAULT_WILL_POLICY,
+    "session_buffer_size": 20,
+    "home_channel": "",
+    "max_local_media_bytes": DEFAULT_MAX_LOCAL_MEDIA_BYTES,
+    "long_text_forward_threshold": DEFAULT_LONG_TEXT_FORWARD_THRESHOLD,
+    "group_member_event_notifications": False,
+}
 
-    values: Mapping[str, str] = os.environ if environment is None else environment
 
-    missing = [name for name in ("MILKY_BASE_URL", "MILKY_ACCESS_TOKEN") if not values.get(name)]
-    if missing:
-        raise ConfigError(f"缺少必需配置: {', '.join(missing)}")
+def _native_environment(key: str, value: object) -> str:
+    """将已验证原生类型转换为旧解析器的输入，不接受隐式类型转换。"""
+    name = "MILKY_" + key.upper()
+    if key in {"base_url", "home_channel"}:
+        if not isinstance(value, str):
+            raise ConfigError(name + " type error")
+        return value
+    if key == "allowed_chats":
+        if not isinstance(value, list) or any(not isinstance(v, str) for v in value):
+            raise ConfigError(name + " type error")
+        for rule in value:
+            validate_chat_rule(rule)
+        return ",".join(value)
+    if key == "will_policy":
+        if not isinstance(value, dict):
+            raise ConfigError(name + " type error")
+        return json.dumps(value)
+    if key == "group_member_event_notifications":
+        if type(value) is not bool:
+            raise ConfigError(name + " type error")
+        return "true" if value else "false"
+    if type(value) is not int:
+        raise ConfigError(name + " type error")
+    return str(value)
 
-    base_url = _normalize_base_url(values["MILKY_BASE_URL"])
-    access_token = _required_text(values["MILKY_ACCESS_TOKEN"], "MILKY_ACCESS_TOKEN")
-    allowed_chats = _parse_allowed_chats(values.get("MILKY_ALLOWED_CHATS", ""))
-    will_policy = _parse_will_policy(values.get("MILKY_WILL_POLICY", ""))
-    session_buffer_size = _parse_non_negative_integer(
-        values.get("MILKY_SESSION_BUFFER_SIZE", "20"),
-        "MILKY_SESSION_BUFFER_SIZE",
-    )
-    home_channel = _parse_home_channel(values.get("MILKY_HOME_CHANNEL"))
-    max_local_media_bytes = _parse_max_local_media_bytes(
-        values.get("MILKY_MAX_LOCAL_MEDIA_BYTES", str(DEFAULT_MAX_LOCAL_MEDIA_BYTES))
-    )
-    long_text_forward_threshold = _parse_long_text_forward_threshold(
-        values.get(
-            "MILKY_LONG_TEXT_FORWARD_THRESHOLD",
-            str(DEFAULT_LONG_TEXT_FORWARD_THRESHOLD),
-        )
-    )
-    group_member_event_notifications = _parse_boolean(
-        values.get("MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS", "false"),
-        "MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS",
-    )
+
+def resolve_settings(*, settings=None, legacy=None, environment=None, allow_missing=False):
+    """逐键选源并统一校验普通设置；Will 整体选源，凭证不参与。"""
+    settings = {} if settings is None else settings
+    legacy = {} if legacy is None else legacy
+    environment = {} if environment is None else environment
+    if not isinstance(settings, Mapping) or not isinstance(legacy, Mapping):
+        raise ConfigError("settings type error")
+    if set(settings) - set(SETTING_DEFAULTS) or set(legacy) - set(SETTING_DEFAULTS):
+        raise ConfigError("unknown settings field")
+    selected, sources = {}, {}
+    for key, default in SETTING_DEFAULTS.items():
+        env_name = "MILKY_" + key.upper()
+        if key in settings:
+            value, source = settings[key], "settings"
+        elif key in legacy:
+            value, source = legacy[key], "legacy"
+        elif env_name in environment:
+            value, source = environment[env_name], "environment"
+        else:
+            value, source = copy.deepcopy(default), "default"
+        sources[key] = source
+        if key == "base_url" and source != "default" and not value:
+            raise ConfigError("MILKY_BASE_URL invalid")
+        if value is None and key == "base_url" and source == "default":
+            if allow_missing:
+                selected[env_name] = ""
+                continue
+            raise ConfigError("缺少必需配置: MILKY_BASE_URL")
+        selected[env_name] = value if source == "environment" else _native_environment(key, value)
+    effective = {
+        "base_url": _normalize_base_url(selected["MILKY_BASE_URL"])
+        if selected["MILKY_BASE_URL"]
+        else "",
+        "allowed_chats": sorted(_parse_allowed_chats(selected["MILKY_ALLOWED_CHATS"])),
+        "will_policy": _parse_will_policy(selected["MILKY_WILL_POLICY"]),
+        "session_buffer_size": _parse_non_negative_integer(
+            selected["MILKY_SESSION_BUFFER_SIZE"], "MILKY_SESSION_BUFFER_SIZE"
+        ),
+        "home_channel": _parse_home_channel(selected["MILKY_HOME_CHANNEL"]) or "",
+        "max_local_media_bytes": _parse_max_local_media_bytes(
+            selected["MILKY_MAX_LOCAL_MEDIA_BYTES"]
+        ),
+        "long_text_forward_threshold": _parse_long_text_forward_threshold(
+            selected["MILKY_LONG_TEXT_FORWARD_THRESHOLD"]
+        ),
+        "group_member_event_notifications": _parse_boolean(
+            selected["MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS"],
+            "MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS",
+        ),
+    }
+    if not effective["base_url"] and not allow_missing:
+        raise ConfigError("缺少必需配置: MILKY_BASE_URL")
+    return {"effective": effective, "sources": sources}
+
+
+def load_config(
+    environment: Mapping[str, str] | None = None, *, settings=None, legacy=None
+) -> MilkyConfig:
+    """解析同一 profile 的设置、旧配置、环境和独立凭证启动快照。"""
+    if environment is None:
+        try:
+            from agent.secret_scope import get_secret
+            from hermes_cli.config import load_config_readonly
+        except ImportError:
+            environment = os.environ
+        else:
+            host = load_config_readonly()
+            entry = host.get("plugins", {}).get("entries", {}).get("hermes-plugin-milky", {})
+            settings = entry.get("settings", {}) if settings is None else settings
+            legacy = entry.get("config", {}) if legacy is None else legacy
+            names = ["MILKY_" + key.upper() for key in SETTING_DEFAULTS] + ["MILKY_ACCESS_TOKEN"]
+            environment = {name: value for name in names if (value := get_secret(name)) is not None}
+    resolved = resolve_settings(settings=settings, legacy=legacy, environment=environment)
+    token = _required_text(environment.get("MILKY_ACCESS_TOKEN"), "MILKY_ACCESS_TOKEN")
+    values = resolved["effective"]
     return MilkyConfig(
-        base_url=base_url,
-        access_token=access_token,
-        allowed_chats=allowed_chats,
-        will_policy=will_policy,
-        session_buffer_size=session_buffer_size,
-        home_channel=home_channel,
-        max_local_media_bytes=max_local_media_bytes,
-        long_text_forward_threshold=long_text_forward_threshold,
-        group_member_event_notifications=group_member_event_notifications,
+        **{
+            **values,
+            "allowed_chats": frozenset(values["allowed_chats"]),
+            "home_channel": values["home_channel"] or None,
+        },
+        access_token=token,
     )
 
 

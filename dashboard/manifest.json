@@ -1,0 +1,11 @@
+{
+  "name": "hermes-plugin-milky",
+  "label": "Milky QQ",
+  "description": "配置、图库与维护任务",
+  "version": "1.0.0",
+  "sdk_version": "1.1.0",
+  "tab": { "path": "/milky", "position": "after:plugins" },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

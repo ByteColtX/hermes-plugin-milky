@@ -18,10 +18,11 @@
 
 ```text
 hermes-plugin-milky/
-├── plugin.yaml              # Hermes manifest、依赖、环境变量、25 个 Action ToolSpec 和 1 个语义 Tool
+├── plugin.yaml              # Hermes manifest、依赖、环境变量、25 个 Action ToolSpec 和 2 个语义 Tool
 ├── __init__.py              # 唯一入口：注册 platform、command、tools、skills
 ├── adapter.py               # MilkyAdapter；连接、停止和 Hermes 边界
-├── config/                  # 启动配置、白名单和 Will policy
+├── config/                  # 统一来源解析、启动快照、白名单和 Will policy
+├── dashboard/               # 宿主 Web 管理路由、任务、独立上传和预构建页面
 ├── milky/                   # DTO、解析、HTTP Action、SSE、资源、日志
 ├── inbound/                 # canonical、pipeline、消息映射、系统事件
 ├── gates/                   # 固定顺序的硬门禁
@@ -237,8 +238,10 @@ Tool 流程是固定 schema/handler → 参数和 client 状态校验 → 一次
 | Milky 事件、dedup、buffer、Will、mute、snapshot | 进程内内存 | 本插件 | 重启、跨实例不恢复 |
 | `stickers.db` | SQLite | `stickers/` | plugin-data 下持久化，命令结束关闭连接 |
 | sticker image library | 本地文件 | `stickers/` | 受控目录、校验后保留 |
+| `dashboard-jobs.db` | SQLite | Dashboard 任务执行层 | 按 profile 持久化，显式维护请求创建，终态有界保留 |
+| Dashboard web uploads | 本地文件和 JSON metadata | Dashboard 上传层 | 按 profile 独立于 inbox，未引用暂存内容按期限回收 |
 
-仓库没有其他数据库、ORM、消息队列、迁移服务或远程缓存的证据。SQLite schema 在 `stickers/storage.py` 中创建和迁移；备份、保留策略和跨进程锁定方案为 `Not evident from the repository`。
+仓库没有 ORM、消息队列、迁移服务或远程缓存的证据。贴纸 SQLite schema 在 `stickers/storage.py` 中创建和迁移，Dashboard 任务库由 `dashboard/jobs.py` 按需创建；贴纸与 Dashboard 的跨进程目录协调由 `stickers/coordination.py` 提供。备份、生产保留策略和多实例路由仍为 `Not evident from the repository`。
 
 ## 6. 外部集成和 API
 
@@ -263,7 +266,8 @@ Tool 流程是固定 schema/handler → 参数和 client 状态校验 → 一次
 
 ### 7.2 配置入口
 
-必需环境变量：`MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN`。
+运行必须有有效地址与凭证。地址按 settings → legacy config → profile 环境 → 默认值选源；
+凭证继续绑定 MILKY_ACCESS_TOKEN，普通设置不保存秘密。Will 按整体对象选源，非法高优先级值不回退。
 
 可选环境变量：
 
@@ -307,7 +311,8 @@ Tool 流程是固定 schema/handler → 参数和 client 状态校验 → 一次
 
 **可观测性。** logger 命名空间为 `hermes_plugins.milky.*`，主要事件包括 lifecycle、action、sse、inbound、resource、outbound、mute 和 tool。日志使用固定分类、计数、耗时、HTTP status（可确认时）和安全序号；adapter、SSE、pipeline 有界 diagnostics，`scripts/milky_smoke.py` 提供固定元数据摘要。协议 raw 保真不等于日志脱敏：插件不创建独立日志脱敏器，也不把 raw、响应或异常正文复制到日志。Tool 结果、模型上下文和 session 持久化由 Hermes core 的对应出口决定，插件不声称这些出口会统一清洗秘密；真实宿主行为仍待集成验证。
 
-仓库没有 metrics、distributed tracing、error-reporting SDK、health endpoint、audit log、dashboard 或 alerting 配置证据。
+仓库没有 metrics、distributed tracing、error-reporting SDK、health endpoint、audit log 或 alerting 配置证据。
+Web Dashboard 的真实宿主证据与环境限制见活动 change 的 evidence。
 
 **性能模型。**
 
@@ -394,7 +399,7 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 | 公开入口 | `__init__.py::register(ctx)` |
 | manifest/package version | manifest 2；package 1.9.0 |
 | 维护者 | `ByteColtX`（manifest 和 pyproject author） |
-| 架构复核日期 | 2026-09-14 |
+| 架构复核日期 | 2026-09-24 |
 | 部署目标 | Hermes Gateway；具体 hosting 为 `Not evident from the repository` |
 
 | 术语 | 含义 |
@@ -407,3 +412,28 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 | ToolSpec / 贴纸语义工具 | ToolSpec 是固定名称、schema、handler 和检查函数组成的 Agent 工具；`sticker_search` 从本地库返回有界元数据，`sticker_send` 选择并发送一张图片 |
 | `transport_unknown` | 网络失败且无法确认远端副作用是否已执行 |
 | `[SPLIT]` / `[SILENT]` / standalone sender | 出站分段标记 / Hermes core 的静默控制 / 没有 live adapter 时供 cron/home channel 使用的一次性 sender |
+
+## 13. Web 管理边界
+
+dashboard/plugin_api.py 由宿主已启用用户插件的 Dashboard 扩展加载；根 register(ctx)
+仍是 QQ 平台唯一入口。普通 Gateway 不导入 FastAPI、上传解析器或创建 Web worker。
+Dashboard 不创建 Milky client，不通过普通消息、Will、SSE 自动触发维护。
+管理请求经宿主认证，再进入已确认 profile 的配置与 secret scope，所有库根均由该范围计算。
+缺少宿主能力返回 unsupported，不修补 core。实际验收状态见
+openspec/changes/add-milky-web-dashboard/evidence.md。
+
+配置管理将统一解析结果投影为显式值、有效值、来源、可写性和版本；
+逐键调用宿主持久化后读回确认，凭证另走生命周期接口。不能提供跨入口条件事务或热更新保证。
+图库管理只读打开既有库，预览复核文件后返回认证 bytes；
+共享目录锁协调命令、Web、预览和发送本地 materialization。
+视觉和 Milky 网络等待在此保护外；索引扫描与替换保持同一保护。
+
+上传管理拥有独立 web-uploads，显式候选不扫描命令 inbox。
+任务执行层拥有独立 SQLite 任务与有期限去重记录，逐项提交后保存结果。
+上传配额为每 profile 500 MiB，单批 50 个/100 MiB，单图沿用 10 MiB；过期无引用上传 7 天回收。
+每 profile 一个运行批次、最多 10 个排队，终态最多 1000 条/7 天。取消和关闭阻止后续提交，
+失去执行者的记录标 interrupted，不自动重放。同步视觉保留固定名额直到实际返回，迟到结果不能写库。
+正常路由关闭只关闭 Web 任务；adapter 断开只释放 QQ 资源。
+
+更新必须交付整个目录及预构建资源；回滚前关闭 Web 执行层并保留数据，按需手动导出 settings
+为旧环境格式，不删除凭证。主维护规范 Purpose 的同步由本 change 的 delta 承载，尚未归档同步。

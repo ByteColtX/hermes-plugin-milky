@@ -1,0 +1,126 @@
+.milky-dashboard {
+  max-width: 1200px;
+  margin: auto;
+  padding: 24px;
+  color: var(--midground, inherit);
+  font-family: inherit;
+}
+.milky-dashboard h1 {
+  font-size: 28px;
+  font-weight: 650;
+  margin: 0;
+}
+.milky-dashboard h2 {
+  font-size: 20px;
+  margin: 0 0 16px;
+}
+.milky-dashboard p {
+  line-height: 1.6;
+}
+.milky-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+.milky-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 24px 0;
+}
+.milky-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 16px;
+}
+.milky-field {
+  display: grid;
+  gap: 6px;
+  margin: 16px 0;
+}
+.milky-field input,
+.milky-field textarea,
+.milky-dashboard select {
+  width: 100%;
+  padding: 9px 12px;
+  background: var(--background);
+  color: inherit;
+  border: 1px solid var(--color-border, #9996);
+  border-radius: 8px;
+  font: inherit;
+}
+.milky-field textarea {
+  min-height: 100px;
+}
+.milky-dashboard select {
+  width: auto;
+}
+.milky-meta {
+  font-size: 12px;
+  opacity: 0.75;
+}
+.milky-error {
+  padding: 12px;
+  border: 1px solid #ef4444;
+  border-radius: 8px;
+}
+.milky-sticker {
+  border: 1px solid var(--color-border, #9996);
+  padding: 14px;
+  border-radius: 12px;
+}
+.milky-sticker img {
+  width: 100%;
+  height: 160px;
+  object-fit: contain;
+}
+.milky-sticker label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.milky-results {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 13px;
+}
+.milky-dashboard button:focus-visible,
+.milky-dashboard input:focus-visible,
+.milky-dashboard select:focus-visible,
+.milky-dashboard textarea:focus-visible {
+  outline: 2px solid var(--midground, #6366f1);
+  outline-offset: 3px;
+}
+.milky-notice {
+  padding: 12px;
+  background: var(--color-muted, #8881);
+  border-radius: 8px;
+}
+@media (max-width: 640px) {
+  .milky-dashboard {
+    padding: 14px;
+  }
+  .milky-toolbar {
+    align-items: stretch;
+  }
+  .milky-toolbar > * {
+    flex: 1;
+  }
+  .milky-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .milky-sticker {
+    padding: 8px;
+  }
+  .milky-sticker img {
+    height: 110px;
+  }
+}
+
+.milky-field input[type="checkbox"] {
+  width: auto;
+  justify-self: start;
+}

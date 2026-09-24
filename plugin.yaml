@@ -41,16 +41,16 @@ provides_tools:
   - sticker_send
   - sticker_search
 requires_env:
-  - name: MILKY_BASE_URL
-    description: "Milky HTTP(S) base URL, e.g. http://127.0.0.1:3000"
-    prompt: Milky 服务地址
-    password: false
   - name: MILKY_ACCESS_TOKEN
     description: "Milky access token"
     prompt: Milky access token
     password: true
 
 optional_env:
+  - name: MILKY_BASE_URL
+    description: "Milky HTTP(S) base URL, e.g. http://127.0.0.1:3000"
+    prompt: Milky 服务地址
+    password: false
   - name: MILKY_ALLOWED_CHATS
     description: "Optional inbound chat whitelist, e.g. group:123456789,dm:987654321; empty means allow all"
     prompt: 入站 chat 白名单
@@ -79,3 +79,36 @@ optional_env:
     description: "Enable immediate group member event notifications; default false"
     prompt: 群成员事件即时通知
     password: false
+
+config_schema:
+  base_url:
+    type: string
+    required: true
+    label: Milky 连接地址
+  access_token:
+    type: secret
+    env: MILKY_ACCESS_TOKEN
+    label: Milky access token
+  allowed_chats:
+    type: array
+    default: []
+    label: 入站白名单
+  will_policy:
+    type: object
+    default: {}
+    label: Will 策略
+  session_buffer_size:
+    type: integer
+    default: 20
+  home_channel:
+    type: string
+    default: ""
+  max_local_media_bytes:
+    type: integer
+    default: 33554432
+  long_text_forward_threshold:
+    type: integer
+    default: 0
+  group_member_event_notifications:
+    type: boolean
+    default: false

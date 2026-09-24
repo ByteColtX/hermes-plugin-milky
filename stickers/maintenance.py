@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import os
@@ -15,6 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .coordination import library_guard
 from .errors import StickerError, StickerStorageError, StickerUnsupportedError
 from .storage import PLUGIN_NAME, StickerPaths, StickerStore
 from .validation import ImageCandidate, validate_image_file, validate_library_name
@@ -279,7 +281,7 @@ def parse_visual_response(raw: object) -> dict[str, object]:
 
 
 def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
 def _json_tags(tags: object) -> str:
@@ -657,17 +659,19 @@ class StickerMaintenanceService:
         candidate: ImageCandidate,
         metadata: dict[str, object],
         duplicates: list[ImageCandidate],
+        *,
+        input_root: Path | None = None,
     ) -> dict[str, object]:
         paths = self._paths(store)
         conn = store.connection
-        with self._lock:
+        with self._lock, library_guard(paths.root):
             existing = conn.execute(
                 "SELECT sticker_id FROM sticker_items WHERE file_sha256 = ?",
                 (candidate.file_sha256,),
             ).fetchone()
             dest = paths.library_path(candidate.file_sha256, candidate.suffix)
             if existing is not None and dest.is_file():
-                self._unlink_inbox(candidate.path, paths.inbox)
+                self._unlink_inbox(candidate.path, (input_root or paths.inbox))
                 return {"status": "duplicate"}
             try:
                 dest.parent.mkdir(parents=True, exist_ok=True)
@@ -723,7 +727,7 @@ class StickerMaintenanceService:
                 raise StickerStorageError("sticker commit failed") from error
         for duplicate in duplicates:
             try:
-                self._unlink_inbox(duplicate.path, paths.inbox)
+                self._unlink_inbox(duplicate.path, (input_root or paths.inbox))
             except StickerStorageError:
                 return {"status": "storage_error"}
         return {"status": "created", "sticker_id": sticker_id}
@@ -805,6 +809,20 @@ class StickerMaintenanceService:
             "last_used_at": last_used_at,
         }
 
+    @staticmethod
+    def item_version(store: StickerStore, sticker_id: str) -> str | None:
+        """以持久化业务字段生成版本，发送统计不改变编辑版本。"""
+        conn = StickerMaintenanceService._connection(store)
+        row = conn.execute(
+            "SELECT file_sha256, detected_emotion, detected_tags_json, detected_description, "
+            "emotion, tags_json, description, emotion_source, tags_source, description_source, "
+            "updated_at, detected_at FROM sticker_items WHERE sticker_id = ?",
+            (sticker_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return hashlib.sha256(json.dumps(row, ensure_ascii=False).encode()).hexdigest()
+
     def _edit(
         self,
         store: StickerStore,
@@ -813,18 +831,19 @@ class StickerMaintenanceService:
         clears: frozenset[str],
     ) -> dict[str, object]:
         conn = self._connection(store)
-        with self._lock:
+        with self._lock, library_guard(self._paths(store).root):
             row = conn.execute(
                 "SELECT detected_emotion, detected_tags_json, detected_description, emotion_source, "
-                "tags_source, description_source FROM sticker_items WHERE sticker_id = ?",
+                "tags_source, description_source, emotion, tags_json, description "
+                "FROM sticker_items WHERE sticker_id = ?",
                 (sticker_id,),
             ).fetchone()
             if row is None:
                 return {"status": "sticker_not_found"}
             values: dict[str, object] = {
-                "emotion": sets.get("emotion", row[0]),
-                "tags_json": _json_tags(sets["tags"]) if "tags" in sets else row[1],
-                "description": sets.get("description", row[2]),
+                "emotion": sets.get("emotion", row[6]),
+                "tags_json": _json_tags(sets["tags"]) if "tags" in sets else row[7],
+                "description": sets.get("description", row[8]),
                 "emotion_source": "manual" if "emotion" in sets else row[3],
                 "tags_source": "manual" if "tags" in sets else row[4],
                 "description_source": "manual" if "description" in sets else row[5],
@@ -862,15 +881,21 @@ class StickerMaintenanceService:
                 raise StickerStorageError("edit failed") from error
         return {"status": "updated", "sticker_id": sticker_id}
 
-    async def _reanalyze(self, store: StickerStore, sticker_id: str) -> dict[str, object]:
+    async def _reanalyze(
+        self, store: StickerStore, sticker_id: str, *, guard=lambda: None, expected_version=None
+    ) -> dict[str, object]:
         conn = self._connection(store)
         paths = self._paths(store)
-        row = conn.execute(
-            "SELECT file_sha256, format, detected_emotion, detected_tags_json, detected_description, "
-            "emotion, tags_json, description, emotion_source, tags_source, description_source "
-            "FROM sticker_items WHERE sticker_id = ?",
-            (sticker_id,),
-        ).fetchone()
+        with library_guard(paths.root):
+            original_version = self.item_version(store, sticker_id)
+            if expected_version is not None and original_version != expected_version:
+                return {"status": "conflict", "sticker_id": sticker_id}
+            row = conn.execute(
+                "SELECT file_sha256, format, detected_emotion, detected_tags_json, detected_description, "
+                "emotion, tags_json, description, emotion_source, tags_source, description_source "
+                "FROM sticker_items WHERE sticker_id = ?",
+                (sticker_id,),
+            ).fetchone()
         if row is None:
             return {"status": "sticker_not_found"}
         file_sha256, image_format = row[0], row[1]
@@ -894,7 +919,10 @@ class StickerMaintenanceService:
             return {"status": "visual_unavailable"}
         if metadata["is_sticker"] is not True:
             return {"status": "not_sticker"}
-        with self._lock:
+        with self._lock, library_guard(paths.root):
+            guard()
+            if self.item_version(store, sticker_id) != original_version:
+                return {"status": "conflict", "sticker_id": sticker_id}
             try:
                 now = _utc_now()
                 detected_tags = _json_tags(metadata["tags"])
@@ -926,7 +954,7 @@ class StickerMaintenanceService:
 
     def _delete(self, store: StickerStore, sticker_id: str) -> dict[str, object]:
         conn = self._connection(store)
-        with self._lock:
+        with self._lock, library_guard(self._paths(store).root):
             row = conn.execute(
                 "SELECT file_sha256 FROM sticker_items WHERE sticker_id = ?", (sticker_id,)
             ).fetchone()
@@ -947,60 +975,66 @@ class StickerMaintenanceService:
         return {"status": "deleted", "sticker_id": sticker_id}
 
     def _cleanup(self, store: StickerStore, dry_run: bool) -> dict[str, object]:
-        paths = self._paths(store)
-        conn = self._connection(store)
-        orphan = 0
-        missing = 0
-        temporary = 0
-        skipped = 0
-        item_rows = (
-            conn.execute(
-                "SELECT i.file_sha256, f.relative_path FROM sticker_items AS i "
-                "LEFT JOIN sticker_files AS f ON f.sha256 = i.file_sha256"
+        with library_guard(self._paths(store).root):
+            paths = self._paths(store)
+            conn = self._connection(store)
+            orphan = 0
+            missing = 0
+            temporary = 0
+            skipped = 0
+            item_rows = (
+                conn.execute(
+                    "SELECT i.file_sha256, f.relative_path FROM sticker_items AS i "
+                    "LEFT JOIN sticker_files AS f ON f.sha256 = i.file_sha256"
+                )
+                if conn is not None
+                else ()
             )
-            if conn is not None
-            else ()
-        )
-        for row in item_rows:
-            path = self._safe_relative_path(paths, row[1])
-            if path is None or not path.is_file():
-                missing += 1
-        valid_refs = (
-            {
-                row[0]
-                for row in conn.execute("SELECT file_sha256 FROM sticker_items")
-                if isinstance(row[0], str)
+            for row in item_rows:
+                path = self._safe_relative_path(paths, row[1])
+                if path is None or not path.is_file():
+                    missing += 1
+            valid_refs = (
+                {
+                    row[0]
+                    for row in conn.execute("SELECT file_sha256 FROM sticker_items")
+                    if isinstance(row[0], str)
+                }
+                if conn is not None
+                else set()
+            )
+            for path in sorted(paths.library.rglob("*"), key=lambda item: item.as_posix()):
+                if path.is_dir() or path.is_symlink():
+                    continue
+                if path.name.endswith((".tmp", ".part", ".staging")):
+                    temporary += 1
+                    if not dry_run:
+                        self._safe_unlink(path, paths.library)
+                    continue
+                parsed = validate_library_name(path, paths.library)
+                if parsed is None:
+                    skipped += 1
+                    continue
+                file_sha256, _image_format = parsed
+                if file_sha256 not in valid_refs:
+                    orphan += 1
+                    if not dry_run:
+                        self._safe_unlink(path, paths.library)
+            return {
+                "status": "ok",
+                "orphan": orphan,
+                "missing_file": missing,
+                "temporary": temporary,
+                "reindex_skipped": skipped,
+                "dry_run": dry_run,
             }
-            if conn is not None
-            else set()
-        )
-        for path in sorted(paths.library.rglob("*"), key=lambda item: item.as_posix()):
-            if path.is_dir() or path.is_symlink():
-                continue
-            if path.name.endswith((".tmp", ".part", ".staging")):
-                temporary += 1
-                if not dry_run:
-                    self._safe_unlink(path, paths.library)
-                continue
-            parsed = validate_library_name(path, paths.library)
-            if parsed is None:
-                skipped += 1
-                continue
-            file_sha256, _image_format = parsed
-            if file_sha256 not in valid_refs:
-                orphan += 1
-                if not dry_run:
-                    self._safe_unlink(path, paths.library)
-        return {
-            "status": "ok",
-            "orphan": orphan,
-            "missing_file": missing,
-            "temporary": temporary,
-            "reindex_skipped": skipped,
-            "dry_run": dry_run,
-        }
 
     def _reindex(self, store: StickerStore) -> dict[str, object]:
+        with self._lock, library_guard(self._paths(store).root):
+            return self._reindex_locked(store)
+
+    def _reindex_locked(self, store: StickerStore) -> dict[str, object]:
+        """在共享保护内扫描和替换索引，避免覆盖并发提交。"""
         paths = self._paths(store)
         conn = self._connection(store)
         records: list[tuple[str, str, str, int, str]] = []
@@ -1030,7 +1064,7 @@ class StickerMaintenanceService:
                     _utc_now(),
                 )
             )
-        with self._lock:
+        with self._lock, library_guard(paths.root):
             try:
                 conn.execute("BEGIN")
                 conn.execute("DELETE FROM sticker_files")
