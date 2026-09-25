@@ -37,6 +37,22 @@ willingness MUST 按 hot/warm 窗口权重计算 weighted silence，并在阈值
 - **WHEN** score 高于正的 probability threshold 且静默时间跨过到达阈值所需时间
 - **THEN** 系统 SHALL 先按阈值计算前半段衰减，再按完整 half-life 计算剩余部分
 
+### Requirement: 兴趣和强制关键词使用相同的匹配边界
+
+关键词匹配 MUST 只使用当前消息顶层 text 与 markdown 的内容，连续文本片段 SHALL 按顺序拼接；任意非文本片段 MUST 隔断匹配，不得跨越该片段拼造关键词。结构化 mention 的名称、回退 QQ 号、mention_all 的展示文字、其他结构化展示与引用嵌套内容 MUST NOT 参与关键词匹配。用户手动输入普通文本形式的 @名称 SHALL 仍按文本匹配。展示正文和独立提及信号 MUST 保持原语义。
+
+#### Scenario: 结构化提及文字不产生关键词命中
+
+- **WHEN** 关键词仅出现在结构化提及的名称、QQ 号或全体提及展示文字中
+- **THEN** 该内容 SHALL 不命中任何关键词规则
+- **AND** 普通文本和 Markdown 内的相同关键词 SHALL 仍可命中
+
+#### Scenario: 非文本片段隔断关键词
+
+- **WHEN** 当前消息为文本“提”、结构化提及、文本“醒”，关键词为“提醒”
+- **THEN** 系统 SHALL 不因拼接两侧文本命中“提醒”
+- **AND** 相邻 text 与 markdown 片段组成的“提醒” SHALL 正常命中
+
 ### Requirement: 消息增益和概率遵循本项目定义的参考语义
 
 每次普通消息 SHALL 按 text、mention、quote、image、direct 的属性增益、
@@ -46,7 +62,7 @@ willingness MUST 按 hot/warm 窗口权重计算 weighted silence，并在阈值
 不得单独产生 `quoteGain`。`forceKeywords` SHALL NOT 作为增益关键词，也 SHALL NOT 改变
 score 计算本身。概率 SHALL 在阈值以下为 0，以上按 amplifier 计算并 clamp 到 0..1。
 
-关键词匹配 MUST 只使用当前消息顶层 text 与 markdown 的内容，连续文本片段 SHALL 按顺序拼接；任意非文本片段 MUST 隔断匹配，不得跨越该片段拼造关键词。结构化 mention 的名称、回退 QQ 号、mention_all 的展示文字、其他结构化展示与引用嵌套内容 MUST NOT 参与关键词匹配。用户手动输入普通文本形式的 @名称 SHALL 仍按文本匹配。展示正文和独立提及信号 MUST 保持原语义。
+关键词输入 SHALL 遵守本规范“兴趣和强制关键词使用相同的匹配边界”。
 
 #### Scenario: Bot direct mention gain
 
@@ -93,18 +109,6 @@ score 计算本身。概率 SHALL 在阈值以下为 0，以上按 amplifier 计
 - **WHEN** amplifier 计算出的概率小于 0 或大于 1
 - **THEN** 对外抽样概率 SHALL 分别 clamp 为 0 或 1
 
-#### Scenario: 结构化提及文字不产生关键词命中
-
-- **WHEN** 关键词仅出现在结构化提及的名称、QQ 号或全体提及展示文字中
-- **THEN** 该内容 SHALL 不命中任何关键词规则
-- **AND** 普通文本和 Markdown 内的相同关键词 SHALL 仍可命中
-
-#### Scenario: 非文本片段隔断关键词
-
-- **WHEN** 当前消息为文本“提”、结构化提及、文本“醒”，关键词为“提醒”
-- **THEN** 系统 SHALL 不因拼接两侧文本命中“提醒”
-- **AND** 相邻 text 与 markdown 片段组成的“提醒” SHALL 正常命中
-
 #### Scenario: 提及名称不提高兴趣增益
 
 - **WHEN** 仅提及名称含兴趣关键词，且普通文本没有兴趣关键词
@@ -123,7 +127,7 @@ segment 明确指向当前 Bot 时命中。任一 force 条件满足即 trigger�
 `trigger` 的普通消息，系统 SHALL 在该次 trigger 决策完成后立即扣除一次 `replyCost`，
 不等待资源解析、Hermes `handle_message()` 或最终 QQ 发送；该扣分不因后续处理失败回滚。
 
-关键词匹配 MUST 只使用当前消息顶层 text 与 markdown 的内容，连续文本片段 SHALL 按顺序拼接；任意非文本片段 MUST 隔断匹配，不得跨越该片段拼造关键词。结构化 mention 的名称、回退 QQ 号、mention_all 的展示文字、其他结构化展示与引用嵌套内容 MUST NOT 参与关键词匹配。用户手动输入普通文本形式的 @名称 SHALL 仍按文本匹配。展示正文和独立提及信号 MUST 保持原语义。
+关键词输入 SHALL 遵守本规范“兴趣和强制关键词使用相同的匹配边界”。
 
 #### Scenario: direct force
 
@@ -192,18 +196,6 @@ segment 明确指向当前 Bot 时命中。任一 force 条件满足即 trigger�
 - **WHEN** 消息通过 Gate、Will 返回 trigger，且后续资源解析、映射或 Hermes 交接失败
 - **THEN** 系统 SHALL 保留该次已经执行的 reply cost 扣除
 - **AND** SHALL NOT 因失败恢复该次扣分
-
-#### Scenario: 结构化提及文字不产生关键词命中
-
-- **WHEN** 关键词仅出现在结构化提及的名称、QQ 号或全体提及展示文字中
-- **THEN** 该内容 SHALL 不命中任何关键词规则
-- **AND** 普通文本和 Markdown 内的相同关键词 SHALL 仍可命中
-
-#### Scenario: 非文本片段隔断关键词
-
-- **WHEN** 当前消息为文本“提”、结构化提及、文本“醒”，关键词为“提醒”
-- **THEN** 系统 SHALL 不因拼接两侧文本命中“提醒”
-- **AND** 相邻 text 与 markdown 片段组成的“提醒” SHALL 正常命中
 
 ### Requirement: poke 增益不混入普通消息属性
 

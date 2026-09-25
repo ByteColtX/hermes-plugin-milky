@@ -291,11 +291,21 @@ Tool 可以被 Agent 在不同调用中重复调用，不得设置 Agent turn �
 
 ### Requirement: 发送统计和会话历史必须与发送边界一致
 
-当有效贴纸已完成本地校验并进入发送 Action 边界时，系统 MUST 对现有 `sticker_items` 的
-`use_count` 和 `last_used_at` 执行一次原子更新，并记录当前 chat key 下的贴纸使用时间，供
-后续近似候选软轮换使用。统计更新 MUST 不等待 Milky 成功响应；Milky 成功、失败或未知均不
-回滚已经接受的统计。统计写入失败时 MUST 不重发已经接受的消息；同一次 Tool 调用 MUST
-不得重复计数。不同 Tool 调用之间不受调用次数限制，并分别产生自己的统计记录。
+当有效贴纸已完成目标、条目和文件校验及本地 materialization 后，系统 MUST 在调用 Milky 之前原子提交一次统计 claim：将现有 sticker_items.use_count 增加 1、将 last_used_at 更新为当前 UTC 时间，并记录当前 chat key 下的贴纸使用时间供近似候选软轮换使用。claim 无法持久化 MUST 返回 storage_error 且不得调用 Milky。
+
+统计表示已接受的发送尝试，不证明 QQ 用户已看到消息。claim 提交后，Milky 成功、失败或未知均不得回滚统计；同一次 Tool 调用 MUST 不重复计数或自动重发，不得为补写统计而发送。新的显式 Tool 调用 SHALL 独立执行一次校验、claim 和发送。
+
+#### Scenario: 本地校验失败不计数
+
+- **WHEN** sticker_send 的目标、条目或文件校验失败，尚未提交统计 claim
+- **THEN** 系统 SHALL 不修改 use_count、last_used_at 或会话使用历史
+- **AND** SHALL 不调用 Milky
+
+#### Scenario: 发送前原子更新使用统计
+
+- **WHEN** 有效贴纸完成本地校验并准备调用 Milky
+- **THEN** 系统 SHALL 先原子增加一次 use_count 并记录当前 UTC 的 last_used_at 和当前 chat 使用历史
+- **AND** 只有 claim 成功后才 SHALL 发起一次 Milky 调用
 
 #### Scenario: Action 成功、失败或未知均计数
 

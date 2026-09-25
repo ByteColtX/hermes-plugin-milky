@@ -9,8 +9,8 @@
 
 ### Requirement: Milky platform hint 只保留平台首句
 
-Milky 注册到 Hermes 的 `platform_hint` MUST 只包含原提示的首句
-`You are chatting on QQ through Hermes's Milky platform.`；原提示其余文案 MUST NOT 继续出现在
+Milky 注册到 Hermes 的 `platform_hint` MUST 只包含固定平台首句
+`You are chatting on QQ through Hermes's Milky platform.`；其他操作指引 MUST NOT 出现在
 `platform_hint` 中。
 
 #### Scenario: 注册后检查静态 platform hint

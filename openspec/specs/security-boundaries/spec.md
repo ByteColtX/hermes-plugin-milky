@@ -47,12 +47,10 @@
 ### Requirement: 业务日志和 Tool 调用日志保留原始业务值
 
 运行时日志 MUST NOT 对必要的业务关联 ID、chat key、message ID 或结果分类执行会破坏关联的
-掩码、改名或字段删除；这些值只在确实有助于运维关联时记录。已注册 Tool 的日志 SHALL 只
+掩码、改名或字段删除；这些值只在确实有助于运维关联时记录。下列调用日志规则适用于固定目录中的 Milky Action Tool；语义贴纸工具遵循各自规范及上述日志最小化边界。Action Tool 的日志 SHALL 只
 包含 Tool 名称、Action、结果分类、已知 HTTP 状态码、耗时和必要的低敏关联 ID，不得包含
 Tool 原始入参或为生成日志而复制的业务对象。Tool 的日志分类 SHALL 只反映是否取得远端响应体
-以及本地失败类型，不得反映远端成功、拒绝或响应形状。只要远端响应体已经取得，Tool 调用方
-SHALL 收到该响应体的原始内容；插件 MUST NOT 因日志、安全判断或结果分类过滤、遍历、冻结、
-重建、摘要或改写该响应体。该边界 MUST 排除 token、Authorization header、原始响应 body、
+以及本地失败类型，不得反映远端成功、拒绝或响应形状。Tool 结果 SHALL 遵守下文“QQ Tool 远端响应原样交付”，日志生成不得改变交付内容。该边界 MUST 排除 token、Authorization header、原始响应 body、
 下载 URL、头像或其他媒体 URL、本地路径、文件内容以及自由文本理由出现在日志中。
 
 #### Scenario: 记录业务关联信息
@@ -97,7 +95,9 @@ SHALL 收到该响应体的原始内容；插件 MUST NOT 因日志、安全判�
 
 ### Requirement: QQ Tool 远端响应原样交付
 
-全部已注册 Tool，包括名片赞、好友和群戳一戳、群消息撤回、群信息、群成员列表、群成员信息、
+本条仅适用于 [qq-action-tools](../qq-action-tools/spec.md) 固定目录中的 Milky Action ToolSpec。sticker_search 与 sticker_send 的结构化结果由各自语义工具规范定义。
+
+固定 Milky Action ToolSpec，包括名片赞、好友和群戳一戳、群消息撤回、群信息、群成员列表、群成员信息、
 成员禁言、全员禁言、合并转发、私聊和群文件下载链接、群文件列表、好友请求查询与处理、好友信息、
 删除好友、踢出成员、退群、群请求与群邀请处理和专属头衔，只要取得远端响应体，就 MUST 把该
 响应体原样交给 Hermes core 作为 Tool 结果。该规则适用于成功 envelope、协议拒绝、非 2xx HTTP
@@ -114,7 +114,7 @@ MUST NOT 尝试规避或还原这些变换，也 MUST NOT 宣称最终进入模�
 
 #### Scenario: Tool 返回任意可获得的远端响应
 
-- **WHEN** 任一已注册 Tool 的远端 Action 返回任意 HTTP 状态和响应体
+- **WHEN** 任一已注册 Action Tool 的远端 Action 返回任意 HTTP 状态和响应体
 - **THEN** Tool 调用方 SHALL 收到内容不变的远端响应体
 - **AND** 结果中的数组、显式 `null`、未知字段以及 `access_token`、`authorization`、`cookie`、`password`、`token` 等敏感键 SHALL 保持可用，不被剔除、掩码或改名
 - **AND** 结果 SHALL 不包含插件附加的状态码、分类或包装字段

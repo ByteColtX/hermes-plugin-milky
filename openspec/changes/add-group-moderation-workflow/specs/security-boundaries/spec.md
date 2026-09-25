@@ -4,7 +4,9 @@
 
 ### Requirement: QQ Tool 远端响应原样交付
 
-全部已注册 Tool，包括名片赞、好友和群戳一戳、群消息撤回、群信息、群成员列表、群成员信息、
+本条仅适用于 qq-action-tools（主规范 `openspec/specs/qq-action-tools/spec.md`） 固定目录中的 Milky Action ToolSpec。sticker_search 与 sticker_send 的结构化结果由各自语义工具规范定义。
+
+固定 Milky Action ToolSpec，包括名片赞、好友和群戳一戳、群消息撤回、群信息、群成员列表、群成员信息、
 成员禁言、全员禁言、合并转发、私聊和群文件下载链接、群文件列表、好友请求查询与处理、好友信息、
 删除好友、踢出成员、退群、群请求与群邀请处理和专属头衔，只要取得远端响应体，就 MUST 把该
 响应体原样交给 Hermes core 作为 Tool 结果。该规则适用于成功 envelope、协议拒绝、非 2xx HTTP
@@ -19,9 +21,11 @@ Hermes core 在插件交付之后对 Tool 结果执行的变换（`transform_too
 字段截断、超长结果落盘替换为预览）不在本契约范围内；插件 MUST NOT 注册 `transform_tool_result`，
 MUST NOT 尝试规避或还原这些变换，也 MUST NOT 宣称最终进入模型上下文的内容与远端响应一致。
 
+recall_group_message、set_group_member_mute 和 kick_group_member MUST 在网络处置前共用群管案件授权、真实目标、角色、时效和动作防重检查。缺少可信案件关联、权限或参数不符返回 blocked；可信合法方案等待 Web 批准返回 pending_review 和不透明案件标识。此例外只扩展无处置响应时的本地分类，不改变实际远端响应原样交付，也不得为了案件日志解析不透明 Tool 响应。
+
 #### Scenario: Tool 返回任意可获得的远端响应
 
-- **WHEN** 任一已注册 Tool 的远端 Action 返回任意 HTTP 状态和响应体
+- **WHEN** 任一已注册 Action Tool 的远端 Action 返回任意 HTTP 状态和响应体
 - **THEN** Tool 调用方 SHALL 收到内容不变的远端响应体
 - **AND** 结果中的数组、显式 `null`、未知字段以及 `access_token`、`authorization`、`cookie`、`password`、`token` 等敏感键 SHALL 保持可用，不被剔除、掩码或改名
 - **AND** 结果 SHALL 不包含插件附加的状态码、分类或包装字段
@@ -57,8 +61,6 @@ MUST NOT 尝试规避或还原这些变换，也 MUST NOT 宣称最终进入模�
 - **WHEN** Hermes core 或其他插件通过 `transform_tool_result`、`error` 字段截断或结果落盘改写插件已交付的 Tool 结果
 - **THEN** 插件交付给 core 的值 SHALL 仍与远端响应体内容一致
 - **AND** 插件 SHALL 不注册 `transform_tool_result`，也不尝试还原被 core 改写的结果
-
-recall_group_message、set_group_member_mute 和 kick_group_member MUST 在网络处置前共用群管案件授权、真实目标、角色、时效和动作防重检查。缺少可信案件关联、权限或参数不符返回 blocked；可信合法方案等待 Web 批准返回 pending_review 和不透明案件标识。此例外只扩展无处置响应时的本地分类，不改变实际远端响应原样交付，也不得为了案件日志解析不透明 Tool 响应。
 
 #### Scenario: 群管工具未获准
 

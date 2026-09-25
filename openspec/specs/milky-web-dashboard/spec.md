@@ -64,7 +64,7 @@
 
 - **WHEN** 操作者在配置页修改白名单并保存
 - **THEN** 页面 SHALL 按既有契约显示待重新加载
-- **AND** SHALL 不声称本 change 提供跨进程实时推送
+- **AND** SHALL 不声称Dashboard 提供跨进程实时推送
 
 ### Requirement: 图库浏览和预览为有界只读操作
 

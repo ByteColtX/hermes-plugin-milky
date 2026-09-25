@@ -84,16 +84,8 @@ SHALL 禁用历史缓冲。
 插件 manifest MUST 声明普通配置 schema 和绑定 MILKY_ACCESS_TOKEN 的 secret。连接地址 SHALL 为必需的有效配置，但不得要求它只能来自环境变量；凭证 SHALL 继续使用宿主凭证机制。兼容环境来源 SHALL 包括 `MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN` 和可选的
 `MILKY_ALLOWED_CHATS`、`MILKY_WILL_POLICY`、`MILKY_SESSION_BUFFER_SIZE`、`MILKY_HOME_CHANNEL`、
 `MILKY_MAX_LOCAL_MEDIA_BYTES`、`MILKY_LONG_TEXT_FORWARD_THRESHOLD` 和
-`MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS`，并保留当前固定的 25 个显式 Milky Action ToolSpec：
-`send_profile_like`、`send_friend_nudge`、`send_group_nudge`、`recall_group_message`、
-`get_group_info`、`get_group_member_list`、`get_group_member_info`、`set_group_member_mute`、
-`set_group_whole_mute`、`get_forwarded_messages`、`get_private_file_download_url`、
-`kick_group_member`、`quit_group`、`delete_friend`、`get_friend_requests`、
-`accept_friend_request`、`reject_friend_request`、`get_group_file_download_url`、
-`accept_group_request`、`reject_group_request`、`accept_group_invitation`、
-`reject_group_invitation`、`get_group_files`、`get_friend_info` 和
-`set_group_member_special_title`；manifest MUST NOT 声明任意未纳入显式 ToolSpec 的
-Action 工具。另 SHALL 保留现有 sticker_send 与 sticker_search 的独立工具声明及各自可用性契约，本变更不新增通用 Action 或发送入口。
+`MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS`，并声明 [qq-action-tools](../qq-action-tools/spec.md)“固定 Action ToolSpec 目录”中的全部工具。
+manifest MUST NOT 声明该目录之外的 Milky Action 工具。另 SHALL 保留现有 sticker_send 与 sticker_search 的独立工具声明及各自可用性契约，不得据此开放通用 Action 或额外发送入口。
 
 #### Scenario: 查看插件配置提示
 
@@ -157,6 +149,24 @@ Action 工具。另 SHALL 保留现有 sticker_send 与 sticker_search 的独立
 - **THEN** 除已经通过白名单管理指令核验并发布的入站白名单外，该实例的普通 adapter、独立 sender 和 home-channel 元数据 SHALL 保持已解析快照
 - **AND** 其他新设置及单独通过 Web 保存的白名单 SHALL 在新的启动或宿主明确重新加载该配置后才适用
 
+### Requirement: Home channel 配置只接受完整出站目标
+
+`MILKY_HOME_CHANNEL` SHALL 只接受完整的 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>`；未配置或空设置表示禁用。
+该值 SHALL 仅提供 Hermes 系统/cron 出站目标，不改变入站白名单。目标解析和投递行为由
+[home-channel-delivery](../home-channel-delivery/spec.md) 定义；非法非空值 MUST 使启动失败。
+
+#### Scenario: 合法 home channel
+
+- **WHEN** `MILKY_HOME_CHANNEL` 为 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>`
+- **THEN** 配置 SHALL 保留该完整 chat key 供 Hermes 系统/cron 投递使用
+- **AND** 该配置 SHALL 不改变 `MILKY_ALLOWED_CHATS` 的入站 Gate 语义
+
+#### Scenario: 非法 home channel
+
+- **WHEN** 非空的 `MILKY_HOME_CHANNEL` 不是完整的 `group:` 或 `dm:` chat key，或其中的 ID 为空、为负数、含额外分隔符
+- **THEN** 启动 SHALL 失败并指出安全的配置错误类别
+- **AND** SHALL 不建立 home channel 或发起网络请求
+
 ### Requirement: 超长文本合并转发阈值配置可验证
 
 启动配置 MUST 解析可选的 `MILKY_LONG_TEXT_FORWARD_THRESHOLD`。未配置时值 MUST 为 `0`；值 MUST 是十进制整数且范围为 `0` 至 `4096`（含边界）。值为 `0` 时 MUST 禁用超长文本合并转发；正值 MUST 表示当一次出站文本的可见规范化长度超过该阈值时选择合并转发。配置 MUST 在启动时一次性解析并保存在运行时配置中，且 MUST 出现在配置文档和不含凭证的配置摘要中。
@@ -191,18 +201,6 @@ Action 工具。另 SHALL 保留现有 sticker_send 与 sticker_search 的独立
 - **THEN** 启动 SHALL 返回配置错误
 - **AND** SHALL 不建立 Milky 网络连接、不读取本地媒体且不创建出站目标
 
-#### Scenario: 合法 home channel
-
-- **WHEN** `MILKY_HOME_CHANNEL` 为 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>`
-- **THEN** 配置 SHALL 保留该完整 chat key 供 Hermes 系统/cron 投递使用
-- **AND** 该配置 SHALL 不改变 `MILKY_ALLOWED_CHATS` 的入站 Gate 语义
-
-#### Scenario: 非法 home channel
-
-- **WHEN** `MILKY_HOME_CHANNEL` 不是完整的 `group:` 或 `dm:` chat key，或 ID 为空、为负数、含额外分隔符
-- **THEN** 启动 SHALL 失败并指出安全的配置错误类别
-- **AND** SHALL 不建立 home channel 或发起网络请求
-
 ### Requirement: MILKY_ALLOWED_CHATS 支持命名空间通配符
 
 适配器启动时 SHALL 接受 `MILKY_ALLOWED_CHATS` 中的完整 `group:<十进制群号>`、
@@ -231,9 +229,7 @@ chat；通配符 SHALL 只在完整条目中出现。除上述格式外的通配
 - **THEN** 启动 SHALL 失败并指出 `MILKY_ALLOWED_CHATS` 的安全配置错误类别
 - **AND** SHALL 不将非法条目静默转换为具体 chat key、`dm:*` 或 `group:*`
 
-#### Scenario: 空白名单保持原有语义
-
-本场景沿用既有标识以便规范迁移；原有放行结果由本 BREAKING 变更替换为阻止。
+#### Scenario: 空白名单阻止全部普通入站
 
 - **WHEN** `MILKY_ALLOWED_CHATS` 未配置或为空字符串
 - **THEN** 配置 SHALL 产生空白名单

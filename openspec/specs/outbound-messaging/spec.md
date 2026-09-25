@@ -53,6 +53,45 @@ MUST 按 Milky segment schema 生成；图片、语音和视频等媒体 MUST �
 - **THEN** 发送 SHALL 返回本地输入错误
 - **AND** SHALL 不访问网络
 
+#### Scenario: CQ-compatible 控制码
+
+- **WHEN** Hermes 提供含有可确认转换的 at、reply 或仅用于 sticker 的 image CQ-compatible 控制码的文本
+- **THEN** 请求 body SHALL 包含对应的 Milky mention、reply 或 image segment
+- **AND** CQ-compatible 控制码本身 SHALL 不作为普通文本发送
+
+#### Scenario: CQ sticker 本地 URI
+
+- **WHEN** Hermes 提供仅用于 sticker 的 `[CQ:image,file=file:///...,type=sticker]` 控制码
+- **THEN** 系统 SHALL 在调用消息 Action 前将该本地常规文件只读取一次并转换为 `base64://`
+- **AND** 请求 SHALL 包含 `image` segment 及 `sub_type=sticker`，不得包含原始 `file://` URI
+- **AND** 本地文件不存在、不可读、为空或超过启动配置的 `MILKY_MAX_LOCAL_MEDIA_BYTES` 时 SHALL
+  在网络访问前返回 `invalid_input`
+- **AND** SHALL 不发送原始 CQ 文本或其他用户可见 fallback
+
+#### Scenario: 普通图片使用 MEDIA 入口
+
+- **WHEN** Hermes 需要发送普通图片
+- **THEN** Agent SHALL 使用 `MEDIA:<local_path>` 入口
+- **AND** Agent SHALL NOT 使用 CQ image 语法代替普通图片发送
+
+#### Scenario: 全部文档 CQ 类型进入解析路径
+
+- **WHEN** Hermes 提供 NapCat 文档列出的任一 CQ 类型
+- **THEN** 系统 SHALL 识别该 CQ 类型并尝试形成 Milky outgoing segment
+- **AND** 系统 SHALL 保留该 CQ 类型在消息中的原始顺序
+
+#### Scenario: CQ 类型转换失败
+
+- **WHEN** 已识别的 CQ 类型没有确认的 Milky 映射或转换过程失败
+- **THEN** 系统 SHALL 使用完整原始 CQ 字符串生成 text segment
+- **AND** SHALL 不静默丢弃该 CQ 内容或调用未确认的 Action
+
+#### Scenario: 图片、语音或视频消息
+
+- **WHEN** Hermes 向合法的 group 或 dm 目标投递图片、语音或视频
+- **THEN** 请求 SHALL 使用对应的 Milky `image`、`record` 或 `video` segment
+- **AND** 媒体投递 SHALL 不降级为包含本地路径的普通文本
+
 ### Requirement: 超长文本和 native media 使用单一 forward segment
 
 当 `MILKY_LONG_TEXT_FORWARD_THRESHOLD` 为正值且一次出站文本的可见规范化长度超过阈值时，系统 MUST 将本次批次原本会产生的所有非空文本发送单元，以及同一批次中的 native `image`、`record`、`video` 等 Milky `OutgoingSegment`，按原顺序放入同一个 `forward` segment 的 `messages` 数组。每个节点 MUST 包含安全的 `user_id`、`sender_name` 和 `segments`；节点身份优先使用已确认的 Bot 身份，身份缺失、读取失败或昵称不安全时 MUST 使用固定 fallback `user_id=10001`、`sender_name=QQ用户`。该路径 MUST 不受普通文本最多三条顶层消息预检限制。系统 MUST 在首个消息 Action 前完成所有 forward 节点、嵌套 segment、身份字段和本地限制的预检，并 MUST 只调用一次对应的 `send_group_message` 或 `send_private_message`。
@@ -146,58 +185,16 @@ MUST 按 Milky segment schema 生成；图片、语音和视频等媒体 MUST �
 - **THEN** 插件 SHALL 不猜测两次调用属于同一 forward 批次
 - **AND** SHALL 将缺少有序批次契约记录为前置能力边界，不通过延迟或重复发送伪造同一 forward
 
-#### Scenario: CQ-compatible 控制码
-
-- **WHEN** Hermes 提供含有可确认转换的 at、reply 或仅用于 sticker 的 image CQ-compatible 控制码的文本
-- **THEN** 请求 body SHALL 包含对应的 Milky mention、reply 或 image segment
-- **AND** CQ-compatible 控制码本身 SHALL 不作为普通文本发送
-
-#### Scenario: CQ sticker 本地 URI
-
-- **WHEN** Hermes 提供仅用于 sticker 的 `[CQ:image,file=file:///...,type=sticker]` 控制码
-- **THEN** 系统 SHALL 在调用消息 Action 前将该本地常规文件只读取一次并转换为 `base64://`
-- **AND** 请求 SHALL 包含 `image` segment 及 `sub_type=sticker`，不得包含原始 `file://` URI
-- **AND** 本地文件不存在、不可读、为空或超过启动配置的 `MILKY_MAX_LOCAL_MEDIA_BYTES` 时 SHALL
-  在网络访问前返回 `invalid_input`
-- **AND** SHALL 不发送原始 CQ 文本或其他用户可见 fallback
-
-#### Scenario: 普通图片使用 MEDIA 入口
-
-- **WHEN** Hermes 需要发送普通图片
-- **THEN** Agent SHALL 使用 `MEDIA:<local_path>` 入口
-- **AND** Agent SHALL NOT 使用 CQ image 语法代替普通图片发送
-
-#### Scenario: 全部文档 CQ 类型进入解析路径
-
-- **WHEN** Hermes 提供 NapCat 文档列出的任一 CQ 类型
-- **THEN** 系统 SHALL 识别该 CQ 类型并尝试形成 Milky outgoing segment
-- **AND** 系统 SHALL 保留该 CQ 类型在消息中的原始顺序
-
-#### Scenario: CQ 类型转换失败
-
-- **WHEN** 已识别的 CQ 类型没有确认的 Milky 映射或转换过程失败
-- **THEN** 系统 SHALL 使用完整原始 CQ 字符串生成 text segment
-- **AND** SHALL 不静默丢弃该 CQ 内容或调用未确认的 Action
-
-#### Scenario: 图片、语音或视频消息
-
-- **WHEN** Hermes 向合法的 group 或 dm 目标投递图片、语音或视频
-- **THEN** 请求 SHALL 使用对应的 Milky `image`、`record` 或 `video` segment
-- **AND** 媒体投递 SHALL 不降级为包含本地路径的普通文本
-
 ### Requirement: 超长文本按明确边界拆分
 
-超过 Milky 或 LLBot 限制的文本 MUST 按明确且可诊断的边界拆分为多个发送单元，每个单元的结果 SHALL 可独立观察。包含有效 [SPLIT] 标记的回复 MUST 先按独立行或普通正文行中的未转义标记形成最多三个逻辑文本单元，并将独立行标记相邻、只含空白字符的行作为分隔边界移除；行中标记只删除自身，不得 trim 两侧普通空白。语法完整的 CQ-compatible 或 unknown type CQ 候选中的标记 MUST 不参与分段；malformed 或未闭合 CQ-like 内容中的标记按普通文本规则参与分段。空逻辑单元不得发送，超过三个逻辑单元时尾部内容 MUST 合并到第三个单元。若长度拆分使实际文本消息数超过三条，系统 MUST 在网络访问前整体拒绝该分段回复，不得截断或部分发送。未包含有效 [SPLIT] 的普通长文本继续遵守既有长度拆分，不受三条分段上限影响；[[SPLIT]] 只表示可见字面量 [SPLIT]，不启用分段。
+普通长文本 MUST 按 Milky/LLBot 长度边界拆分，不截断内容，每个发送单元的结果与失败位置 SHALL 可独立观察。
+包含有效 [SPLIT] 时 MUST 遵守 [outbound-message-splitting](../outbound-message-splitting/spec.md)
+的标记、转义、CQ 候选保护、空白保留、尾部合并及三条预检契约；未包含有效标记的普通长文本不受三条上限影响。
+自动合并转发的选择 SHALL 先于普通分块与三条预检。
 
 #### Scenario: 超长普通文本
 
 - **WHEN** 未包含有效 [SPLIT] 的文本超过配置或协议允许的长度
-- **THEN** 系统 SHALL 按边界拆分而不是截断内容
-- **AND** SHALL 依次处理每个发送单元并保留失败位置
-
-#### Scenario: 超长文本
-
-- **WHEN** 文本超过配置或协议允许的长度
 - **THEN** 系统 SHALL 按边界拆分而不是截断内容
 - **AND** SHALL 依次处理每个发送单元并保留失败位置
 
@@ -295,7 +292,7 @@ send message segments，也不得假设远端能访问本地路径。对当前 H
 时 SHALL 将同一序号映射为宿主 `SendResult.message_id`，不得把 Hermes 字段名反向扩散为
 Milky/插件侧协议字段名。成功文件上传 MUST 使用
 远端确认的 `file_id` 作为附件结果标识；协议拒绝、传输未知、malformed 和 unsupported
-MUST 分别报告，未实现的编辑、撤回、reaction 等能力 MUST 返回 `unsupported`。
+MUST 分别报告。Hermes adapter 尚未实现的编辑、撤回、reaction 接口 MUST 返回 unsupported；此限制不否定显式 QQ ToolSpec 的 recall_group_message 能力。
 
 #### Scenario: 发送成功
 
@@ -312,7 +309,7 @@ MUST 分别报告，未实现的编辑、撤回、reaction 等能力 MUST 返回
 
 #### Scenario: 未实现 Action
 
-- **WHEN** 请求编辑、撤回、reaction 或其他未实现能力
+- **WHEN** 通过 Hermes adapter 请求编辑、撤回、reaction 或其他未实现接口
 - **THEN** SendResult SHALL 为 `unsupported`
 - **AND** SHALL 不根据 Action 名称猜测成功
 
@@ -343,8 +340,8 @@ MUST 分别报告，未实现的编辑、撤回、reaction 等能力 MUST 返回
 ### Requirement: Agent 选择是否引用或提及
 
 对于 Hermes 为普通 Agent 回复提供的隐式当前消息 reply anchor，出站边界 MUST 默认忽略该
-anchor；只有消息正文中显式的合法 CQ-compatible 控制码或未来明确的结构化输入，才可以产生
-mention 或 reply segment。没有显式控制码时，系统 MUST NOT 自动引用当前入站消息。
+anchor；消息正文中显式的合法 CQ-compatible 控制码或显式提供且通过校验的结构化 mention/reply segment
+才可以产生对应消息控制。普通文本回复没有显式控制码时，系统 MUST NOT 自动引用当前入站消息。
 
 #### Scenario: 没有控制码的普通回复
 
@@ -429,13 +426,10 @@ URI；对合法 `http(s)://`
 MUST 使用对应目标的独立 file upload。系统 MUST 不依赖 Hermes outbound materialization
 seam，不把媒体降级成路径文本，也不使用 Hermes 基类的纯文本 fallback。
 
-Agent-facing Milky guidance MUST identify the `MEDIA:<local_path>` directive as the native
-local-attachment entry point for images, audio, video and documents. In a normal reply, the
-directive MUST be placed in the final response; when the Agent explicitly calls Hermes
-`send_message`, the directive MUST be placed in its `message` argument. The guidance MUST
-distinguish this entry point from the fixed QQ ToolSpec list and MUST NOT instruct the Agent to use
-plain text when an attachment was requested. The Agent MUST report missing media capability only
-after the send entry point returns a failure.
+面向 Agent 的 Milky 指引 MUST 将 MEDIA:<local_path> 标明为图片、语音、视频和文档的本地附件入口。
+普通回复中的指令 MUST 位于最终回复；显式调用 Hermes send_message 时 MUST 位于其 message 参数。
+指引 MUST 区分此入口与固定 QQ ToolSpec 列表，不得在用户要求附件时引导为纯文本；Agent 只有在发送入口
+返回失败后，才可报告对应媒体能力不可用。
 
 #### Scenario: Agent 请求发送本地视频
 

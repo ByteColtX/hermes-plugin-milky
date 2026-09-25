@@ -1,15 +1,36 @@
 # qq-action-tools Specification
 
 ## Purpose
+
 为 Hermes Agent 提供一组固定、可审计且与 Milky v1.3.0 operationId 对齐的 QQ 查询和管理工具，覆盖转发、私聊文件、群成员及好友关系操作，并在工具边界保留明确的参数、错误和安全语义。
 
 ## Requirements
 
+### Requirement: 固定 Action ToolSpec 目录
+
+插件 MUST 注册下列 25 个 Milky Action ToolSpec，名称与 operationId 一致；不得开放任意 Action catalog。
+参数和分组行为由本规范及 [qq-group-action-tools](../qq-group-action-tools/spec.md) 定义；响应交付与日志边界由
+[security-boundaries](../security-boundaries/spec.md) 定义。sticker_search 与 sticker_send 是独立语义工具，
+不计入此 Action 目录，结果遵守各自规范。
+
+| 工具组 | operationId |
+|---|---|
+| 消息及群状态 | send_profile_like、send_friend_nudge、send_group_nudge、recall_group_message、get_group_info、get_group_member_list、get_group_member_info、set_group_member_mute、set_group_whole_mute |
+| 转发、私聊文件与好友管理 | get_forwarded_messages、get_private_file_download_url、kick_group_member、quit_group、delete_friend、get_friend_requests、accept_friend_request、reject_friend_request |
+| 群文件与请求 | get_group_file_download_url、accept_group_request、reject_group_request、accept_group_invitation、reject_group_invitation、get_group_files |
+| 好友资料与专属头衔 | get_friend_info、set_group_member_special_title |
+
+#### Scenario: Manifest 与工具注册保持同一目录
+
+- **WHEN** Hermes 发现插件的 Milky Action 工具
+- **THEN** manifest 与实际注册 SHALL 提供上述 25 个同名 operationId
+- **AND** SHALL 不把贴纸语义工具计入 Action 数量，也不发现任意未登记 Action
+
 ### Requirement: 工具发现必须使用固定的 Milky operationId 映射
 
-插件 MUST 在现有显式 Milky 工具之外注册以下 8 个异步 ToolSpec，工具名称 MUST 与对应的 Milky operationId 完全一致：`get_forwarded_messages`、`get_private_file_download_url`、`kick_group_member`、`quit_group`、`delete_friend`、`get_friend_requests`、`accept_friend_request` 和 `reject_friend_request`。每个工具 MUST 使用 `milky` 工具集并只调用名称对应的 `/api/{operationId}` Action。插件 MUST NOT 因本 change 暴露任意 Action catalog 或未列出的 Action。
+本规范的转发、私聊文件和好友管理工具组 MUST 包含以下 8 个异步 ToolSpec，工具名称 MUST 与对应的 Milky operationId 完全一致：`get_forwarded_messages`、`get_private_file_download_url`、`kick_group_member`、`quit_group`、`delete_friend`、`get_friend_requests`、`accept_friend_request` 和 `reject_friend_request`。每个工具 MUST 使用 `milky` 工具集并只调用名称对应的 `/api/{operationId}` Action。插件 MUST NOT 暴露任意 Action catalog 或未列出的 Action。
 
-#### Scenario: Hermes 发现新增工具
+#### Scenario: Hermes 发现固定工具
 
 - **WHEN** Hermes 加载插件并读取显式工具注册
 - **THEN** 工具列表 SHALL 包含这 8 个名称
@@ -24,7 +45,7 @@
 
 ### Requirement: 工具参数必须匹配 Milky v1.3.0 schema 并在网络前校验
 
-新增工具 MUST 只接受 schema 声明的参数，不得静默忽略额外字段。参数契约 MUST 为：
+本工具组 MUST 只接受 schema 声明的参数，不得静默忽略额外字段。参数契约 MUST 为：
 
 | ToolSpec | 必填参数 | 可选参数 |
 |---|---|---|
@@ -53,7 +74,7 @@
 
 #### Scenario: 非法参数不触网
 
-- **WHEN** 任一新增工具收到缺失必填字段、错误类型、越界数值、空 ID 或未声明字段
+- **WHEN** 本工具组中任一工具收到缺失必填字段、错误类型、越界数值、空 ID 或未声明字段
 - **THEN** 工具 SHALL 返回 `invalid_input`
 - **AND** SHALL NOT 调用 Milky client、发送 HTTP 请求或记录远端结果
 
@@ -125,20 +146,14 @@ MUST 只在对应 ToolSpec 被显式调用时执行。它们 MUST 分别调用�
 
 #### Scenario: 状态变更请求未取得响应体
 
-- **WHEN** 状态变更 Action 已进入 HTTP 请求边界但客户端未取得远端响应体
+- **WHEN** 状态变更 Action 已进入 HTTP 请求边界但连接中断、超时或读取失败等原因导致客户端未取得远端响应体
 - **THEN** 工具 SHALL 返回 `transport_unknown`
 - **AND** SHALL 只保留一次调用记录
-- **AND** SHALL NOT 自动重试或返回成功结果
-
-#### Scenario: 状态变更请求结果未知
-
-- **WHEN** 状态变更 Action 的请求已发出，但连接中断、超时或读取失败导致远端是否执行未知
-- **THEN** 工具 SHALL 返回 `transport_unknown`
-- **AND** SHALL 不把未知结果伪装成成功或远端拒绝
+- **AND** SHALL NOT 自动重试、返回成功结果或把未知结果当作远端拒绝
 
 ### Requirement: 工具必须统一处理生命周期、无响应分类和安全日志
 
-所有新增工具 MUST 复用 Milky Action 的 Bearer 认证、`POST` JSON、path prefix 和显式操作映射。
+本工具组中的所有工具 MUST 复用 Milky Action 的 Bearer 认证、`POST` JSON、path prefix 和显式操作映射。
 工具 MUST 在网络前区分 `invalid_input` 与未绑定或已关闭的 `unsupported`，并在进入 HTTP 边界后
 未取得远端响应体时返回 `transport_unknown`；只要取得响应体，插件 MUST 将其作为不透明结果原样
 交付，不得根据 HTTP 状态、Milky envelope、`data` 结构或 JSON 可解析性返回 `rejected`、
@@ -153,50 +168,37 @@ Tool 调用方，不得被写入普通消息上下文或日志。
 
 #### Scenario: HTTP 200 但协议拒绝
 
-- **WHEN** 新增 Action 返回 HTTP 200 且 envelope 的 `status` 非 `ok` 或 `retcode` 非零
+- **WHEN** 对应 Action 返回 HTTP 200 且 envelope 的 `status` 非 `ok` 或 `retcode` 非零
 - **THEN** Tool 调用方 SHALL 收到完整原始响应体
 - **AND** SHALL 不返回插件自有 `rejected` 分类或伪造空对象结果
 - **AND** 日志 SHALL 只记录 Tool 名称、已取得响应分类、状态码和耗时
 
 #### Scenario: 非成功 HTTP 状态
 
-- **WHEN** 新增 Action 返回 4xx 或 5xx 状态及任意响应体
+- **WHEN** 对应 Action 返回 4xx 或 5xx 状态及任意响应体
 - **THEN** Tool 调用方 SHALL 收到该响应体的原始内容，结果中不附加状态码
 - **AND** SHALL 不返回插件自有 `http_error` 分类
 - **AND** 日志 SHALL 记录该状态码
 
 #### Scenario: 响应缺少历史最小结构
 
-- **WHEN** 查询响应缺少历史要求的字段、管理响应的 `data` 非空、响应体不是 JSON object 或不是 JSON
+- **WHEN** 查询响应缺少历史要求的字段、管理响应的 `data` 不是空对象、响应体不是 JSON object 或不是 JSON
 - **THEN** Tool 调用方 SHALL 收到该响应体的原始内容
 - **AND** SHALL 不返回 `malformed` 替代结果或报告假成功
 - **AND** SHALL 不记录响应 body 或缺失字段的原始内容
 
-#### Scenario: 成功 data 结构缺失
-
-- **WHEN** 查询工具成功 envelope 缺少历史要求的字段，或管理工具的 `data` 不是空对象
-- **THEN** Tool 调用方 SHALL 收到已取得的原始响应体
-- **AND** SHALL 不报告假成功或返回 `malformed` 替代结果
-
 #### Scenario: 未连接或已关闭
 
-- **WHEN** Agent 在工具 client 未绑定或已关闭时调用任一新增工具
+- **WHEN** Agent 在工具 client 未绑定或已关闭时调用本工具组中任一工具
 - **THEN** 工具 SHALL 在网络访问前返回 `unsupported`
 - **AND** SHALL 不建立新连接、不发起 HTTP 请求
 - **AND** 日志 MAY 记录工具名称和固定分类，但不得伪造远端状态码或结果
 
 #### Scenario: 安全记录工具调用
 
-- **WHEN** 新增工具完成一次调用或得到可记录的本地/传输结果
+- **WHEN** 本工具组完成一次调用或得到可记录的本地/传输结果
 - **THEN** 日志 SHALL 只记录工具名称、低基数结果分类、已知状态码、耗时和必要的低敏关联 ID
 - **AND** SHALL 不记录 token、Authorization、完整响应 body、下载 URL、完整敏感理由、本地路径、原始参数或原始结果
-
-#### Scenario: 未连接或未取得响应
-
-- **WHEN** Agent 在工具 client 未绑定或已关闭时调用任一新增工具，或请求进入 HTTP 边界后未取得远端响应体
-- **THEN** 工具 SHALL 分别返回 `unsupported` 或 `transport_unknown`
-- **AND** SHALL 不建立新连接、不自动重试、不伪造远端状态码或结果
-- **AND** 日志 MAY 记录工具名称和固定分类
 
 ### Requirement: `get_friend_info` 必须使用固定 operationId 和明确参数
 

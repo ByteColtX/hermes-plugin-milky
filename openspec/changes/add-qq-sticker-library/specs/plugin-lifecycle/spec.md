@@ -57,7 +57,7 @@ plugin-data 和已确认的 Hermes media 能力边界内。插件注册阶段 SH
 自动收集 SHALL 跳过或返回可分类的 `unsupported`、`malformed`、`missing_file`、
 `classifier_unavailable` 或 `storage_error`，不得报告创建、发送或清理成功。storage 或 classifier
 旁路失败不得改变既有 Milky 入站 Gate/Will/Hermes handoff；发送失败不得因未知结果重发，使用统计
-仍按既有“发起发送调用后 claim”语义处理。
+仍按既有“发送前 claim，claim 失败不发送”语义处理。
 
 #### Scenario: Database unavailable during automatic collection
 

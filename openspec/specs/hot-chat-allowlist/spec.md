@@ -6,11 +6,19 @@
 
 ## Requirements
 
+### Requirement: 白名单管理提供固定语法和删除别名
+
+系统 MUST 提供 /milky allowlist 与 /milky allowlist help 静态帮助，以及 /milky allowlist list、/milky allowlist add [目标] 和 /milky allowlist del [目标] 纯文本指令。remove MUST 作为 del 的等价别名接受，统一执行同一删除流程；帮助 SHALL 优先展示 del 并注明 remove。两种拼写 SHALL 具有相同的参数校验、缺省目标、字面集合操作、持久化、回执和 core 权限语义；单次调用不得重复执行。remove SHALL 同样属于直接白名单管理路由，不属于其他命令展开的别名。
+
+#### Scenario: 固定管理语法可发现
+
+- **WHEN** core 允许调用者查看白名单帮助
+- **THEN** 帮助 SHALL 展示 list、add、del、help 和 remove 删除别名
+- **AND** del 与 remove SHALL 使用同一参数校验及单次执行流程
+
 ### Requirement: 白名单管理的命令权限由 Hermes core 决定
 
-系统 MUST 提供 /milky allowlist 与 /milky allowlist help 静态帮助，以及 /milky allowlist list、/milky allowlist add [目标] 和 /milky allowlist del [目标] 纯文本指令。remove MUST 作为 del 的等价别名接受，统一执行同一删除流程；帮助 SHALL 优先展示 del 并注明 remove。两种拼写 SHALL 具有相同的参数校验、缺省目标、字面集合操作、持久化、回执和 core 权限语义；单次调用不得重复执行。remove SHALL 同样属于直接白名单管理路由，不属于其他命令展开的别名。包括这些子命令在内的所有 slash 权限 MUST 由 Hermes core 决定。插件 MUST NOT 读取、解释或复制管理员名单、普通用户命令许可、QQ 角色或子命令权限规则，MUST NOT 在 core 放行后额外要求调用者命中管理员名单。core 对管理员配置缺省、为空、格式异常及作用域的处理 SHALL 保持其自身语义；插件不得另设默认授权或拒绝规则。
-
-管理读写 MUST 经由 core 的命令分发；core 拒绝时 SHALL 不执行插件管理操作。core 放行后插件 SHALL 仅校验参数、可信来源会话、当前 profile、唯一活动实例及执行所需运行状态，不把这些校验用作角色或命令权限判断。来源与 profile SHALL 不从正文、参数或进程环境猜测，缺少必要上下文时 SHALL 返回 unsupported 且不读写设置。目标 SHALL 可为当前 profile 的合法 group/dm 规则。静态帮助 SHALL 仍经 core 授权，但不依赖活动实例、profile 或管理调用关联，不读取设置或查询群状态。
+包括这些子命令在内的所有 slash 权限 MUST 由 Hermes core 决定。插件 MUST NOT 读取、解释或复制管理员名单、普通用户命令许可、QQ 角色或子命令权限规则，MUST NOT 在 core 放行后额外要求调用者命中管理员名单。core 对管理员配置缺省、为空、格式异常及作用域的处理 SHALL 保持其自身语义；插件不得另设默认授权或拒绝规则。
 
 #### Scenario: core 允许跨命名空间管理
 
@@ -35,6 +43,10 @@
 - **WHEN** Hermes core 拒绝某来源的 milky 命令
 - **THEN** 系统 SHALL 不执行管理 handler 的功能操作
 - **AND** SHALL 不读取持久名单、不准备来源或目标群状态、不修改设置或运行规则
+
+### Requirement: 白名单管理必须确认操作上下文
+
+管理读写 MUST 经由 core 的命令分发；core 拒绝时 SHALL 不执行插件管理操作。core 放行后插件 SHALL 仅校验参数、可信来源会话、当前 profile、唯一活动实例及执行所需运行状态，不把这些校验用作角色或命令权限判断。来源与 profile SHALL 不从正文、参数或进程环境猜测，缺少必要上下文时 SHALL 返回 unsupported 且不读写设置。目标 SHALL 可为当前 profile 的合法 group/dm 规则。静态帮助 SHALL 仍经 core 授权，但不依赖活动实例、profile 或管理调用关联，不读取设置或查询群状态。
 
 #### Scenario: 无法确定操作对象
 

@@ -49,7 +49,7 @@ Hermes 的 `hermes_time.now()` 使用 `HERMES_TIMEZONE`、Hermes 配置中的 `t
 只影响当前轮。对每个 entry：
 
 1. 从 `origin.platform.value` 确认 `milky`，从 `origin.chat_id` 校验完整 `group:`/`dm:` chat key；
-2. 用启动时解析的 allowlist 精确匹配或匹配同命名空间通配符；空 allowlist 对主动能力 fail-closed；
+2. 用当前实例已确认生效的 allowlist（含管理命令已发布的热更新）精确匹配或匹配同命名空间通配符；空 allowlist 对主动能力 fail-closed；
 3. 用 adapter 的 `_confirmed_session_keys[chat_key]` 取已确认 session key，并要求它与当前 entry
    的 route 可关联；找不到则跳过；
 4. 读取 `entry.updated_at` 作为首次观察该 session 的 idle 基线。
@@ -114,8 +114,8 @@ Will 或 reply cost。
 
 `MilkyConfig` 增加一个结构化 proactive policy（不是四个平铺环境变量），manifest 只增加一个
 optional env；redacted summary 只输出 enabled、阈值、次数和是否配置 quiet hours，不输出聊天 ID、
-正文或凭证。`README.md` 与 `ARCHITECTURE.md` 说明：白名单为空时普通入站仍保持原语义，但主动
-唤醒没有候选；配置修改须重启；进程重启不恢复本地次数/epoch。
+正文或凭证。`README.md` 与 `ARCHITECTURE.md` 说明：白名单为空时普通入站仍阻止全部普通 friend/group 消息，但主动
+唤醒没有候选；主动策略修改须重启，白名单管理指令发布的热更新按当前有效规则参与候选判断；进程重启不恢复本地次数/epoch。
 
 ## Risks / Trade-offs
 

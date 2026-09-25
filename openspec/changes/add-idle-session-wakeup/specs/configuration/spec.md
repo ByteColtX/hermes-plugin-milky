@@ -2,21 +2,11 @@
 
 ### Requirement: Manifest 只声明实际契约
 
-插件 manifest MUST 声明普通配置 schema 和绑定 MILKY_ACCESS_TOKEN 的 secret。连接地址 SHALL 为必需的
-有效配置，但不得要求它只能来自环境变量；凭证 SHALL 继续使用宿主凭证机制。兼容环境来源 SHALL 包括
-`MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN` 和可选的 `MILKY_ALLOWED_CHATS`、`MILKY_WILL_POLICY`、
-`MILKY_SESSION_BUFFER_SIZE`、`MILKY_HOME_CHANNEL`、`MILKY_MAX_LOCAL_MEDIA_BYTES`、
-`MILKY_LONG_TEXT_FORWARD_THRESHOLD`、`MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` 和
-`MILKY_PROACTIVE_POLICY`，并保留当前固定的 25 个显式 Milky Action ToolSpec：`send_profile_like`、
-`send_friend_nudge`、`send_group_nudge`、`recall_group_message`、`get_group_info`、
-`get_group_member_list`、`get_group_member_info`、`set_group_member_mute`、`set_group_whole_mute`、
-`get_forwarded_messages`、`get_private_file_download_url`、`kick_group_member`、`quit_group`、
-`delete_friend`、`get_friend_requests`、`accept_friend_request`、`reject_friend_request`、
-`get_group_file_download_url`、`accept_group_request`、`reject_group_request`、
-`accept_group_invitation`、`reject_group_invitation`、`get_group_files`、`get_friend_info` 和
-`set_group_member_special_title`；manifest MUST NOT 声明任意未纳入显式 ToolSpec 的 Action 工具。
-另 SHALL 保留现有 `sticker_send` 与 `sticker_search` 的独立工具声明及各自可用性契约，本变更不新增
-通用 Action 或发送入口。
+插件 manifest MUST 声明普通配置 schema 和绑定 MILKY_ACCESS_TOKEN 的 secret。连接地址 SHALL 为必需的有效配置，但不得要求它只能来自环境变量；凭证 SHALL 继续使用宿主凭证机制。兼容环境来源 SHALL 包括 `MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN` 和可选的
+`MILKY_ALLOWED_CHATS`、`MILKY_WILL_POLICY`、`MILKY_SESSION_BUFFER_SIZE`、`MILKY_HOME_CHANNEL`、
+`MILKY_MAX_LOCAL_MEDIA_BYTES`、`MILKY_LONG_TEXT_FORWARD_THRESHOLD`、
+`MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` 和 `MILKY_PROACTIVE_POLICY`，并声明 qq-action-tools（主规范 `openspec/specs/qq-action-tools/spec.md`）“固定 Action ToolSpec 目录”中的全部工具。
+manifest MUST NOT 声明该目录之外的 Milky Action 工具。另 SHALL 保留现有 sticker_send 与 sticker_search 的独立工具声明及各自可用性契约，不得据此开放通用 Action 或额外发送入口。
 
 #### Scenario: 查看插件配置提示
 
@@ -44,7 +34,7 @@
 
 ### Requirement: 启动时解析正式配置契约
 
-适配器 MUST 按本规范的来源优先级在启动时一次性解析配置。以下 MILKY_* 名称表示对应配置及其兼容环境输入，
+适配器 MUST 按本规范的来源优先级在启动时一次性解析配置。入站白名单是唯一热更新例外：已通过白名单管理指令完成持久化、核验和发布的规则 SHALL 对当前实例生效；其他设置和仅通过 Web 保存的白名单仍遵守启动快照。以下 MILKY_* 名称表示对应配置及其兼容环境输入，
 相同校验 SHALL 适用于最终选中的原生类型设置；必需连接地址可来自任一合法普通配置来源，凭证来自宿主凭证机制。
 `MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN` 和可选的 `MILKY_ALLOWED_CHATS`、`MILKY_WILL_POLICY`、
 `MILKY_SESSION_BUFFER_SIZE`、`MILKY_HOME_CHANNEL`、`MILKY_MAX_LOCAL_MEDIA_BYTES`、
@@ -85,8 +75,8 @@
 #### Scenario: 多入口保持同一启动快照
 
 - **WHEN** 当前实例已经完成配置解析，随后操作者保存新设置
-- **THEN** 该实例的普通 adapter、独立 sender 和 home-channel 元数据 SHALL 保持已解析快照
-- **AND** 新设置 SHALL 在新的启动或宿主明确重新加载该配置后才适用
+- **THEN** 除已经通过白名单管理指令核验并发布的入站白名单外，该实例的普通 adapter、独立 sender 和 home-channel 元数据 SHALL 保持已解析快照
+- **AND** 其他新设置及单独通过 Web 保存的白名单 SHALL 在新的启动或宿主明确重新加载该配置后才适用
 
 #### Scenario: 使用默认主动策略
 

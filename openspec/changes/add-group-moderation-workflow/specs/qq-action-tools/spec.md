@@ -35,16 +35,10 @@ MUST 只在对应 ToolSpec 被显式调用时执行；唯一新增例外是 kick
 
 #### Scenario: 状态变更请求未取得响应体
 
-- **WHEN** 状态变更 Action 已进入 HTTP 请求边界但客户端未取得远端响应体
+- **WHEN** 状态变更 Action 已进入 HTTP 请求边界但连接中断、超时或读取失败等原因导致客户端未取得远端响应体
 - **THEN** 工具 SHALL 返回 `transport_unknown`
 - **AND** SHALL 只保留一次调用记录
-- **AND** SHALL NOT 自动重试或返回成功结果
-
-#### Scenario: 状态变更请求结果未知
-
-- **WHEN** 状态变更 Action 的请求已发出，但连接中断、超时或读取失败导致远端是否执行未知
-- **THEN** 工具 SHALL 返回 `transport_unknown`
-- **AND** SHALL 不把未知结果伪装成成功或远端拒绝
+- **AND** SHALL NOT 自动重试、返回成功结果或把未知结果当作远端拒绝
 
 #### Scenario: 踢人直接调用未获业务授权
 
@@ -58,7 +52,7 @@ MUST 只在对应 ToolSpec 被显式调用时执行；唯一新增例外是 kick
 
 ### Requirement: 工具必须统一处理生命周期、无响应分类和安全日志
 
-所有新增工具 MUST 复用 Milky Action 的 Bearer 认证、`POST` JSON、path prefix 和显式操作映射。
+本工具组中的所有工具 MUST 复用 Milky Action 的 Bearer 认证、`POST` JSON、path prefix 和显式操作映射。
 kick_group_member MUST 额外遵守群管业务执行检查，可在处置 Action 前返回 blocked 或 pending_review；该本地结果不是远端响应分类，不得伪造执行成功。
 工具 MUST 在网络前区分 `invalid_input` 与未绑定或已关闭的 `unsupported`，并在进入 HTTP 边界后
 未取得远端响应体时返回 `transport_unknown`；只要取得响应体，插件 MUST 将其作为不透明结果原样
@@ -74,47 +68,34 @@ Tool 调用方，不得被写入普通消息上下文或日志。
 
 #### Scenario: HTTP 200 但协议拒绝
 
-- **WHEN** 新增 Action 返回 HTTP 200 且 envelope 的 `status` 非 `ok` 或 `retcode` 非零
+- **WHEN** 对应 Action 返回 HTTP 200 且 envelope 的 `status` 非 `ok` 或 `retcode` 非零
 - **THEN** Tool 调用方 SHALL 收到完整原始响应体
 - **AND** SHALL 不返回插件自有 `rejected` 分类或伪造空对象结果
 - **AND** 日志 SHALL 只记录 Tool 名称、已取得响应分类、状态码和耗时
 
 #### Scenario: 非成功 HTTP 状态
 
-- **WHEN** 新增 Action 返回 4xx 或 5xx 状态及任意响应体
+- **WHEN** 对应 Action 返回 4xx 或 5xx 状态及任意响应体
 - **THEN** Tool 调用方 SHALL 收到该响应体的原始内容，结果中不附加状态码
 - **AND** SHALL 不返回插件自有 `http_error` 分类
 - **AND** 日志 SHALL 记录该状态码
 
 #### Scenario: 响应缺少历史最小结构
 
-- **WHEN** 查询响应缺少历史要求的字段、管理响应的 `data` 非空、响应体不是 JSON object 或不是 JSON
+- **WHEN** 查询响应缺少历史要求的字段、管理响应的 `data` 不是空对象、响应体不是 JSON object 或不是 JSON
 - **THEN** Tool 调用方 SHALL 收到该响应体的原始内容
 - **AND** SHALL 不返回 `malformed` 替代结果或报告假成功
 - **AND** SHALL 不记录响应 body 或缺失字段的原始内容
 
-#### Scenario: 成功 data 结构缺失
-
-- **WHEN** 查询工具成功 envelope 缺少历史要求的字段，或管理工具的 `data` 不是空对象
-- **THEN** Tool 调用方 SHALL 收到已取得的原始响应体
-- **AND** SHALL 不报告假成功或返回 `malformed` 替代结果
-
 #### Scenario: 未连接或已关闭
 
-- **WHEN** Agent 在工具 client 未绑定或已关闭时调用任一新增工具
+- **WHEN** Agent 在工具 client 未绑定或已关闭时调用本工具组中任一工具
 - **THEN** 工具 SHALL 在网络访问前返回 `unsupported`
 - **AND** SHALL 不建立新连接、不发起 HTTP 请求
 - **AND** 日志 MAY 记录工具名称和固定分类，但不得伪造远端状态码或结果
 
 #### Scenario: 安全记录工具调用
 
-- **WHEN** 新增工具完成一次调用或得到可记录的本地/传输结果
+- **WHEN** 本工具组完成一次调用或得到可记录的本地/传输结果
 - **THEN** 日志 SHALL 只记录工具名称、低基数结果分类、已知状态码、耗时和必要的低敏关联 ID
 - **AND** SHALL 不记录 token、Authorization、完整响应 body、下载 URL、完整敏感理由、本地路径、原始参数或原始结果
-
-#### Scenario: 未连接或未取得响应
-
-- **WHEN** Agent 在工具 client 未绑定或已关闭时调用任一新增工具，或请求进入 HTTP 边界后未取得远端响应体
-- **THEN** 工具 SHALL 分别返回 `unsupported` 或 `transport_unknown`
-- **AND** SHALL 不建立新连接、不自动重试、不伪造远端状态码或结果
-- **AND** 日志 MAY 记录工具名称和固定分类

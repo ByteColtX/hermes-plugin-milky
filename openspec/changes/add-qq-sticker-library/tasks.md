@@ -6,7 +6,7 @@
 - [ ] 1.2 设计并实现增量 schema/version 迁移，旧手动记录只建立内容映射和 unknown 质量状态；用旧 schema、已升级 schema、未知版本、列缺失和事务失败 fixture 验证不重命名、不重分析、不扫描历史消息且不破坏原库
 - [ ] 1.3 增加自动 asset metadata、作用域 entry 和自动使用统计的持久化边界，并由统一查询层合并手动共享条目与当前自动 scope；用相同 content ID 的跨 scope、手动旧条目和空库 fixture 验证可见性与 ID 稳定
 - [ ] 1.4 增加自动 scope 配置和当前确认 session 解析，默认使用 `dm:<peer_id>`/`group:<group_id>`，只允许显式合法 global；用缺失、非法、temp、未确认 session 和跨 chat 参数测试验证 fail-closed
-- [ ] 1.5 让手动和自动 entry 共同参与物理文件引用保护，保持既有发送 claim 时机；用共享 asset、删除一个引用、并发发送、远端成功/失败/未知和统计写入失败测试验证不误删、不重发且只 claim 一次
+- [ ] 1.5 让手动和自动 entry 共同参与物理文件引用保护，保持既有发送前 claim 时机和 claim 失败不发送边界；用共享 asset、删除一个引用、并发发送、远端成功/失败/未知和统计写入失败测试验证不误删、不重发且只 claim 一次
 
 ## 2. 手动维护兼容和自动输入路径
 

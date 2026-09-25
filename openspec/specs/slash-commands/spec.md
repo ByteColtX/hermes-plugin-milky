@@ -3,7 +3,7 @@
 ## Purpose
 
 为 Milky 入站消息提供独立、可控且可扩展的 Hermes 斜杠命令通道，使内置命令不被 Will
-或 Agent 普通消息处理吞掉，并以首个插件命令 `/milky` 暴露协议端实现信息。
+或 Agent 普通消息处理吞掉，并通过 /milky 提供实现信息、运行状态、静态帮助及显式管理入口。
 
 ## Requirements
 
@@ -117,19 +117,12 @@ message ID；普通消息仍 MUST 保持不允许 gateway control 的安全标�
 
 ### Requirement: `/milky` 必须格式化返回 get_impl_info 的实现信息
 
-插件 MUST 注册首个 `/milky` 命令。无参数调用时，系统 MUST 使用已连接且由 Milky adapter
+插件 MUST 注册 `/milky` 命令。无参数调用时，系统 MUST 使用已连接且由 Milky adapter
 生命周期拥有的 client 调用 `get_impl_info`，请求 MUST 为对应 `/api/get_impl_info` 的
 HTTP POST、Bearer 认证和 JSON `{}` body。成功时，命令回复正文 MUST 以“Milky · 实现信息”为标题，标题与详情之间空一行，使用固定的可读中文标签展示
 `data.impl_name`、`data.impl_version`、`data.milky_version`、`data.qq_protocol_type` 和
 `data.qq_protocol_version`；不得展示完整 JSON envelope 或未知扩展字段。协议失败、malformed
-或传输未知时不适用成功摘要交付。`/milky sticker` 后的固定子命令 SHALL 在同一 Hermes
-插件命令通道中处理：`add [--dry-run]`、`list [--limit <n>]`、`edit <sticker_id> [--emotion=<enum>] [--tags=<tag1>,<tag2>,...] [--description=<text>] [--clear=<field>[,<field>...]]`、`reanalyze <sticker_id>`、`del <sticker_id>`、
-`cleanup [--dry-run]` 和 `reindex` SHALL 遵守贴纸维护规范；只有显式 `add` 或 `reanalyze` 路径可以调用
-Hermes core 的辅助视觉能力，该路径不得调用 `get_impl_info` 或任意 Milky Action。
-
-同一命令 SHALL 接受 /milky allowlist 与 /milky allowlist help 静态帮助，以及 /milky allowlist list、/milky allowlist add [目标] 和 /milky allowlist del [目标]，并接受 remove 作为 del 的等价别名，按 hot-chat-allowlist 契约处理。合法 allowlist SHALL 不被归类为未知参数；它 SHALL 不调用 get_impl_info 或贴纸维护，只能按该契约返回静态帮助或执行名单读写与回执，不查询来源或目标群状态。所有路径的 slash 权限 SHALL 由 Hermes core 决定。
-
-静态帮助、参数错误和贴纸回执 SHALL 遵守本规范的统一展示要求；既有固定分类在 slash 文本中表示结果语义，不要求展示英文分类原值。新增帮助 SHALL 不触发本条要求中的协议信息或维护操作。
+或传输未知时不适用成功摘要交付。
 
 #### Scenario: 成功获取协议端信息
 
@@ -142,6 +135,89 @@ Hermes core 的辅助视觉能力，该路径不得调用 `get_impl_info` 或任
 - **WHEN** Action 返回成功 envelope 且 `data` 包含实现名、实现版本、Milky 版本、QQ 协议类型和 QQ 协议版本
 - **THEN** 命令 SHALL 将已知字段重新组织成格式化中文摘要
 - **AND** SHALL 不把未知顶层或 `data` 扩展字段带入回复
+
+#### Scenario: Action 被拒绝或结果未知
+
+- **WHEN** `get_impl_info` 返回 rejected、malformed、HTTP 错误、连接/超时或 transport_unknown
+- **THEN** 用户 SHALL 收到与安全错误分类对应的固定中文失败标题和必要说明，不直接显示英文状态码前缀、内部操作名称或 JSON；拒绝、响应无效与结果未知 SHALL 能区分
+- **AND** 提示 SHALL 不包含 Authorization、token、完整响应正文或底层异常文本
+
+### Requirement: /milky allowlist 显式分发白名单管理命令
+
+插件 MUST 支持 /milky allowlist 与 /milky allowlist help 静态帮助，以及 list、add [目标]、del [目标]，
+并接受 remove 作为 del 的等价别名。各分支 SHALL 按 [hot-chat-allowlist](../hot-chat-allowlist/spec.md)
+的目标、授权交接、持久化、在线发布及回执契约处理，不调用 get_impl_info 或贴纸维护，不查询来源或目标群状态。
+
+#### Scenario: allowlist 合法子命令分发
+
+- **WHEN** core 允许的调用收到合法 allowlist list、add、del 或其别名 remove 参数且运行条件满足
+- **THEN** 命令 SHALL 进入白名单管理流程，省略增减目标时使用可信当前会话
+- **AND** SHALL 不返回未知参数错误、不调用 get_impl_info 或贴纸维护
+
+#### Scenario: allowlist 非法参数不回退
+
+- **WHEN** 调用参数为 allowlist 未知子命令、非法目标、额外参数（包括任何分页参数）
+- **THEN** 命令 SHALL 返回 invalid_input 或安全 usage 提示
+- **AND** SHALL 不读写名单、不查询群状态、不回退协议摘要或贴纸维护
+
+#### Scenario: allowlist 静态帮助分发
+
+- **WHEN** core 允许调用者执行 allowlist 或 allowlist help
+- **THEN** 命令 SHALL 返回相同静态帮助，不依赖唯一活动管理实例
+- **AND** SHALL 不调用 get_impl_info、贴纸维护、配置读写或群状态查询；core 拒绝时 SHALL 不执行帮助 handler
+
+### Requirement: 命令注册和 client 生命周期必须安全降级
+
+斜杠命令注册阶段 MUST 只登记 handler 和静态元数据，不建立 Milky HTTP/SSE 连接。无参数
+`/milky` handler MUST 使用 adapter connect 时绑定的同一 client；未连接、已停止或无法确定
+唯一活动 client 时，`/milky` 的协议信息路径 MUST 在网络访问前返回 `unsupported`，不得临时
+创建旁路 client。`/milky sticker` 路径 MAY 只使用插件持久化和可用的 Hermes task-local 会话上下文，
+但不在 handler 内验证命令来源，并不得因本地维护临时创建 client。命令诊断、
+fixture 和结果 MUST 遵守 [security-boundaries](../security-boundaries/spec.md) 的信息边界；必要业务关联 ID 的日志规则由 [adapter-observability](../adapter-observability/spec.md) 定义。
+
+#### Scenario: 注册阶段无网络
+
+- **WHEN** Hermes 加载 Milky plugin 并调用其根 `register(ctx)`
+- **THEN** `/milky` SHALL 出现在插件命令 registry
+- **AND** 注册过程 SHALL 不发送 HTTP/SSE 请求、不读取协议响应、不启动长期后台任务或扫描贴纸目录
+
+#### Scenario: adapter 未连接
+
+- **WHEN** 用户在 Milky adapter 完成 connect 前或 disconnect 后调用 `/milky`
+- **THEN** 协议信息路径 SHALL 返回 `unsupported` 或等价的未连接提示
+- **AND** SHALL 不建立新 client、不访问网络且不伪造 JSON 成功
+
+#### Scenario: 贴纸维护不创建旁路 client
+
+- **WHEN** 插件 command handler 收到 `sticker list` 或其他贴纸子命令
+- **THEN** 系统 SHALL 只访问插件持久化边界和可用的 task-local 会话上下文
+- **AND** SHALL 不创建第二个 Milky client、不发起 Milky Action 或 SSE 请求
+
+#### Scenario: 多活动 client 无法唯一归属
+
+- **WHEN** 宿主同时存在多个活动 Milky client 且插件命令 handler 没有 source/profile 参数可用于选择
+- **THEN** 协议信息路径 SHALL 安全返回 `unsupported`
+- **AND** 贴纸路径 SHALL 不随机选择 client 或把信息写入错误 profile
+
+#### Scenario: 命令诊断脱敏
+
+- **WHEN** 命令注册、请求、贴纸扫描或响应解析失败
+- **THEN** 日志和用户可见结果 SHALL 只保留命令名、错误分类和必要的安全 reason
+- **AND** SHALL 不包含 token、Authorization header、无关的身份信息、媒体路径、完整响应、图片内容或完整异常
+
+### Requirement: /milky sticker 显式分发本地维护命令
+
+插件 MUST 在同一 /milky command registry 中分发 sticker add、list、edit、reanalyze、del、cleanup、reindex
+及对应参数，并接受 remove 作为 del 的等价别名。参数、导入、视觉、存储和字段维护规则 SHALL 以
+[qq-sticker-maintenance](../qq-sticker-maintenance/spec.md) 为主要定义；本命令入口只使用收到的 raw_args，
+不得推断 friend/group、操作者或目标授权。命令 SHALL 不调用 get_impl_info 或其他 Milky Action，
+不创建 Agent Tool、不进入主 Agent transcript、Will 或普通消息 handoff。静态帮助、错误和回执遵守本规范。
+
+#### Scenario: 贴纸命令错误隔离
+
+- **WHEN** sticker 参数非法、视觉结果非法、存储失败或条目不存在
+- **THEN** handler SHALL 返回固定安全分类和受限计数
+- **AND** SHALL 不返回路径、URL、图片 bytes、完整参数、凭证或异常正文
 
 #### Scenario: sticker add 触发人工导入和视觉打标
 
@@ -185,95 +261,6 @@ Hermes core 的辅助视觉能力，该路径不得调用 `get_impl_info` 或任
 - **THEN** 系统 SHALL 返回稳定、有界的贴纸摘要
 - **AND** SHALL 不修改贴纸文件、元数据或远端 QQ 状态
 
-#### Scenario: `/milky` 带参数
-
-- **WHEN** 用户发送 `/milky extra` 或未声明的 sticker/allowlist 子命令及非法参数
-- **THEN** 命令 SHALL 返回安全的参数错误或 usage 提示
-- **AND** SHALL 不调用 `get_impl_info`、贴纸维护、白名单读写操作或其他 Milky Action
-
-#### Scenario: Action 被拒绝或结果未知
-
-- **WHEN** `get_impl_info` 返回 rejected、malformed、HTTP 错误、连接/超时或 transport_unknown
-- **THEN** 用户 SHALL 收到与安全错误分类对应的固定中文失败标题和必要说明，不直接显示英文状态码前缀、内部操作名称或 JSON；拒绝、响应无效与结果未知 SHALL 能区分
-- **AND** 提示 SHALL 不包含 Authorization、token、完整响应正文或底层异常文本
-
-#### Scenario: allowlist 合法子命令分发
-
-- **WHEN** core 允许的调用收到合法 allowlist list、add、del 或其别名 remove 参数且运行条件满足
-- **THEN** 命令 SHALL 进入白名单管理流程，省略增减目标时使用可信当前会话
-- **AND** SHALL 不返回未知参数错误、不调用 get_impl_info 或贴纸维护
-
-#### Scenario: allowlist 非法参数不回退
-
-- **WHEN** 调用参数为 allowlist 未知子命令、非法目标、额外参数（包括任何分页参数）
-- **THEN** 命令 SHALL 返回 invalid_input 或安全 usage 提示
-- **AND** SHALL 不读写名单、不查询群状态、不回退协议摘要或贴纸维护
-
-#### Scenario: allowlist 静态帮助分发
-
-- **WHEN** core 允许调用者执行 allowlist 或 allowlist help
-- **THEN** 命令 SHALL 返回相同静态帮助，不依赖唯一活动管理实例
-- **AND** SHALL 不调用 get_impl_info、贴纸维护、配置读写或群状态查询；core 拒绝时 SHALL 不执行帮助 handler
-
-### Requirement: 命令注册和 client 生命周期必须安全降级
-
-斜杠命令注册阶段 MUST 只登记 handler 和静态元数据，不建立 Milky HTTP/SSE 连接。无参数
-`/milky` handler MUST 使用 adapter connect 时绑定的同一 client；未连接、已停止或无法确定
-唯一活动 client 时，`/milky` 的协议信息路径 MUST 在网络访问前返回 `unsupported`，不得临时
-创建旁路 client。`/milky sticker` 路径 MAY 只使用插件持久化和可用的 Hermes task-local 会话上下文，
-但不在 handler 内验证命令来源，并不得因本地维护临时创建 client。命令诊断、
-fixture 和结果 MUST 遵守既有秘密脱敏边界。
-
-#### Scenario: 注册阶段无网络
-
-- **WHEN** Hermes 加载 Milky plugin 并调用其根 `register(ctx)`
-- **THEN** `/milky` SHALL 出现在插件命令 registry
-- **AND** 注册过程 SHALL 不发送 HTTP/SSE 请求、不读取协议响应、不启动长期后台任务或扫描贴纸目录
-
-#### Scenario: adapter 未连接
-
-- **WHEN** 用户在 Milky adapter 完成 connect 前或 disconnect 后调用 `/milky`
-- **THEN** 协议信息路径 SHALL 返回 `unsupported` 或等价的未连接提示
-- **AND** SHALL 不建立新 client、不访问网络且不伪造 JSON 成功
-
-#### Scenario: 贴纸维护不创建旁路 client
-
-- **WHEN** 插件 command handler 收到 `sticker list` 或其他贴纸子命令
-- **THEN** 系统 SHALL 只访问插件持久化边界和可用的 task-local 会话上下文
-- **AND** SHALL 不创建第二个 Milky client、不发起 Milky Action 或 SSE 请求
-
-#### Scenario: 多活动 client 无法唯一归属
-
-- **WHEN** 宿主同时存在多个活动 Milky client 且插件命令 handler 没有 source/profile 参数可用于选择
-- **THEN** 协议信息路径 SHALL 安全返回 `unsupported`
-- **AND** 贴纸路径 SHALL 不随机选择 client 或把信息写入错误 profile
-
-#### Scenario: 命令诊断脱敏
-
-- **WHEN** 命令注册、请求、贴纸扫描或响应解析失败
-- **THEN** 日志和用户可见结果 SHALL 只保留命令名、错误分类和必要的安全 reason
-- **AND** SHALL 不包含 token、Authorization header、真实 QQ/群 ID、媒体路径、完整响应、图片内容或完整异常
-
-### Requirement: `/milky sticker` 只能通过显式命令维护本地贴纸库
-
-插件 MUST 在同一 `/milky` command registry 中支持 `sticker add [--dry-run]`、`list [--limit]`、
-`edit <sticker_id>`、`reanalyze <sticker_id>`、`del <sticker_id>`、`cleanup [--dry-run]` 和 `reindex`。
-贴纸命令 SHALL 只使用 handler 收到的 `raw_args`，不得推断 friend/group、操作者或目标授权；贴纸
-维护 SHALL 不调用 Milky Action、不创建 Agent Tool、不进入主 Agent transcript、Will 或普通消息 handoff。
-
-#### Scenario: 显式 sticker add
-
-- **WHEN** command handler 收到 `sticker add` 或 `sticker add --dry-run`
-- **THEN** 系统 SHALL 在固定 plugin-data inbox 中校验、去重并最多分析 50 张唯一候选
-- **AND** 视觉调用 SHALL 最多并发 10 路，true 候选正式模式进入 library，false 候选进入 `junk/`
-- **AND** dry-run SHALL 不移动文件或写入数据库
-
-#### Scenario: 贴纸命令错误隔离
-
-- **WHEN** sticker 参数非法、视觉结果非法、存储失败或条目不存在
-- **THEN** handler SHALL 返回固定安全分类和受限计数
-- **AND** SHALL 不返回路径、URL、图片 bytes、完整参数、凭证或异常正文
-
 ### Requirement: 插件命令必须提供一致的静态帮助与发现路径
 
 系统 MUST 支持 `/milky help` 顶层帮助、`/milky sticker` 与 `/milky sticker help` 等价的贴纸帮助，并保留 `/milky allowlist` 与 `/milky allowlist help` 的等价帮助语义。无参数 `/milky` SHALL 保持实现信息查询。帮助 SHALL 分别使用“Milky · 命令帮助”“Milky · 贴纸维护”“Milky · 会话白名单”标题，以空行分隔 Usage、Commands；必要参数说明及少量 Examples 按需提供，不强制完整 man-page 章节或重复示例；命令行 SHALL 独立换行并缩进两个空格，说明使用简洁中文。顶层帮助 SHALL 展示无参数查询、status 及全部本版本交付命令分支，不列入其他尚未交付 change 的功能。顶层 Usage SHALL 使用 /milky [command] [args...] 表达可选分支和分支参数，用一句话说明无参数查询行为；Commands SHALL 只列真实子命令。帮助 SHALL 使用方括号表示可选部分、尖括号表示值占位符、省略号表示后续参数的 CLI 记法，不将“（无参数）”列为子命令。该概括语法 SHALL 不放宽各分支的实际参数校验。
@@ -314,6 +301,12 @@ help SHALL 不接受额外参数；命令关键词 SHALL 延续大小写不敏�
 - **THEN** 回复 SHALL 使用对应层级的 Usage 和 Help
 - **AND** SHALL 不把非法输入当作合法帮助、协议查询或维护操作执行
 
+#### Scenario: 未声明分支不得触发业务操作
+
+- **WHEN** 用户发送 `/milky extra` 或未声明的 sticker/allowlist 子命令及非法参数
+- **THEN** 命令 SHALL 返回安全的参数错误或 usage 提示
+- **AND** SHALL 不调用 `get_impl_info`、贴纸维护、白名单读写操作或其他 Milky Action
+
 ### Requirement: 插件回执必须使用一致且真实的中文结果表达
 
 插件拥有的 slash 回执 SHALL 采用纯文本。帮助和查询 SHALL 使用 `Milky · 功能名` 标题；操作与失败 SHALL 以中文结果标题开头，必要的安全对象标识独立成行，补充说明前空一行。用户正文 SHALL 不使用裸 JSON、英文错误前缀或内部异常代替解释。固定状态 SHALL 映射到受控中文文案，帮助中的命令、参数 token 与来源标识 SHALL 保持可复制的原值。
@@ -344,10 +337,6 @@ help SHALL 不接受额外参数；命令关键词 SHALL 延续大小写不敏�
 
 插件运行与事件流连接 SHALL 分开表达。当前实例完成初始化进入运行阶段可显示“插件: 运行中”；事件流 SHALL 依据其生命周期观察区分“连接中”“已连接”“重连中”“已停止”和“未知”。只有观察到当前连接成功且未观察到断开时才可显示已连接；首次连接失败后重试或退避 SHALL 显示重连中，不能仅根据插件就绪、任务存在或历史成功显示已连接。没有新事件 SHALL 不单独作为断线依据。摘要 SHALL 不宣称实时验证 QQ 登录状态、Action 可用性或端到端收发健康。
 
-本次运行 SHALL 表示当前实例自初始化完成进入运行阶段后的单调经过时间，SSE 自动重连不中断累计；停止或运行失败后不继续累计，新的运行代次重新开始。少于一分钟 SHALL 显示“不足 1 分钟”，其他时长按天、小时、分钟的非零部分显示并舍去秒，不使用墙钟差值造成倒退。尚未开始且可确认时 SHALL 显示“尚未开始”，未知起点 SHALL 显示“未知”。
-
-状态 SHALL 只属于当前注册作用域下唯一可确认的实例和可信 profile；多个实例无法唯一归属、没有可确认实例、实例与当前 profile 的归属无法确认或读取期间实例已失效时 SHALL 整条返回“运行状态暂不可用”与安全原因，不能借用环境默认、最近会话或已解绑实例。已绑定实例可确认启动/停止/失败阶段时 SHALL 如实表达；缺少某字段的观察能力时该字段 SHALL 显示未知。状态生成 SHALL 不建立网络连接、调用 Milky Action、触发群状态准备、视觉能力或图库访问，不创建后台任务、不改变运行状态；回执仍通过原发送路径交付。此无额外网络约束 SHALL 限定于 status 处理，不改变普通入站 Gate 既有的按需群状态准备与出站回执发送。
-
 #### Scenario: 正常运行摘要
 
 - **WHEN** core 分发 status，唯一可信实例已运行 2 小时 18 分钟，且观察到 SSE 当前已连接
@@ -360,11 +349,19 @@ help SHALL 不接受额外参数；命令关键词 SHALL 延续大小写不敏�
 - **THEN** 回复 SHALL 显示“事件流: 重连中”，本次运行时间继续累计
 - **AND** 首次 SSE 尚未建立时 SHALL 显示连接中，首次失败进入重试后 SHALL 显示重连中，不能以插件就绪伪造已连接
 
+### Requirement: 运行时长必须使用当前实例的单调计时
+
+本次运行 SHALL 表示当前实例自初始化完成进入运行阶段后的单调经过时间，SSE 自动重连不中断累计；停止或运行失败后不继续累计，新的运行代次重新开始。少于一分钟 SHALL 显示“不足 1 分钟”，其他时长按天、小时、分钟的非零部分显示并舍去秒，不使用墙钟差值造成倒退。尚未开始且可确认时 SHALL 显示“尚未开始”，未知起点 SHALL 显示“未知”。
+
 #### Scenario: 计时随实例运行代次变化
 
 - **WHEN** SSE 内部断开重连，随后整个实例停止并重新进入运行阶段
 - **THEN** 内部重连 SHALL 不重置本次计时，实例停止 SHALL 停止累计，新运行代次 SHALL 从新起点累计
 - **AND** 系统时间调整 SHALL 不导致经过时长倒退，缺少起点 SHALL 显示未知而非零
+
+### Requirement: 状态查询必须绑定唯一可信实例并保持只读
+
+状态 SHALL 只属于当前注册作用域下唯一可确认的实例和可信 profile；多个实例无法唯一归属、没有可确认实例、实例与当前 profile 的归属无法确认或读取期间实例已失效时 SHALL 整条返回“运行状态暂不可用”与安全原因，不能借用环境默认、最近会话或已解绑实例。已绑定实例可确认启动/停止/失败阶段时 SHALL 如实表达；缺少某字段的观察能力时该字段 SHALL 显示未知。状态生成 SHALL 不建立网络连接、调用 Milky Action、触发群状态准备、视觉能力或图库访问，不创建后台任务、不改变运行状态；回执仍通过原发送路径交付。此无额外网络约束 SHALL 限定于 status 处理，不改变普通入站 Gate 既有的按需群状态准备与出站回执发送。
 
 #### Scenario: 实例归属或部分状态不可确认
 

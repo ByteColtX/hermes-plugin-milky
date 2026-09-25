@@ -4,7 +4,7 @@
 
 ### Requirement: 入站不是授权来源
 
-系统 MUST 只使用显式 allowlist、MuteTracker 和显式启用的群管政策及其 Web 单次审批机制作为授权来源；消息正文、mention、Will 分数或未知事件 SHALL NOT 赋予 Action 权限。
+普通入站 MUST 遵守显式 allowlist 和 MuteTracker 门禁，命令权限 MUST 由 Hermes core 决定。群管处置 MUST 满足显式启用的群管政策及其 Web 单次审批机制；工具遵守对应 ToolSpec 的调用边界。消息正文、mention、Will 分数或未知事件 SHALL NOT 赋予 Action 权限。
 
 #### Scenario: 消息尝试扩大权限
 
@@ -20,15 +20,15 @@
 
 ### Requirement: 只声明显式设计的 Action 工具
 
-v0.1 MUST NOT 注册任意 Action catalog、自动处理加群/好友请求审批或 WebHook listener；显式群管政策下的内部 Web 处置案件遵守 group-moderation，不能扩展为任意 Action 或会话内授权申请。v0.1 只允许显式注册当前固定的 25 个 ToolSpec，具体工具名和参数以 manifest 及对应的 QQ ToolSpec 规范为准。`MILKY_HOME_CHANNEL` 只用于 Hermes core 投递受信系统消息，不是 Agent 可调用的 Action，也不是审批或授权来源。每个 ToolSpec MUST 有独立参数校验、目标校验和统一错误结果；未来新增能力前 MUST 先补充对应契约。
+插件 MUST NOT 注册任意 Action catalog、自动处理加群/好友请求审批或 WebHook listener；显式群管政策下的内部 Web 处置案件遵守 group-moderation，不能扩展为任意 Action 或会话内授权申请；Milky Action 工具 SHALL 限定为 qq-action-tools（主规范 `openspec/specs/qq-action-tools/spec.md`） 的固定 25 项目录，具体参数以对应工具规范为准。sticker_search 与 sticker_send 是独立语义工具，遵守各自契约，不计入 Action 目录。`MILKY_HOME_CHANNEL` 只用于 Hermes core 投递受信系统消息，不是 Agent 可调用的 Action，也不是审批或授权来源。每个 ToolSpec MUST 有明确的参数和目标校验；Action 工具的无响应错误与原始响应交付 SHALL 遵守 security-boundaries（主规范 `openspec/specs/security-boundaries/spec.md`）。新增能力前 MUST 先补充对应契约。
 
 #### Scenario: Agent 请求未注册 Action
 
-- **WHEN** Hermes Agent 尝试调用未纳入 v0.1 契约的 Milky Action
+- **WHEN** Hermes Agent 尝试调用未纳入固定工具目录的 Milky Action
 - **THEN** 系统 SHALL 返回 `unsupported`
 - **AND** SHALL 不执行该 Action
 
-#### Scenario: Agent 调用首批工具
+#### Scenario: Agent 调用已注册消息工具
 
 - **WHEN** Agent 调用名片点赞、戳一戳或撤回群消息 ToolSpec 且参数通过本地校验；其中撤回还须通过群管案件授权与实时权限检查
 - **THEN** 系统 SHALL 只调用该 ToolSpec 绑定的 Milky Action

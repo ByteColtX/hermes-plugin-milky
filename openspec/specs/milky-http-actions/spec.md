@@ -103,7 +103,7 @@ data 对象当作数组或直接 ID。已注册 Tool 不执行本结构校验；
 
 ### Requirement: Action 数据保留与成功判断解耦
 
-Action 调用 SHALL 将协议数据保留边界与成功判断边界分开：非 Tool Action 继续按既有 HTTP、envelope、字段和副作用契约分类；协议对象中的未知字段不得因通用敏感键名被删除。已取得响应体的 Tool 透传语义由关联的 Tool 结果变更统一定义。
+Action 调用 SHALL 将协议数据保留边界与成功判断边界分开：非 Tool Action 继续按既有 HTTP、envelope、字段和副作用契约分类；协议对象中的未知字段不得因通用敏感键名被删除。已取得响应体的 Action Tool 透传语义由 [security-boundaries](../security-boundaries/spec.md) 的“QQ Tool 远端响应原样交付”统一定义。
 
 #### Scenario: 非 Tool 成功响应含扩展字段
 

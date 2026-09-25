@@ -86,7 +86,7 @@ Milky MUST 同时支持网关内已连接 adapter 的 home channel 投递和独�
 
 ### Requirement: Home channel 投递失败必须诚实且安全
 
-home channel 投递 MUST 在目标和内容校验后才访问网络；远端拒绝、响应结构错误或执行结果未知 SHALL 原样保留既有安全分类，不得伪造成功或盲目重试可能产生副作用的请求。插件 SHALL 使用标准 logger 记录成功、失败或未知结果的 `event=milky.outbound` 诊断，至少包含目标类型、结果分类、已知 HTTP 状态码和 `duration_ms`；日志、错误和结果 MUST 不包含 token、Authorization header、完整媒体 URL、本地路径、消息正文、文件内容或未脱敏真实身份。
+home channel 投递 MUST 在目标和内容校验后才访问网络；远端拒绝、响应结构错误或执行结果未知 SHALL 原样保留既有安全分类，不得伪造成功或盲目重试可能产生副作用的请求。插件 SHALL 使用标准 logger 记录成功、失败或未知结果的 `event=milky.outbound` 诊断，至少包含目标类型、结果分类、已知 HTTP 状态码和 `duration_ms`；日志、错误和结果 MUST 不包含 token、Authorization header、完整媒体 URL、本地路径、消息正文、文件内容或无关身份。必要的已确认业务关联 ID SHALL 遵守 [adapter-observability](../adapter-observability/spec.md) 的最小化记录边界。
 
 #### Scenario: home channel 发送成功
 

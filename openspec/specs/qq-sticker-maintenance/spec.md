@@ -2,97 +2,33 @@
 
 ## Purpose
 
-为操作者提供只由显式 `/milky sticker` 命令驱动、可恢复且可审计的 QQ 贴纸本地维护闭环。
+为操作者提供由显式 `/milky sticker` 命令或已授权 Web 请求驱动、可恢复且可审计的 QQ 贴纸本地维护闭环。命令与 Web 共用图片校验、元数据和持久化契约，并各自遵守入口及生命周期边界。
 
 ## Requirements
-
-### Requirement: 贴纸维护必须限制在 plugin-data 和固定目录
-
-系统 MUST 使用 Hermes `plugin_data_dir("hermes-plugin-milky")` 与独立
-`plugin_db("hermes-plugin-milky", filename="stickers.db")`。命令输入只来自
-`stickers/inbox/`，正式库和隔离目录分别为 `stickers/library/` 与 `stickers/junk/`；命令不得
-接受或读取任意路径、URL、URI、符号链接或特殊文件。
-
-Web 上传 SHALL 仅来自宿主认证的显式请求，存入同一 profile 插件持久根中的独立暂存区；不得位于命令递归扫描的 inbox 内。Web 导入只接受已确认归属的不透明批次/文件 ID，不接受服务器路径或远端 URL。
-
-#### Scenario: 维护输入边界
-
-- **WHEN** 维护命令收到固定目录之外的输入
-- **THEN** 系统 SHALL 拒绝该输入且不读取目标路径
-
-### Requirement: add 必须先确定性校验去重再调用视觉
-
-`add` SHALL 递归校验非空 PNG、JPEG、GIF、WebP regular file，单文件不超过 `10 MiB`，并以流式
-SHA-256 去重。每次命令最多为 50 张唯一候选调用 Hermes `vision_analyze_tool`，同时最多 10 路；
-超出部分返回 `batch_deferred` 并留在 inbox。视觉调用必须解析外层 JSON envelope 和内层 analysis
-对象，严格校验单选 `emotion`、2–5 个中文 `tags`、20 字以内中文 `description` 和布尔
-`is_sticker`。true 原子移动到 library 并写入 `sticker_items`/`sticker_files`，false 原子移动
-到 junk；视觉失败、非法结构或移动失败不得伪造成功，源文件留在 inbox。
-
-以上 inbox 扫描和超量保留语义 SHALL 继续适用于命令 add。Web 导入 SHALL 对明确提交的暂存候选复用相同校验、去重、视觉结构、原始格式及成功/隔离规则；失败文件保留在原批次受控暂存区供显式重试，不能移入命令 inbox。Web 批次上限、配额及过期回收 SHALL 遵守 milky-web-dashboard 规范。
-
-#### Scenario: add 校验失败
-
-- **WHEN** inbox 中存在损坏、超限或重复文件
-- **THEN** 系统 SHALL 在视觉分析前分类处理且不得伪造导入成功
-
-### Requirement: 贴纸条目必须支持字段级维护和可恢复修复
-
-`sticker_items.file_sha256` MUST 唯一，并保存随机不透明 `sticker_id`、`detected_*` 视觉基线、
-当前生效字段、字段级 `vision|manual` 来源和 `created_at`/`updated_at`/`detected_at`。`edit`
-必须在单事务中支持 set/clear 部分更新；`--clear` 恢复对应视觉基线。`reanalyze` 只更新合法
-`is_sticker=true` 的视觉基线，人工字段保持；false 或失败保留原条目。`del` 只接受当前可见 ID，
-`cleanup` 只回收无可见引用的 orphan/临时文件且不删除 junk，`reindex` 只扫描 library 并原子
-重建 `sticker_files`，不创建条目或 ID。
-
-#### Scenario: 字段级维护
-
-- **WHEN** 操作者只修改或清除一个贴纸字段
-- **THEN** 系统 SHALL 保留未指定字段、图片和不透明 ID
 
 ### Requirement: 维护命令必须有界、懒加载并隔离普通消息
 
 系统 MUST 支持 `add`、`list`、`edit`、`reanalyze`、`del`、`cleanup`、`reindex` 及对应 `--dry-run`/`--limit`
 语法。dry-run 不移动、删除或写入贴纸文件、数据库记录或索引。命令贴纸 store 只在有效维护命令中
-懒加载，注册、普通连接、普通消息、关键词、Will 和 Agent 输出不得触发维护。handler 只按
+懒加载，注册、普通连接、普通消息、关键词、Will 和未经显式维护入口的 Agent 输出不得触发维护。handler 只按
 `raw_args` 处理，不声明或实现 operator 身份授权。
 
 已授权显式 Web 维护 SHALL 按 Dashboard 生命周期懒加载自己拥有的库资源；Web 浏览仅只读打开已有库，不初始化或迁移存储。Web 入口不依据命令 raw_args 推断授权。
 
+资源打开、关闭及跨重载持久化 SHALL 遵守 [plugin-lifecycle](../plugin-lifecycle/spec.md) 的所有权契约；既有显式贴纸搜索和发送工具按各自规范使用库资源，不得隐式触发维护。
+
 #### Scenario: 普通消息不触发维护
 
-- **WHEN** 插件处理普通消息、关键词、Will 或 Agent 输出
+- **WHEN** 插件处理普通消息、关键词、Will 或未调用显式贴纸工具的 Agent 输出
 - **THEN** 系统 SHALL 不扫描贴纸目录、不打开贴纸 store 且不调用视觉能力
-
-### Requirement: 使用统计必须不影响维护幂等性
-
-新条目 MUST 初始化 `use_count=0`、`last_used_at=NULL`；list 和所有维护操作不得修改统计。预留
-的发送接口只有在有效条目已发起发送调用后才原子递增一次，Milky 成功、失败或未知状态均不回滚，
-统计写入失败不得重发已接受的消息。
-
-#### Scenario: 维护操作不改变统计
-
-- **WHEN** 操作者执行 list、edit、reanalyze、cleanup 或 reindex
-- **THEN** 系统 SHALL 保持贴纸发送统计不变
-
-### Requirement: 结果和日志必须脱敏
-
-命令回执、Web JSON/任务摘要和日志 MUST 只能包含固定安全分类、低基数计数、受限元数据和不透明 ID，不得包含 token、
-Authorization、绝对路径、URL、图片 bytes、完整参数、视觉原文或异常正文。贴纸维护失败不得改变
-SSE、Gate、Will、buffer、Hermes handoff、reply cost 或出站 sender 状态。
-
-只有通过宿主认证、校验当前 profile 可见条目与文件完整性的 Web 媒体响应 SHALL 交付受限图片 bytes；这不是 JSON/任务摘要或日志的脱敏例外，不能暴露服务器路径、媒体直链或目录。
-
-#### Scenario: 维护失败保持脱敏
-
-- **WHEN** 贴纸维护或存储操作失败
-- **THEN** 回执和日志 SHALL 使用固定安全分类且不得包含凭证、路径或完整异常
 
 ### Requirement: 贴纸维护必须使用插件持久目录和固定输入边界
 
 贴纸维护 SHALL 使用 Hermes 提供的插件持久目录作为唯一持久化根目录。命令输入目录 SHALL 固定为该根目录下的 `stickers/inbox/`，库文件和元数据 SHALL 位于同一插件持久化根目录的受控子目录或数据库中。系统 MUST NOT 写入插件安装目录、Hermes session DB、任意命令参数指定的路径或用户全局 skills 目录。
 
 Web 上传 SHALL 使用同一 profile 插件持久根内独立于 inbox 的受控暂存区，导入只消费所提交批次确认的候选。只读图库浏览 SHALL 不创建缺失的持久目录或数据库。
+
+系统 MUST 使用 Hermes `plugin_data_dir("hermes-plugin-milky")` 与独立 `plugin_db("hermes-plugin-milky", filename="stickers.db")`；正式库和隔离目录分别为 `stickers/library/` 与 `stickers/junk/`。命令不得接受任意路径、URL、URI、符号链接或特殊文件。Web 上传 SHALL 仅来自宿主认证的显式请求；导入只接受已确认归属的不透明批次/文件 ID，不接受服务器路径或远端 URL。
 
 #### Scenario: 首次执行 add 创建维护目录
 
@@ -109,6 +45,8 @@ Web 上传 SHALL 使用同一 profile 插件持久根内独立于 inbox 的受�
 ### Requirement: add 必须只导入可验证的图片文件并保留原始输入
 
 `/milky sticker add` SHALL 递归扫描固定 inbox 下的 regular file，且 SHALL 只接受已确认属于 PNG、JPEG、GIF 或 WebP 的非空图片。文件大小 SHALL 不超过 `10 MiB`；符号链接、目录、特殊文件、扩展名与内容不一致、损坏、不可读或超限文件 SHALL 被分类为 `rejected` 或对应的固定失败分类。确定性文件校验和 file_sha256 去重完成后，add SHALL 对尚未重复的候选调用 Hermes core 的辅助视觉能力生成元数据建议和 `is_sticker` 判定；只有完整结果结构合法且 `is_sticker=true` 的候选可以移动到 library 并创建可见条目，完整结果结构合法且 `is_sticker=false` 的候选 SHALL 移动到 `junk/` 且不得入库。视觉调用失败或结果结构非法的候选 SHALL 保留在 inbox，供后续命令增量重试。候选内容的来源和基础筛选由操作者负责，普通消息不得触发该流程。
+
+Web 导入 SHALL 对明确提交的暂存候选复用相同确定性校验、流式 SHA-256 去重、视觉结构、原始格式及成功/隔离规则。失败文件 SHALL 留在原批次受控暂存区供显式重试，不能移入命令 inbox；Web 批次上限、配额和过期回收 SHALL 遵守 [milky-web-dashboard](../milky-web-dashboard/spec.md)。
 
 #### Scenario: 导入受支持的静态图片和 GIF
 
@@ -173,15 +111,7 @@ Web 上传 SHALL 使用同一 profile 插件持久根内独立于 inbox 的受�
 
 ### Requirement: 视觉辅助结果必须结构化、有界且与主 Agent 隔离
 
-贴纸维护的视觉辅助 SHALL 只在到达插件 command handler 的显式 `sticker add`、`add --dry-run` 或 `reanalyze` 参数中运行；`add` SHALL 在确定性校验和去重之后按稳定顺序最多纳入 `50` 张唯一候选，第 `51` 张及以后 SHALL 报告 `batch_deferred`、保留在 inbox 且不得调用视觉。当前批次同时进行中的视觉调用 SHALL 不超过 `10` 个，任一调用完成后 SHALL 立即从当前批次队列补入下一候选。正式 add 中每个视觉结果成功的候选 SHALL 独立完成原子移动和元数据提交，不得等待整批候选完成；`is_sticker=true` 的候选 SHALL 移动到 library 并创建可见条目，`is_sticker=false` 的候选 SHALL 移动到 `junk/` 且不得入库；正常完成时命令 SHALL 等待当前批次候选进入成功提交、`junk`、重复、固定失败或 `batch_deferred` 状态后返回。宿主超时或取消时，系统 SHALL 保证已提交条目保持可见、尚未完成移动或提交的候选保持在 inbox；本 change 不承诺可靠回收已由 Hermes core 发出的底层视觉调用。`vision_analyze_tool` 返回的字符串 SHALL 先解析为外层 JSON envelope；只有外层 `success=true`、读取 `analysis`、去除精确匹配的允许 scale note 前缀，并将剩余 `analysis` 严格解析为单个 JSON 对象后，才可校验其中的 `emotion`、`tags`、`description` 和 `is_sticker`。视觉结果 SHALL 是单个内层 JSON 对象，包含固定枚举的单选 `emotion`、2–5 个中文 `tags`、20 个字符以内的中文 `description` 和严格布尔 `is_sticker`；固定枚举、数量、语言、长度或布尔类型约束不满足时 SHALL 报告 `visual_unavailable`，add 候选不得移动文件、创建库文件或可见条目，且 SHALL 保留在 inbox 供下一次命令重试。情绪、标签和描述只作为已接收条目的元数据建议，`is_sticker` 是新增候选的唯一语义入库门槛。视觉辅助 MUST NOT 创建 Agent tool call、写入主 Agent transcript、启动 handoff 或触发普通消息流程；插件不主动创建脱离 handler 的持久化后台队列。操作者 SHALL 能通过显式 `edit` 命令修正已入库的视觉元数据，并通过 `reanalyze` 重新生成视觉基线。
-
-#### Scenario: dry-run 先给出视觉预览
-
-- **WHEN** 操作者执行 `/milky sticker add --dry-run`
-- **THEN** 系统 SHALL 完成与正式 add 相同的文件校验、去重和视觉分析
-- **AND** SHALL 返回每个已分析候选的主情绪、中文检索标签、描述摘要和 `is_sticker` 判定
-- **AND** `is_sticker=true` 的候选 SHALL 标记为 `would_add`，`is_sticker=false` 的候选 SHALL 标记为 `would_move_to_junk`
-- **AND** SHALL 不移动、删除或写入任何贴纸文件、数据库记录或可见条目
+贴纸维护的视觉辅助 SHALL 只由显式 `sticker add`、`add --dry-run`、`reanalyze` 命令或已授权 Web 导入/重新分析请求触发。`vision_analyze_tool` 返回的字符串 SHALL 先解析为外层 JSON envelope；只有外层 `success=true`、读取 `analysis`、去除精确匹配的允许 scale note 前缀，并将剩余 `analysis` 严格解析为单个 JSON 对象后，才可校验其中的 `emotion`、`tags`、`description` 和 `is_sticker`。视觉结果 SHALL 是单个内层 JSON 对象，包含固定枚举的单选 `emotion`、2–5 个中文 `tags`、20 个字符以内的中文 `description` 和严格布尔 `is_sticker`；固定枚举、数量、语言、长度或布尔类型约束不满足时 SHALL 报告 `visual_unavailable`，导入候选不得移动文件、创建库文件或可见条目；命令候选 SHALL 保留在 inbox，Web 候选 SHALL 保留在原受控暂存批次，供下一次显式操作重试。情绪、标签和描述只作为已接收条目的元数据建议，`is_sticker` 是新增候选的唯一语义入库门槛。视觉辅助 MUST NOT 创建 Agent tool call、写入主 Agent transcript、启动 handoff 或触发普通消息流程；命令入口不创建脱离 handler 的持久化后台队列；显式 Web 维护任务由 Dashboard 生命周期拥有。操作者 SHALL 能通过显式 `edit` 命令修正已入库的视觉元数据，并通过 `reanalyze` 重新生成视觉基线。
 
 #### Scenario: 解析视觉外层 envelope 和内层 analysis
 
@@ -195,14 +125,41 @@ Web 上传 SHALL 使用同一 profile 插件持久根内独立于 inbox 的受�
 - **WHEN** core 返回 `success=false`、带 `error` 的失败 envelope、外层 JSON 非对象、缺少/为空的 `analysis`，或内层 `analysis` 不是合法 JSON 对象
 - **THEN** 系统 SHALL 报告 `visual_unavailable`
 - **AND** SHALL 不把错误说明或 fallback 文本当作贴纸元数据
-- **AND** SHALL 保留 inbox 原文件并允许下一次 add 重试
+- **AND** 命令输入 SHALL 保留在 inbox，Web 输入 SHALL 保留在原受控批次，允许下一次显式导入重试
 
 #### Scenario: 不重复 core 已执行的内部重试
 
 - **WHEN** core 已因空结果、图片缩放或传输错误完成内部重试/替代 provider，并返回最终 envelope
 - **THEN** 系统 SHALL 只解析该次调用的最终 envelope
-- **AND** SHALL 不在同一次命令中再次调用 `vision_analyze_tool`
-- **AND** 失败时 SHALL 将候选留在 inbox，等待下一次显式 add
+- **AND** SHALL 不在同一次显式维护操作中再次调用 `vision_analyze_tool`
+- **AND** 失败时 SHALL 将命令候选留在 inbox、Web 候选留在原受控批次，等待下一次显式导入
+
+#### Scenario: 视觉结果字段有界
+
+- **WHEN** 视觉服务返回结果
+- **THEN** `emotion` SHALL 为 `joy|sadness|anger|surprise|fear|disgust|love|approval|confusion|neutral|mixed|unknown`
+- **AND** `emotion` SHALL 只允许一个值，不得返回数组或多个主情绪
+- **AND** `tags` SHALL 包含 2 至 5 个不重复的中文标签，每个不超过 16 个字符，且可以与 `emotion` 的中文含义重叠
+- **AND** `description` SHALL 为不超过 20 个字符的中文内容简述，图片含文字时 SHALL 概括文字含义而非抄录长文本
+- **AND** `is_sticker` SHALL 为 JSON 原生布尔值 `true` 或 `false`，不得接受字符串、数字或缺失字段
+
+#### Scenario: 主 Agent 上下文保持不变
+
+- **WHEN** 视觉辅助在贴纸维护命令或已授权 Web 维护中成功或失败
+- **THEN** 系统 SHALL 不创建主 Agent turn、tool message、transcript 条目或 handoff
+- **AND** 普通消息的 Gate、Will、buffer、reply cost 和出站状态 SHALL 保持不变
+
+### Requirement: 命令视觉批次必须有界并逐项提交
+
+以下 inbox、命令批次和 handler 等待规则适用于命令入口，Web 任务与暂存输入遵守本规范 Web 条款及 Dashboard 契约；两类入口共用上文视觉结果结构和主 Agent 隔离规则。`add` SHALL 在确定性校验和去重之后按稳定顺序最多纳入 `50` 张唯一候选，第 `51` 张及以后 SHALL 报告 `batch_deferred`、保留在 inbox 且不得调用视觉。当前批次同时进行中的视觉调用 SHALL 不超过 `10` 个，任一调用完成后 SHALL 立即从当前批次队列补入下一候选。正式 add 中每个视觉结果成功的候选 SHALL 独立完成原子移动和元数据提交，不得等待整批候选完成；`is_sticker=true` 的候选 SHALL 移动到 library 并创建可见条目，`is_sticker=false` 的候选 SHALL 移动到 `junk/` 且不得入库；正常完成时命令 SHALL 等待当前批次候选进入成功提交、`junk`、重复、固定失败或 `batch_deferred` 状态后返回。宿主超时或取消时，系统 SHALL 保证已提交条目保持可见、尚未完成移动或提交的候选保持在 inbox；插件不承诺可靠回收已由 Hermes core 发出的底层视觉调用。
+
+#### Scenario: dry-run 先给出视觉预览
+
+- **WHEN** 操作者执行 `/milky sticker add --dry-run`
+- **THEN** 系统 SHALL 完成与正式 add 相同的文件校验、去重和视觉分析
+- **AND** SHALL 返回每个已分析候选的主情绪、中文检索标签、描述摘要和 `is_sticker` 判定
+- **AND** `is_sticker=true` 的候选 SHALL 标记为 `would_add`，`is_sticker=false` 的候选 SHALL 标记为 `would_move_to_junk`
+- **AND** SHALL 不移动、删除或写入任何贴纸文件、数据库记录或可见条目
 
 #### Scenario: 视觉并发上限和队列补位
 
@@ -233,7 +190,7 @@ Web 上传 SHALL 使用同一 profile 插件持久根内独立于 inbox 的受�
 - **THEN** 系统 SHALL 不为未完成移动或提交的候选创建库文件或可见条目
 - **AND** 已完成原子提交的条目 SHALL 保持可见
 - **AND** 正在处理或排队但尚未移动或提交的候选 SHALL 保留在 inbox
-- **AND** 本 change SHALL 不把 Hermes core 对已发出底层调用的回收能力声明为可靠保证
+- **AND** 插件 SHALL 不把 Hermes core 对已发出底层调用的回收能力声明为可靠保证
 
 #### Scenario: 单个候选失败不阻塞队列
 
@@ -242,26 +199,11 @@ Web 上传 SHALL 使用同一 profile 插件持久根内独立于 inbox 的受�
 - **AND** 其他正在处理或排队的候选 SHALL 继续执行
 - **AND** 失败候选 SHALL 不创建库文件或可见条目
 
-#### Scenario: 视觉结果字段有界
-
-- **WHEN** 视觉服务返回结果
-- **THEN** `emotion` SHALL 为 `joy|sadness|anger|surprise|fear|disgust|love|approval|confusion|neutral|mixed|unknown`
-- **AND** `emotion` SHALL 只允许一个值，不得返回数组或多个主情绪
-- **AND** `tags` SHALL 包含 2 至 5 个不重复的中文标签，每个不超过 16 个字符，且可以与 `emotion` 的中文含义重叠
-- **AND** `description` SHALL 为不超过 20 个字符的中文内容简述，图片含文字时 SHALL 概括文字含义而非抄录长文本
-- **AND** `is_sticker` SHALL 为 JSON 原生布尔值 `true` 或 `false`，不得接受字符串、数字或缺失字段
-
-#### Scenario: 主 Agent 上下文保持不变
-
-- **WHEN** 视觉辅助在贴纸维护命令中成功或失败
-- **THEN** 系统 SHALL 不创建主 Agent turn、tool message、transcript 条目或 handoff
-- **AND** 普通消息的 Gate、Will、buffer、reply cost 和出站状态 SHALL 保持不变
-
 ### Requirement: edit 必须支持字段级部分更新和人工覆盖清除
 
 `sticker_items` SHALL 将 `detected_emotion`、`detected_tags_json`、`detected_description` 作为最近一次合法视觉结果的基线，将 `emotion`、`tags_json`、`description` 作为当前生效值，并以 `emotion_source`、`tags_source`、`description_source` 记录每个字段的 `vision|manual` 来源；`created_at`、`updated_at` 和 `detected_at` SHALL 分别表示条目创建、最近一次任意元数据更新和最近一次视觉基线更新。命令和 Agent 对外仍使用逻辑字段 `emotion`、`tags`、`description`，`tags_json` 仅为数据库内部表示。
 
-`sticker_items` SHALL 额外保存 `use_count` 和可空的 `last_used_at`；新条目 SHALL 初始化为 `use_count=0`、`last_used_at=NULL`。本 change 的 `add`、`edit`、`reanalyze`、`del`、`cleanup`、`reindex` 和 `sticker_search` SHALL 不修改这两个字段。后续 `sticker_send` 在有效贴纸已解析并发起发送调用时，才 SHALL 原子地执行 `use_count = use_count + 1` 并写入当前 UTC 的 `last_used_at`；Milky Action 随后的成功、失败或未知状态均不得回滚该计数，计数写入失败 SHALL 不重发已接受的消息，也 SHALL 不宣称 QQ 用户已实际看到消息。
+使用统计字段的初始化、展示和维护只读边界 SHALL 遵守下文“使用统计必须可追踪且不影响维护幂等性”。
 
 `/milky sticker edit <sticker_id>` SHALL 使用以下固定语法：`[--emotion=<enum>] [--tags=<tag1>,<tag2>,...] [--description=<text>] [--clear=<emotion|tags|description>[,<field>...]]`；每个 option SHALL 是单个 `--name=value` raw-args token，`description` 值 SHALL 不跨空白 token，命令 SHALL 不依赖 shell quoting。至少需要一个 set 或 clear option；未出现的字段 SHALL 保持不变；同一字段同时 set 和 clear、未知 option、空值、非法枚举、重复标签、标签不在 2–5 个范围内或描述超过 20 个字符时，整条命令 SHALL 返回 `invalid_input` 且不修改任何字段。`--clear` SHALL 清除指定字段的人工覆盖并恢复对应的视觉基线值，而不是写入空标签或空情绪。数据库 SHALL 为 `emotion`、`tags`、`description` 分别保存视觉基线、生效值和 `*_source=vision|manual`；列表中的行级 `source` SHALL 派生为任一字段为 `manual` 时为 `manual`，否则为 `vision`，并 SHALL 可返回 `field_sources`。edit 不得修改图片 bytes、file_sha256、库文件引用、技术索引、`use_count`、`last_used_at` 或 `sticker_id`。
 
@@ -301,7 +243,7 @@ Web 上传 SHALL 使用同一 profile 插件持久根内独立于 inbox 的受�
 
 ### Requirement: 使用统计必须可追踪且不影响维护幂等性
 
-`list` 返回的每个可见条目 SHALL 包含 `use_count` 和可空的 `last_used_at`。`use_count` SHALL 为不小于零的整数，`last_used_at` SHALL 使用 UTC 时间或 `NULL`。维护命令和搜索操作 SHALL 只读这两个字段；未来的 `sticker_send` 发送路径在有效贴纸已解析并发起发送调用时 SHALL 只递增一次，并使用原子数据库更新；Milky Action 随后的成功、失败或未知状态均不得回滚该计数；计数更新失败时 SHALL 不重发消息，并将统计持久化失败作为独立的 `storage_error` 处理。
+`sticker_items` SHALL 保存 `use_count` 和可空的 `last_used_at`；新条目 MUST 初始化为 `0` 和 `NULL`。list SHALL 展示这些字段，计数为非负整数，非空时间使用 UTC。命令维护、Web 维护及搜索 SHALL 不因维护或查询增加计数或改写最近使用时间。发送前 claim、失败阻断、单次计数及远端结果不回滚的精确语义由 [qq-sticker-send](../qq-sticker-send/spec.md)“发送统计和会话历史必须与发送边界一致”定义。
 
 #### Scenario: 新条目初始化使用统计
 
@@ -311,34 +253,9 @@ Web 上传 SHALL 使用同一 profile 插件持久根内独立于 inbox 的受�
 
 #### Scenario: 维护和搜索不改变使用统计
 
-- **WHEN** 操作者执行 `add`、`edit`、`reanalyze`、`del`、`cleanup`、`reindex` 或 `sticker_search`
+- **WHEN** 操作者执行 list、`add`、`edit`、`reanalyze`、`del`、`cleanup`、`reindex`、对应 Web 维护或 `sticker_search`
 - **THEN** 系统 SHALL 不因这些操作增加 `use_count`
 - **AND** SHALL 不因这些操作更新 `last_used_at`
-
-#### Scenario: 无效发送不计数
-
-- **WHEN** `sticker_send` 无法解析有效的 `sticker_id`、发送目标，或尚未发起 Milky 发送调用就失败
-- **THEN** 系统 SHALL 不增加 `use_count`
-- **AND** SHALL 不更新 `last_used_at`
-
-#### Scenario: 发起发送后原子更新使用统计
-
-- **WHEN** 后续 `sticker_send` 已解析有效贴纸并发起 Milky 发送调用
-- **THEN** 系统 SHALL 将目标条目的 `use_count` 原子增加 `1`
-- **AND** SHALL 将 `last_used_at` 更新为当前 UTC 时间
-- **AND** 同一次 `sticker_send` 调用 SHALL 最多计数一次；显式发起新的 `sticker_send` 重试 SHALL 重新计数
-
-#### Scenario: Milky 状态不影响计数
-
-- **WHEN** Milky 发送 Action 在计数更新后返回成功、失败或结果未知
-- **THEN** 系统 SHALL 不因 Milky 返回状态回滚该次使用计数
-- **AND** SHALL 不重发已经被接受的消息
-
-#### Scenario: 统计写入失败不重复发送
-
-- **WHEN** 有效 `sticker_send` 已发起发送，但 `use_count` 或 `last_used_at` 持久化失败
-- **THEN** 系统 SHALL 不因统计失败重发 Milky 消息
-- **AND** 统计写入失败 SHALL 返回或记录独立的 `storage_error`
 
 ### Requirement: reanalyze 必须支持已入库贴纸的重新视觉打标
 
@@ -378,7 +295,7 @@ Web 上传 SHALL 使用同一 profile 插件持久根内独立于 inbox 的受�
 
 ### Requirement: 导入必须按内容去重并以原子方式提交
 
-系统 SHALL 对候选图片 bytes 计算 SHA-256，并在同一插件库中以 content identity 去重；同一 bytes 只能对应一个可见 `sticker_id`。新条目只有在图片库文件已完整、可读取地提交且元数据变更已成功提交后才可见。任一阶段失败 SHALL 不留下半条目、损坏的可见文件或伪造的成功结果。
+系统 SHALL 对候选图片 bytes 以流式方式计算 SHA-256，并在同一插件库中以 content identity 去重；条目 ID SHALL 为随机不透明标识。同一 bytes 只能对应一个可见 `sticker_id`。正式导入 SHALL 提交 sticker_items 可见条目及 sticker_files 技术索引。新条目只有在图片库文件已完整、可读取地提交且元数据变更已成功提交后才可见。任一阶段失败 SHALL 不留下半条目、损坏的可见文件或伪造的成功结果。
 
 #### Scenario: 重复执行 add
 
@@ -426,23 +343,23 @@ Web 上传 SHALL 使用同一 profile 插件持久根内独立于 inbox 的受�
 - **THEN** 两者 SHALL 具有相同的参数校验、删除结果和中文回执，单次调用最多执行一次删除
 - **AND** 非法 ID SHALL 不被解释为路径，缺少 ID SHALL 不回退当前会话或其他条目
 
-### Requirement: 贴纸维护授权边界暂不由本 change 提供
+### Requirement: 命令和 Web 维护分别遵守宿主授权边界
 
-既有命令入口 SHALL 只按插件 command handler 收到的 `raw_args` 处理贴纸维护参数，不得宣称这些参数一定来自 Milky friend/group，也不得宣称写操作具备 operator-only 边界。插件 MUST NOT 增加操作者 ID、来源判断或第二套授权配置；Hermes core 能否在 handler 前拒绝 canonical `/milky` 不属于本 change 对贴纸写操作来源的保证。授权边界待 core 向 handler 提供可信来源上下文后另行处理。
+既有命令入口 SHALL 只按插件 command handler 收到的 `raw_args` 处理贴纸维护参数，不得宣称这些参数一定来自 Milky friend/group，也不得宣称写操作具备 operator-only 边界。插件 MUST NOT 增加操作者 ID、来源判断或第二套授权配置；命令权限由 Hermes core 决定；handler 收到 raw_args 不构成来源身份或 operator-only 保证。
 
 Web 入口 SHALL 独立复用宿主 Dashboard 的可信访问控制、请求保护、profile 及启用状态，不将 command handler 参数当作 Web 授权证明；Web 认证不改变现有命令来源保证。
 
 #### Scenario: handler 收到贴纸维护参数
 
 - **WHEN** 插件 command handler 收到合法的 `sticker add`、`list`、`edit`、`reanalyze`、`del`、`cleanup` 或 `reindex` 参数
-- **THEN** 系统 SHALL 按本 change 的语法、持久化和视觉规则处理参数
+- **THEN** 系统 SHALL 按本规范的语法、持久化和视觉规则处理参数
 - **AND** SHALL 不读取或推断未随 handler 传入的 Milky friend/group、平台或操作者身份
 
 #### Scenario: 不新增插件操作者授权配置
 
 - **WHEN** 部署者配置插件或执行贴纸维护命令
 - **THEN** 插件 SHALL 不要求或读取 `MILKY_STICKER_OPERATOR_IDS` 或等价的插件级操作者配置
-- **AND** 本 change SHALL 不验证 `allow_admin_from`、`group_allow_admin_from`、`user_allowed_commands` 或 `group_user_allowed_commands` 能否约束贴纸子命令
+- **AND** 插件 SHALL 不读取或解释 `allow_admin_from`、`group_allow_admin_from`、`user_allowed_commands` 或 `group_user_allowed_commands` 等宿主权限配置
 
 #### Scenario: 非显式普通流程不触发维护
 
@@ -450,15 +367,9 @@ Web 入口 SHALL 独立复用宿主 Dashboard 的可信访问控制、请求保�
 - **THEN** 系统 SHALL 不执行 add、edit、reanalyze、del、cleanup 或 reindex
 - **AND** SHALL 不把贴纸维护作为普通消息旁路或 Agent Tool 暴露
 
-#### Scenario: 普通消息或 Agent 输出触发维护
-
-- **WHEN** 普通消息正文、图片、关键词、Will 决策、Agent 输出或其他事件没有显式匹配维护命令，也没有已授权的显式 Web 维护请求
-- **THEN** 系统 SHALL 不执行 add、edit、reanalyze、del、cleanup 或 reindex
-- **AND** SHALL 不把贴纸维护作为普通消息旁路或 Agent Tool 暴露
-
 ### Requirement: del 必须按可见 sticker_id 删除并保护库文件一致性
 
-`/milky sticker del <sticker_id>` SHALL 只接受 list 返回的当前库可见 ID。`sticker_items.file_sha256` SHALL 唯一，因此本 change 不支持多个可见条目共享同一库文件。删除事务 SHALL 先验证该 `file_sha256` 只有目标条目引用，再移除可见条目并提交；事务提交后，才可回收对应库文件或将其交给 cleanup。若发现违反唯一约束的异常多引用，事务 SHALL 回滚、保留库文件并报告 `storage_error`，不得误删。未知、格式错误或已经删除的 ID SHALL 返回 `sticker_not_found` 或 `invalid_input`，不得将其解释为路径、URL、hash 查询或其他命令。
+`/milky sticker del <sticker_id>` SHALL 只接受 list 返回的当前库可见 ID。`sticker_items.file_sha256` SHALL 唯一，因此当前库不支持多个可见条目共享同一库文件。删除事务 SHALL 先验证该 `file_sha256` 只有目标条目引用，再移除可见条目并提交；事务提交后，才可回收对应库文件或将其交给 cleanup。若发现违反唯一约束的异常多引用，事务 SHALL 回滚、保留库文件并报告 `storage_error`，不得误删。未知、格式错误或已经删除的 ID SHALL 返回 `sticker_not_found` 或 `invalid_input`，不得将其解释为路径、URL、hash 查询或其他命令。
 
 #### Scenario: 删除现有条目
 
@@ -525,6 +436,8 @@ Web 入口 SHALL 独立复用宿主 Dashboard 的可信访问控制、请求保�
 
 贴纸目录、数据库、权限或命令处理失败 SHALL 被压缩为固定安全分类并通过命令回执返回；不得泄露 token、Authorization、QQ/群之外的敏感身份、绝对路径、URL、图片内容、原始异常或完整命令参数。维护失败 SHALL 不改变 Milky SSE、普通消息的 Gate/Will/buffer、Hermes handoff 或出站发送状态。
 
+命令回执、Web JSON/任务摘要和日志 MUST 只包含固定安全分类、低基数计数、受限元数据和不透明 ID，不得包含完整参数、视觉原文或其他敏感原始内容。只有通过宿主认证、校验当前 profile 可见条目与文件完整性的 Web 媒体响应 SHALL 交付受限图片 bytes；JSON/任务摘要和日志不得暴露服务器路径、媒体直链或目录。维护失败 SHALL 不改变 reply cost。
+
 #### Scenario: 存储不可用
 
 - **WHEN** 插件持久目录不可写、数据库不可用或索引版本不兼容
@@ -534,7 +447,7 @@ Web 入口 SHALL 独立复用宿主 Dashboard 的可信访问控制、请求保�
 #### Scenario: 失败结果脱敏
 
 - **WHEN** 维护命令遇到文件、数据库或权限异常
-- **THEN** 用户可见回执和日志 SHALL 只包含命令名、固定分类、低基数计数和必要的脱敏关联 ID
+- **THEN** 用户可见回执和日志 SHALL 只包含命令名、固定分类、低基数计数和必要的已确认低敏关联 ID
 - **AND** SHALL 不包含异常正文、绝对路径、URL、图片 bytes 或凭证
 
 ### Requirement: Web 维护复用既有条目语义且明确批次范围

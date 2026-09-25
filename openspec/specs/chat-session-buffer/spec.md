@@ -90,7 +90,7 @@ Agent-facing header 中的 `reply_to <reply_id>` MUST 改为 `reply_to your_prev
 
 系统事件 MUST 使用 `<event <event_type>> <body>` 格式，不得伪装成普通消息或 segment
 placeholder；该格式对 group 和 dm 均保持不变。普通消息的 `body` MUST 来自规范化消息内容和
-本 change 定义的结构化占位符；
+[message-segments](../message-segments/spec.md) 定义的结构化占位符；
 系统事件的 body MUST 来自事件字段的可读渲染。普通消息和系统事件之间 MUST 使用一个换行
 拼接；不得添加额外历史标题。
 

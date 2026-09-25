@@ -128,8 +128,8 @@ opaque ID、当前目标和一次发送契约，不得从本 change 引入任意
 
 #### Scenario: 发送统计保持既有 claim 语义
 
-- **WHEN** 有效条目已完成选择、文件校验并发起发送调用
-- **THEN** 系统 SHALL 原子记录一次使用统计
+- **WHEN** 有效条目已完成选择、文件校验并准备发起发送调用
+- **THEN** 系统 SHALL 在 Milky 调用前原子记录一次使用统计；claim 失败 SHALL 返回 storage_error 且不发送
 - **AND** Milky 随后的成功、失败或未知状态 SHALL 不回滚该统计，也 SHALL 不触发重发
 
 #### Scenario: Agent 忘记自动条目

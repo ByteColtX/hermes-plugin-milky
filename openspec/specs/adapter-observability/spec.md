@@ -24,7 +24,7 @@ Action/Tool/出站结果和关键入站结果 SHALL 使用 `info` 或 `warning`�
 
 #### Scenario: 可恢复 Action 失败
 
-- **WHEN** 一个 HTTP Action 被拒绝、超时或返回可安全分类的协议错误
+- **WHEN** 一个非 Tool HTTP Action 被拒绝、超时或返回可安全分类的协议错误
 - **THEN** 日志 SHALL 使用 `warning` 和固定错误分类
 - **AND** 日志 SHALL 尽可能包含 Action 名称、HTTP 状态码、传输阶段和 `duration_ms`
 - **AND** SHALL 不直接输出底层异常文本或响应正文
@@ -118,15 +118,15 @@ error report 失败和组件关闭失败 SHALL 使用各自事件，不得复用
 
 ### Requirement: Action、资源和出站结果在拥有边界处可观察
 
-HTTP Action 的成功、协议拒绝、传输未知、malformed 和 unsupported 结果 MUST 在 Action 或其
+非 Tool HTTP Action 的成功、协议拒绝、传输未知、malformed 和 unsupported 结果 MUST 在 Action 或其
 直接编排边界被记录；每条 Action 完成日志 SHALL 包含 Action 名称、结果分类、已知的 HTTP
 状态码、传输阶段和 `duration_ms`。资源补全 MUST 记录完成数量和降级分类；出站文本、媒体
 和文件上传 MUST 记录路由、分块/附件计数和最终结果。日志 SHALL NOT 记录 Action body、媒体
-URL、本地文件路径、文件名、文件内容或远端完整响应。
+URL、本地文件路径、文件名、文件内容或远端完整响应。Action Tool 取得响应体后的日志只表示已取得响应，MUST NOT 解析或推断远端成功、拒绝或 malformed；该分类遵守 [security-boundaries](../security-boundaries/spec.md)。
 
 #### Scenario: Action 成功
 
-- **WHEN** Milky Action 返回成功 envelope，发送 Action 还提供稳定 `message_seq`
+- **WHEN** 非 Tool Milky Action 返回成功 envelope，发送 Action 还提供稳定 `message_seq`
 - **THEN** 日志 SHALL 记录 Action 名称、成功分类、已知 HTTP 状态码和耗时
 - **AND** SHALL 不把完整请求 URL、Bearer header 或请求 body 写入日志
 

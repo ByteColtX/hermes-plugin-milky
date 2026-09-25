@@ -1,6 +1,7 @@
 # qq-group-action-tools Specification
 
 ## Purpose
+
 为 Hermes Agent 提供与 Milky v1.3.0 对齐的群文件、入群请求和群邀请固定工具，并在显式调用、参数校验、结果保留和远端副作用之间建立可测试的安全边界。
 
 ## Requirements
@@ -22,7 +23,7 @@ catalog、别名 Action 或未列出的操作。
 
 #### Scenario: 工具不得改写为其他 Action
 
-- **WHEN** Agent 调用任一新增工具
+- **WHEN** Agent 调用本工具组中任一工具
 - **THEN** 请求 SHALL 只访问该工具对应的 `/api/{operationId}` 路径
 - **AND** SHALL 不根据入参、事件正文或远端结果改调用其他 Action
 
@@ -72,7 +73,7 @@ MUST NOT 自行补入 OpenAPI 默认值；显式 `null` 仅在 schema 允许时�
 
 #### Scenario: 非法群工具参数不触网
 
-- **WHEN** 任一新增工具收到缺失必填字段、错误类型、越界序号、空文件 ID、非法枚举或额外字段
+- **WHEN** 本工具组中任一工具收到缺失必填字段、错误类型、越界序号、空文件 ID、非法枚举或额外字段
 - **THEN** 工具 SHALL 返回 `invalid_input`
 - **AND** Milky client SHALL 不发送 HTTP 请求
 
@@ -100,15 +101,9 @@ envelope、data、文件和文件夹字段，不得执行成功结构校验、�
 
 #### Scenario: 查询结果缺少历史最小结构或表示失败
 
-- **WHEN** 响应体缺少 `data.download_url`、`data.files`、`data.folders`，不是 JSON object，不是 JSON，或表示协议拒绝/非成功 HTTP 状态
+- **WHEN** 响应体缺少 `data.download_url`、`data.files`、`data.folders`，文件或文件夹字段不是对象数组、不是 JSON object、不是 JSON，或表示协议拒绝/非成功 HTTP 状态
 - **THEN** 工具 SHALL 将已取得的响应体原样交给 Tool 调用方
 - **AND** SHALL 不返回 `malformed`、`rejected`、`http_error` 替代结果、查询成功摘要或伪造缺失字段
-
-#### Scenario: 查询结果缺少最小结构
-
-- **WHEN** 成功 envelope 缺少 `data.download_url`，或 `data.files`/`data.folders` 不是对象数组
-- **THEN** 工具 SHALL 返回已取得的原始响应体
-- **AND** SHALL 不报告查询成功或伪造缺失字段
 
 ### Requirement: 群请求和群邀请处理必须只由显式调用触发
 
@@ -153,15 +148,9 @@ MUST 不包含认证凭证、完整异常正文、下载 URL 或敏感自由文�
 #### Scenario: 远端协议拒绝或 HTTP 错误
 
 - **WHEN** 群请求或群邀请 Action 返回 HTTP 200 但协议 envelope 表示失败，或返回非 2xx 状态及任意响应体
-- **THEN** Tool 调用方 SHALL 收到完整原始响应体
+- **THEN** Tool 调用方 SHALL 收到完整原始响应体，包括远端 message 和 wording
 - **AND** SHALL 不把 HTTP 200 当作成功，也 SHALL 不改造成固定 `rejected` 或 `http_error` 结果
 - **AND** 插件 SHALL 不因该结果调度群成员状态刷新
-
-#### Scenario: 远端协议拒绝群操作
-
-- **WHEN** 群请求或群邀请 Action 返回 HTTP 200 但协议 envelope 表示失败
-- **THEN** Tool 调用方 SHALL 收到完整原始响应体，包括远端的 `message` 和 `wording`
-- **AND** SHALL 不改造成固定 `rejected` 结果
 
 #### Scenario: 成功管理结果保留协议边界
 
@@ -217,7 +206,7 @@ access token、Authorization、完整响应或完整 `special_title`。
 
 #### Scenario: 成功设置返回远端响应
 
-- **WHEN** 显式 Tool 调用得到成功 envelope、`data` 为 `{}` 或包含扩展字段的响应体
+- **WHEN** 显式 Tool 调用得到 status=ok、retcode=0 的成功 envelope、`data` 为 `{}` 或包含扩展字段的响应体
 - **THEN** Tool 调用方 SHALL 收到完整原始响应体
 - **AND** 系统 SHALL 不虚构本地群成员头衔或其他状态
 
@@ -227,21 +216,9 @@ access token、Authorization、完整响应或完整 `special_title`。
 - **THEN** Tool 调用方 SHALL 收到完整原始响应体
 - **AND** SHALL 不把 HTTP 200 或非空响应改写成成功、`rejected`、`http_error` 或 `malformed`
 
-#### Scenario: 协议拒绝或响应结构错误
-
-- **WHEN** Action 返回 HTTP 200 但协议 envelope 表示失败，或成功 envelope 的 `data` 非空 object
-- **THEN** Tool 调用方 SHALL 收到完整原始响应体
-- **AND** SHALL 不返回插件自有 `rejected` 或 `malformed`
-
 #### Scenario: 变更结果未知时不重试
 
 - **WHEN** 请求已进入 HTTP 边界但客户端未取得远端响应体
 - **THEN** 工具 SHALL 返回 `transport_unknown`
 - **AND** 同一次 Tool 调用 SHALL 只提交一次 Action
 - **AND** SHALL 不自动重发或返回成功结果
-
-#### Scenario: 成功设置返回空对象 envelope
-
-- **WHEN** 显式 Tool 调用得到 `status=ok`、`retcode=0` 且 `data` 为 `{}`
-- **THEN** Tool 调用方 SHALL 收到完整原始响应体
-- **AND** 系统 SHALL 不虚构本地群成员头衔或其他状态

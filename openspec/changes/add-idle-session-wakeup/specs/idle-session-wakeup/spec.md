@@ -9,7 +9,7 @@
 
 主动唤醒 watcher MUST 只考虑 Hermes session store 中已经存在、origin platform 为 `milky`、
 chat key 为合法 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>` 且已有 Hermes session key 的会话。
-候选 chat key MUST 命中 `MILKY_ALLOWED_CHATS` 的完整条目或对应命名空间通配符；白名单为空时，
+候选筛选与注入前 SHALL 使用当前实例已确认生效的白名单，包括已发布的热更新；不得使用撤销前的规则。候选 chat key MUST 命中 `MILKY_ALLOWED_CHATS` 的完整条目或对应命名空间通配符；白名单为空时，
 主动唤醒 MUST 没有候选。watcher MUST NOT 创建 session、从 Milky chat key 推导 Hermes session key、
 扫描 temp/未知场景或触达白名单之外的会话。
 
@@ -35,7 +35,7 @@ chat key 为合法 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>` 且已�
 
 - **WHEN** `MILKY_ALLOWED_CHATS` 为空，或候选 chat key 未命中具体条目及其对应命名空间通配符
 - **THEN** watcher SHALL 不触达该 chat
-- **AND** 普通入站消息既有的空白名单放行语义 SHALL 不被本能力改变
+- **AND** 普通入站消息既有的空白名单阻止语义 SHALL 不被本能力改变
 
 ### Requirement: 闲置周期只触发一次并由人工活动重新武装
 

@@ -102,9 +102,7 @@ MUST 使用日志给出 `total`、`succeeded`、`failed`、`muted`、`unmuted` �
 - **AND** 无法通过 Milky 初始 Action 确认的 whole 状态 SHALL 计入汇总的 `unknown`
 - **AND** SHALL 不记录 nickname、响应正文、请求 body 或未确认的群状态
 
-#### Scenario: 空白名单保持全群语义
-
-本场景沿用既有标识以便规范迁移；原有全群扫描结果由本 BREAKING 变更替换为零成员扫描。
+#### Scenario: 空白名单执行零成员扫描
 
 - **WHEN** `MILKY_ALLOWED_CHATS` 为空且群列表返回多个群
 - **THEN** 群禁言扫描 SHALL 不查询任何群成员
@@ -163,28 +161,11 @@ Agent 出站 `at`、`reply`、`face` 和本地贴纸图片的 CQ-compatible 语�
 - **THEN** 工具可用性和参数校验 SHALL 仍以实际注册的 ToolSpec 为准
 - **AND** skill SHALL 不通过文字说明扩大可调用的 Milky Action 范围，也不得把 text fallback 误称为原生 CQ 执行
 
-### Requirement: 人工贴纸 store 必须懒加载并由生命周期拥有
-
-贴纸维护 SHALL 使用独立的 `stickers.db` 和 plugin-data 下固定的 `stickers/inbox/`、
-`stickers/library/`、`stickers/junk/`。注册、普通连接和 SSE 消费阶段 MUST 不创建贴纸目录、打开
-贴纸数据库、扫描图片、调用视觉服务或创建隐式后台任务；有效维护命令结束后 SHALL 关闭本次
-操作的 store，disconnect/reload SHALL 保留已提交条目和文件。显式 Web 浏览 SHALL 仅只读打开已有库，缺库不创建；已授权 Web 维护 SHALL 按 Dashboard 生命周期打开并释放自己拥有的库资源和任务。命令、Web 与发送入口共享同一 profile 的持久库，资源关闭不得跨运行实例影响其他所有者。
-
-#### Scenario: 注册和连接无贴纸副作用
-
-- **WHEN** Hermes 注册插件或 Milky adapter 完成普通连接
-- **THEN** 贴纸目录和数据库 SHALL 保持懒加载
-- **AND** 普通消息、系统事件和 Will SHALL 不触发 add、reanalyze 或其他贴纸操作
-
-#### Scenario: disconnect 保留贴纸数据
-
-- **WHEN** 已提交贴纸后 adapter disconnect 或插件 reload
-- **THEN** 本次打开的贴纸资源 SHALL 被关闭
-- **AND** 下一次显式维护命令 SHALL 能读取已提交的元数据和 library 文件
-
 ### Requirement: 贴纸库必须懒加载、可关闭并跨重载保留
 
 贴纸数据库和库目录 SHALL 在有效贴纸维护命令、既有显式贴纸工具或已授权的显式 Web 维护需要时按各自契约懒加载；显式 Web 浏览可只读访问已有库，但不得初始化或迁移缺失存储。插件导入、根 `register(ctx)` 和普通 Milky 连接初始化 SHALL 不读取 inbox、不打开贴纸数据库、不扫描库文件、不调用视觉能力或创建贴纸后台任务。适配器停止 SHALL 关闭自身拥有的贴纸库资源，Dashboard 停止或插件卸载 SHALL 按各自所有权停止任务并关闭资源；各入口 SHALL 保留已经成功提交的持久化文件和元数据供下一次加载使用。
+
+命令、Web 与发送入口 SHALL 共享同一 profile 的持久库；目录和输入约束由 [qq-sticker-maintenance](../qq-sticker-maintenance/spec.md) 定义。有效维护命令结束后 SHALL 关闭本次操作的 store；任何关闭 SHALL 只作用于本运行实例拥有的资源。
 
 #### Scenario: 注册阶段无贴纸副作用
 
@@ -215,6 +196,18 @@ Agent 出站 `at`、`reply`、`face` 和本地贴纸图片的 CQ-compatible 语�
 - **WHEN** Dashboard 浏览已有图库，随后 QQ adapter 断开
 - **THEN** 浏览 SHALL 不创建、迁移或修改图库，且仍可使用 Dashboard 自身拥有的只读资源
 - **AND** Dashboard 停止时 SHALL 关闭这些资源，保持已提交数据供后续显式操作使用
+
+#### Scenario: 注册和连接无贴纸副作用
+
+- **WHEN** Hermes 注册插件或 Milky adapter 完成普通连接
+- **THEN** 贴纸目录和数据库 SHALL 保持懒加载
+- **AND** 普通消息、系统事件和 Will SHALL 不触发 add、reanalyze 或其他贴纸操作
+
+#### Scenario: disconnect 保留贴纸数据
+
+- **WHEN** 已提交贴纸后 adapter disconnect 或插件 reload
+- **THEN** 本实例拥有的贴纸资源 SHALL 被关闭，不关闭其他运行实例的资源
+- **AND** 下一次显式维护命令 SHALL 能读取已提交的元数据和 library 文件
 
 ### Requirement: Dashboard 维护任务生命周期独立且可终止
 

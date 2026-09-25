@@ -12,7 +12,7 @@
   之外的会话。
 - 新增单一 JSON 配置 `MILKY_PROACTIVE_POLICY`，包含 `enabled`、`idleSeconds`、
   `maxAttemptsPerDay` 和可选 `quietHours`；不新增独立会话列表、冷却或时区配置。
-- 复用 Hermes Core 的时区解析，不在插件配置中重复声明时区；配置只在启动时解析，非法 JSON、
+- 复用 Hermes Core 的时区解析，不在插件配置中重复声明时区；主动策略配置只在启动时解析，非法 JSON、
   类型、范围或时间格式阻止启动。
 - 每个 chat 的同一 inactivity epoch 最多注入一次；新的人工消息会重新武装该会话。只有
   `inject_message()` 被宿主接受时才计入 `maxAttemptsPerDay`。

@@ -64,7 +64,7 @@ MUST 拒绝额外字段、空字符串、布尔冒充整数、超长文本、任
 ### Requirement: Sticker send ToolSpec MUST account for one network side effect
 
 `sticker_send` 在选定条目、完成文件校验并进入发送边界后 MUST 最多调用一次现有 Milky native image
-send；使用统计 SHALL 在发起发送调用后 claim 一次。成功、拒绝、未知和不支持结果 SHALL 保持既有
+send；使用统计 SHALL 在发送前 claim 一次；claim 失败 SHALL 返回 storage_error 且不发送。成功、拒绝、未知和不支持结果 SHALL 保持既有
 出站错误分类；工具不得通过多次重试规避未知结果，也不得在工具结果中伪造成功消息序号。
 
 #### Scenario: Native send succeeds
