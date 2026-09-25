@@ -7,6 +7,7 @@ import inspect
 import json
 from threading import RLock
 
+from management.allowlist import USAGE, current_invocation, parse
 from milky.client import ActionError
 from stickers.maintenance import StickerMaintenanceService
 
@@ -61,6 +62,7 @@ class SlashCommandService:
 
     def __init__(self, sticker_service: StickerMaintenanceService | None = None) -> None:
         self._clients: list[object] = []
+        self._managers: list[object] = []
         self._lock = RLock()
         self._sticker_service = sticker_service or StickerMaintenanceService()
 
@@ -86,6 +88,17 @@ class SlashCommandService:
         with self._lock:
             self._clients = [candidate for candidate in self._clients if candidate is not client]
 
+    def bind_manager(self, manager) -> None:
+        """登记当前活动实例，不把客户端数量当作 profile 身份。"""
+        if manager not in self._managers:
+            self._managers.append(manager)
+
+    def unbind_manager(self, manager) -> None:
+        """移除已停止实例并立即失效它的调用关联。"""
+        manager.stop()
+        if manager in self._managers:
+            self._managers.remove(manager)
+
     async def handle(self, raw_args: str) -> str:
         """处理 ``/milky``，并只返回安全分类或格式化成功信息。"""
 
@@ -93,6 +106,14 @@ class SlashCommandService:
             return "invalid_input: usage: /milky"
         stripped = raw_args.strip()
         if stripped:
+            if stripped.split(maxsplit=1)[0].lower() == "allowlist":
+                try:
+                    operation = parse(stripped)
+                except (ValueError, TypeError):
+                    return "invalid_input: " + USAGE
+                if len(self._managers) != 1:
+                    return "unsupported: 无唯一活动实例"
+                return await self._managers[0].handle(operation, current_invocation.get())
             if stripped.split(maxsplit=1)[0].lower() == "sticker":
                 return await self._sticker_service.handle(raw_args)
             return "invalid_input: usage: /milky"

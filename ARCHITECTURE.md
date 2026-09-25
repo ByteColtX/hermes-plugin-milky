@@ -291,7 +291,7 @@ Tool 流程是固定 schema/handler → 参数和 client 状态校验 → 一次
 | `MILKY_LONG_TEXT_FORWARD_THRESHOLD` | `0` | 超长 forward 阈值；0 表示关闭 |
 | `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` | `false` | 是否注入成员加入/退出事件 |
 
-`config/__init__.py` 在启动时一次解析配置，校验 URL、chat key、Action 名称、整数、JSON、布尔值和范围；错误不得回显 token。配置变更需要重启 Gateway 才会生效。
+`config/__init__.py` 在启动时一次解析配置，校验 URL、chat key、Action 名称、整数、JSON、布尔值和范围；错误不得回显 token。除经 QQ 管理命令保存核验并发布的白名单外，配置变更需要重新加载才会生效。
 
 ### 7.3 构建和部署边界
 
@@ -447,3 +447,30 @@ openspec/changes/archive/2026-09-24-add-milky-web-dashboard/evidence.md。
 
 更新必须交付整个目录及预构建资源；回滚前关闭 Web 执行层并保留数据，按需手动导出 settings
 为旧环境格式，不删除凭证。主维护规范 Purpose 的同步由本 change 的 delta 承载，尚未归档同步。
+
+## 14. 热白名单与提交边界
+
+活动 adapter 拥有 ChatPolicy、AllowlistManager 和调用关联；Gate 与 MuteTracker 共享完整运行规则。
+空规则拒绝普通入站，初始化登录和群列表后做零成员扫描，scope=none 且所有计数为零，仍启动 SSE；
+非空规则 scope=allowlist，包括 group:* 和仅 dm 规则。没有新增后台全量扫描。
+注册仅装配绑定 profile 的读取器，完整 connect 在扫描和 SSE 前重新读取 allowed_chats；失败不 ready，
+不回退注册旧值。完整断开后的连接重建已关闭的自有资源；其他配置和 standalone sender 保留启动快照。
+
+纯文本直接管理语法保留 canonical、自身消息、去重、admission，随后经 core 分发；
+插件携带的上下文只标识来源与实例代次，不是授权凭据。core 拒绝不进入管理查询或写入。
+core 放行后先验证来源群可发送，再读名单、准备新增目标群。prepare_group 独立确认群归属并登记
+拒绝状态，refresh_group 仍只刷新已跟踪群。查询期间成员事件版本优先于旧查询，whole 事件保持，
+失败/取消不会确认 prepared；刷新保留冷却及并发上限。删除规则不销毁出站仍需的群状态。
+
+management/settings.py 是 QQ 与 Dashboard 共用的无 HTTP 设置边界；逐键校验、托管检查和读回核验
+保持原行为。管理修改串行，准备后再次检查生命周期和版本，保存核验后无等待发布完整规则。
+发布是在线生效点，回执不是提交点；保存后不能发布返回 saved/未应用，未知结果不重试或回滚。
+宿主没有跨入口条件事务，本地版本和读回只能发现部分外部竞争，不保证跨进程原子更新或广播。
+
+实际撤销增加会话代次并清理插件 wait、system context、Will 状态。资源补全后的批次在调用宿主
+前检查代次，检查与调用之间没有插件等待；当前 Milky core 普通空闲路径在首次等待前接受任务，
+忙碌路径的后续调度由 Hermes 拥有。已交给宿主的任务不取消。断开先关闭管理与失效关联，
+取消等待所属操作，再释放 SSE、pipeline、sender、tracker、command service 和 client。
+
+尚未实施的 add-idle-session-wakeup 必须读取共享最新策略；空规则无候选。
+此依赖不表示主动唤醒已经交付，也没有修改该 change。

@@ -817,3 +817,50 @@ def test_root_section_renders_identity_published_by_ready_adapter(
         for name in list(sys.modules):
             if name == entry.__name__ or name.startswith(f"{entry.__name__}."):
                 sys.modules.pop(name, None)
+
+
+def test_full_reconnect_reads_latest_allowlist_without_reloading_other_config():
+    """同实例完整重连重新读取名单，幂等连接不重读。"""
+
+    async def scenario():
+        adapter, tracker, _stream, _pipeline, _sender, _client = make_adapter()
+        values = {"rules": {"group:123"}, "reads": 0}
+
+        def read():
+            values["reads"] += 1
+            return values["rules"]
+
+        adapter._allowed_chats_reader = read
+        initial_config = adapter._config
+        assert await adapter.connect()
+        assert adapter._chat_policy.rules == {"group:123"}
+        assert await adapter.connect()
+        assert values["reads"] == 1
+        await adapter.disconnect()
+        values["rules"] = set()
+        assert await adapter.connect()
+        assert not adapter._chat_policy.rules
+        assert values["reads"] == 2 and tracker.initialize_calls == 2
+        assert adapter._config is initial_config
+        await adapter.disconnect()
+        await adapter.disconnect()
+
+    asyncio.run(scenario())
+
+
+def test_allowlist_read_failure_never_starts_sync_or_sse():
+    """读取失败不得回退注册值或进入 ready。"""
+
+    async def scenario():
+        adapter, tracker, stream, _pipeline, _sender, _client = make_adapter()
+
+        def fail():
+            raise ValueError("synthetic read failure")
+
+        adapter._allowed_chats_reader = fail
+        assert not await adapter.connect()
+        assert tracker.initialize_calls == 0 and stream.run_calls == 0
+        assert not adapter._connected
+        await adapter.disconnect()
+
+    asyncio.run(scenario())

@@ -205,6 +205,10 @@ class WillingnessWillEngine:
         self._random = random_fn or random.random
         self._states: dict[str, WillingnessState] = {}
 
+    def discard(self, chat_key: str) -> None:
+        """撤销会话时清除累计分数。"""
+        self._states.pop(chat_key, None)
+
     @property
     def states(self) -> Mapping[str, WillingnessState]:
         """返回不允许外部修改的状态快照。"""

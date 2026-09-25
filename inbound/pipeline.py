@@ -10,7 +10,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from gates import GateContext, GateRegistry
+from gates import GateContext, GateRegistry, SelfMessageGate
+from management.allowlist import current_invocation, is_management_command
 from milky.logging import render_event
 from milky.models import Event
 from milky.parser import ParseError, parse_event
@@ -74,6 +75,8 @@ class InboundPipeline:
         session_context_store: ChatMetadataSnapshotStore | None = None,
         member_event_notifications: bool = False,
         session_key_resolver: SessionKeyResolver | None = None,
+        chat_policy=None,
+        allowlist_manager=None,
     ) -> None:
         """创建一次入站 pipeline；不在构造阶段联网或启动任务。"""
 
@@ -83,6 +86,8 @@ class InboundPipeline:
         self._hermes = hermes
         self._resolver = resource_resolver
         self._gates = gate_registry
+        self._chat_policy = chat_policy
+        self._allowlist_manager = allowlist_manager
         self._will = will_engine
         self._buffer = wait_buffer
         self._admission = admission
@@ -218,7 +223,13 @@ class InboundPipeline:
             return PipelineResult("duplicate", canonical=canonical, reason="duplicate_message")
 
         async with self._admission.admit(canonical.chat_key) as ticket:
-            gate_result = self._gates.check(self._gate_context(canonical))
+            command = recognize_slash_command(canonical)
+            management_route = is_management_command(command)
+            gate_result = (
+                SelfMessageGate().check(self._gate_context(canonical))
+                if management_route
+                else self._gates.check(self._gate_context(canonical))
+            )
             if not gate_result.allow:
                 self._record(f"gate:{gate_result.reason}")
                 logger.debug(
@@ -253,6 +264,8 @@ class InboundPipeline:
                 return PipelineResult(
                     "malformed", canonical=canonical, reason="normalized Will input is missing"
                 )
+            if self._chat_policy is not None:
+                self._chat_policy.generation(canonical.chat_key)
             decision = self._will_decide(canonical.will_input)
             if decision in {"wait", "trigger"}:
                 logger.debug(
@@ -336,13 +349,22 @@ class InboundPipeline:
             self._start_detached(batch)
             return PipelineResult("trigger", canonical=canonical, batch=batch)
 
+    def revoke(self, chat_keys) -> None:
+        """清理实际失去授权会话的插件等待状态，不取消宿主任务。"""
+        for chat_key in chat_keys:
+            self._buffer.discard(chat_key)
+            self._system_context.drain(chat_key)
+            discard = getattr(self._will, "discard", None)
+            if callable(discard):
+                discard(chat_key)
+
     async def wait_idle(self) -> None:
         """等待当前已创建的 detached 交接任务，不等待 Hermes Agent。"""
 
         while self._background_tasks:
             await asyncio.gather(*tuple(self._background_tasks))
 
-    async def _process_batch(self, batch: object) -> None:
+    async def _process_batch(self, batch: object, generation=None) -> None:
         current = getattr(batch, "current", None)
         chat_key = getattr(batch, "chat_key", None)
         ingress_sequence = getattr(batch, "trigger_ingress_sequence", None)
@@ -366,6 +388,13 @@ class InboundPipeline:
             handle_message = getattr(self._hermes, "handle_message", None)
             if not callable(handle_message):
                 raise TypeError("Hermes handle_message is unavailable")
+            # 到宿主调用之间没有插件等待点；本地 Milky core 接受路径在首次等待前提交。
+            if self._chat_policy is not None and (
+                not self._chat_policy.allows(chat_key)
+                or generation != self._chat_policy.generation(chat_key)
+            ):
+                self._record("authorization_revoked")
+                return
             result = handle_message(event)
             if inspect.isawaitable(result):
                 await result
@@ -409,7 +438,10 @@ class InboundPipeline:
             self._record("session_context_snapshot_failed")
 
     def _start_detached(self, batch: object) -> None:
-        task = asyncio.create_task(self._process_batch(batch))
+        generation = (
+            self._chat_policy.generation(batch.chat_key) if self._chat_policy is not None else None
+        )
+        task = asyncio.create_task(self._process_batch(batch, generation))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
@@ -437,9 +469,18 @@ class InboundPipeline:
             handle_message = getattr(self._hermes, "handle_message", None)
             if not callable(handle_message):
                 raise TypeError("Hermes handle_message is unavailable")
-            result = handle_message(event)
-            if inspect.isawaitable(result):
-                await result
+            invocation = (
+                self._allowlist_manager.invocation(message.chat_key)
+                if self._allowlist_manager is not None
+                else None
+            )
+            token = current_invocation.set(invocation)
+            try:
+                result = handle_message(event)
+                if inspect.isawaitable(result):
+                    await result
+            finally:
+                current_invocation.reset(token)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - 命令边界只记录安全分类
@@ -552,6 +593,10 @@ class InboundPipeline:
         """在 admission 内登记一条 context-only 系统事件。"""
 
         async with self._admission.admit(event.chat_key) as ticket:
+            if self._chat_policy is not None:
+                if not self._chat_policy.allows(event.chat_key):
+                    return
+                self._chat_policy.generation(event.chat_key)
             result = self._system_context.append(event, ingress_sequence=ticket.ingress_sequence)
             if not result.accepted:
                 self._record(f"system_context:{result.reason}")
@@ -640,6 +685,8 @@ class InboundPipeline:
             "hermes": self._hermes,
             "resource_resolver": self._resolver,
             "gate_registry": self._gates,
+            "chat_policy": self._chat_policy,
+            "allowlist_manager": self._allowlist_manager,
             "will_engine": self._will,
             "wait_buffer": self._buffer,
             "admission": self._admission,

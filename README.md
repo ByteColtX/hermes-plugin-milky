@@ -22,7 +22,7 @@ Hermes 的 Milky QQ 平台适配器
 > - `MILKY_ALLOWED_CHATS` 只填写你能控制、成员可信且用途明确的会话；
 > - 不要加入公开群、成员可随意加入的群或不受控私聊；
 > - 记住：该配置只限制入站会话，**不等于** ToolSpec 或通用出站 sender 的授权；
-> - 留空表示允许所有会话进入。
+> - 留空、未配置或原生空列表表示阻止全部普通入站；全部放行需显式填写 group:* 和 dm:*。
 >
 > 示例：
 >
@@ -197,7 +197,7 @@ MILKY_HOME_CHANNEL=group:123456789
 | --- | --- | --- |
 | `MILKY_BASE_URL` | 有效地址必需，环境可选 | Milky 服务基址，也可来自 YAML settings/config；Action 使用 `<base>/api/{action}`，事件流使用 `<base>/event`。远程部署请使用 HTTPS。 |
 | `MILKY_ACCESS_TOKEN` | 是 | Milky access token，只用于 Bearer 认证。 |
-| `MILKY_ALLOWED_CHATS` | 否 | 入站 chat key 白名单，支持具体 `group:<群号>`/`dm:<QQ号>` 以及 `group:*`/`dm:*`；通配符只匹配对应命名空间，可混用；留空表示允许所有会话进入。 |
+| `MILKY_ALLOWED_CHATS` | 否 | 入站 chat key 白名单，支持具体 `group:<群号>`/`dm:<QQ号>` 以及 `group:*`/`dm:*`；通配符只匹配对应命名空间，可混用；留空、未配置或原生空列表表示阻止全部普通入站；全部放行需显式填写 group:* 和 dm:*。 |
 | `MILKY_WILL_POLICY` | 否 | 决定消息等待（`wait`）或触发（`trigger`）的嵌套 JSON 配置。 |
 | `MILKY_SESSION_BUFFER_SIZE` | 否 | `wait` 历史消息上限，默认 `20`；设为 `0` 可关闭历史缓冲。 |
 | `MILKY_HOME_CHANNEL` | 否 | 系统消息和 cron 的默认目标；不参与入站白名单。 |
@@ -886,3 +886,38 @@ PR 应说明变更范围、实际执行的命令、测试结果和未解决风�
 fixture、测试和文档改进的贡献者。
 
 本项目使用 MIT License，版权所有 © 2026 ByteColtX。完整条款见 [LICENSE](LICENSE)。
+
+### QQ 热白名单管理
+
+纯文本命令通过 Hermes core 授权后执行；顶层 milky 许可覆盖 allowlist 的全部子命令。
+插件不另查管理员或 QQ 角色。普通用户命令白名单示例不包含 milky；未配置管理员时是否关闭
+门禁也服从 core。未放行会话可以发送下面的直接管理命令，其他命令仍需通过会话 Gate。
+结构化 mention、图片、未知子命令和其他命令展开的别名不享有路由例外；已放行会话的 core 别名正常执行。
+
+- /milky allowlist list：查看持久及运行规则、来源和差异；每页最多 50 条。
+- /milky allowlist list --page 2：读取后续页。
+- /milky allowlist add：添加当前群或当前私聊。
+- /milky allowlist add dm:123456：添加显式目标；同样支持 group:123456、group:*、dm:*。
+- /milky allowlist del：删除当前会话的字面条目；remove 与 del 完全等价。
+- /milky allowlist del group:*：只删除该通配符，保留其他具体条目。
+
+目标管理范围是当前 profile 的 group/dm 规则，裸数字和 temp 被拒绝。具体条目与通配符独立，
+添加具体条目不会因已有通配符返回 unchanged；删除具体条目不会修改通配符。回执只报告条目结果。
+来源群必须在 core 放行后确认可发送；目标群先确认 Bot 归属与成员状态，确认禁言的目标可保存但仍受禁言限制。
+
+QQ 修改只保存 plugins.entries.hermes-plugin-milky.settings.allowed_chats，读回确认后在线发布。
+settings 空列表遮蔽环境值；纯环境部署首次实际修改提升为 settings。saved applied 表示已保存并在线应用；
+saved 且未应用需重新加载；unchanged 不写入也不偷偷 reload；blocked、conflict、unsupported、invalid_input、unknown
+均不代表在线成功。缺少可信调用来源、明确 profile 或唯一活动实例时返回 unsupported，绝不使用环境中的旧会话。
+list 可检查 Web 保存造成的持久/在线差异，Web 仍显示待重新加载及 unknown。
+
+实例内修改串行，保存前版本检查及读回核验不等于与 Web/人工编辑的跨入口条件事务。
+未知结果不自动重试或回滚；回执发送失败不重放修改。其他配置保持启动快照。
+完整断开重连（含原注册工厂新建实例）重新读取当前 profile 白名单；纯 SSE 重连保留在线策略。
+实际撤销会清理插件尚未交接的等待正文、系统上下文和 Will 状态，删除再添加不复活旧批次；
+已交给 Hermes 的任务、出站工具、cron 和 home channel 不被撤销。
+
+**BREAKING 迁移与回滚：** 升级前，需要全放行的部署将旧空配置改为两个通配符。
+旧版本把空列表解释为全部放行，回滚前先停止接收并设置经审阅的非空受限名单；
+若需全部关闭，在宿主停用平台。只回滚代码并保留空列表会扩大权限。
+真实 QQ 验收范围与当前验证结果见 openspec/changes/add-hot-chat-allowlist/evidence.md。

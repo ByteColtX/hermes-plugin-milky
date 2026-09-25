@@ -200,6 +200,11 @@ class WaitBuffer[T]:
 
         return len(self.snapshot_entries(chat_key))
 
+    def discard(self, chat_key: str) -> None:
+        """清除撤销会话的未交接历史。"""
+        with self._lock:
+            self._buffers.pop(validate_chat_key(chat_key), None)
+
     def drain(
         self,
         chat_key: str,

@@ -120,13 +120,13 @@ def test_allowlist_rejects_unsupported_rules(rule: str) -> None:
         GateRegistry(allowed_chats={rule})
 
 
-def test_empty_allowlist_allows_friend_and_unmuted_group() -> None:
-    """空白名单放行可识别的 friend/group，群仍需通过禁言门禁。"""
+def test_empty_allowlist_denies_friend_and_unmuted_group() -> None:
+    """空白名单拒绝全部普通 friend/group 入站。"""
 
     registry = GateRegistry()
 
-    assert registry.check(make_context(scene="friend", chat_key="dm:300")).allow is True
-    assert registry.check(make_context(scene="group", chat_key="group:300")).allow is True
+    assert registry.check(make_context(scene="friend", chat_key="dm:300")).allow is False
+    assert registry.check(make_context(scene="group", chat_key="group:300")).allow is False
 
 
 def test_muted_group_gate_uses_confirmed_state_and_does_not_block_friend() -> None:
@@ -148,7 +148,7 @@ def test_muted_group_gate_uses_confirmed_state_and_does_not_block_friend() -> No
 def test_registry_default_group_state_is_fail_closed() -> None:
     """没有 MuteTracker 成功快照时，群消息必须保持拒绝。"""
 
-    result = GateRegistry().check(
+    result = GateRegistry({"group:*", "dm:*"}).check(
         GateContext(
             self_id="100",
             sender_id="200",
@@ -172,7 +172,7 @@ def test_gate_registry_has_no_network_random_or_file_side_effect(
     monkeypatch.setattr(random, "random", fail)
     monkeypatch.setattr(builtins, "open", fail)
 
-    result = GateRegistry().check(make_context())
+    result = GateRegistry({"group:*", "dm:*"}).check(make_context())
 
     assert result.allow is True
 

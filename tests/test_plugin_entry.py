@@ -644,3 +644,78 @@ def test_yaml_startup_keeps_one_snapshot_without_web_dependencies(monkeypatch):
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
                 sys.modules.pop(name, None)
+
+
+def test_register_once_factory_and_same_adapter_read_fresh_profile(monkeypatch):
+    """一次注册后的原工厂和同实例重连都读取当前 profile 的单项设置。"""
+    import copy
+    from contextvars import ContextVar
+    from types import SimpleNamespace
+
+    from management import settings
+    from tests.test_adapter_lifecycle import (
+        FakeClient,
+        FakeEventStream,
+        FakeMuteTracker,
+        FakePipeline,
+        FakeSender,
+    )
+
+    set_valid_environment(monkeypatch)
+    scope = ContextVar("synthetic-profile", default="alpha")
+    current = {"alpha": {"allowed_chats": ["group:123"]}, "beta": {"allowed_chats": ["dm:999"]}}
+    constants = ModuleType("hermes_constants")
+    constants.get_hermes_home = lambda: Path("/synthetic") / scope.get()
+    monkeypatch.setitem(sys.modules, "hermes_constants", constants)
+
+    def inputs():
+        native = copy.deepcopy(current[scope.get()])
+        return native, {}, native, {"MILKY_ALLOWED_CHATS": "dm:*"}, "synthetic"
+
+    monkeypatch.setattr(settings, "_inputs", inputs)
+    entry, module_name = load_plugin_entry()
+    context = SkillAndPlatformContext()
+    entry.register(context)
+    factory = context.platforms[0]["adapter_factory"]
+
+    def make():
+        adapter = factory(SimpleNamespace())
+        injected = {
+            "client": FakeClient(),
+            "event_stream": FakeEventStream(),
+            "mute_tracker": FakeMuteTracker(),
+            "pipeline": FakePipeline(),
+            "outbound_sender": FakeSender(),
+        }
+        adapter._injected.update(injected)
+        adapter._closed = True
+        return adapter
+
+    async def scenario():
+        first = make()
+        assert await first.connect()
+        assert first._chat_policy.rules == {"group:123"}
+        await first.disconnect()
+        current["alpha"]["allowed_chats"] = []
+        token = scope.set("beta")
+        try:
+            assert await first.connect()
+            assert not first._chat_policy.rules
+            await first.disconnect()
+            second = make()
+            assert await second.connect()
+            assert not second._chat_policy.rules
+            await second.disconnect()
+        finally:
+            scope.reset(token)
+        current["alpha"]["allowed_chats"] = ["temp:123"]
+        third = make()
+        assert not await third.connect()
+        await third.disconnect()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(module_name + "."):
+                sys.modules.pop(name, None)

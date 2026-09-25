@@ -572,7 +572,7 @@ if (sdk && window.__HERMES_PLUGINS__) {
                   </label>
                 ))}
                 <p className="milky-meta">
-                  白名单为空允许所有合法入站会话；它不会禁用插件。
+                  白名单为空阻止全部普通入站；管理命令仍交给 Hermes core 授权，不会禁用插件或 SSE。全部放行请填写 group:* 和 dm:*。
                 </p>
                 <WillEditor
                   value={form.will_policy || {}}

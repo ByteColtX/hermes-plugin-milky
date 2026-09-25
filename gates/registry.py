@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from session.identity import validate_chat_rule
+from state.chat_policy import ChatPolicy
 
 from .base import Gate, GateContext, GateResult
 
@@ -27,28 +27,25 @@ class ChatAllowlistGate(Gate):
 
     name = "chat_allowlist"
 
-    def __init__(self, allowed_chats: Iterable[str] | None = None) -> None:
+    def __init__(self, allowed_chats: Iterable[str] | ChatPolicy | None = None) -> None:
         """保存已校验的具体 chat key 和命名空间通配符。"""
 
-        values = () if allowed_chats is None else allowed_chats
-        self._allowed_chats = frozenset(validate_chat_rule(value) for value in values)
+        self.policy = (
+            allowed_chats
+            if isinstance(allowed_chats, ChatPolicy)
+            else ChatPolicy(() if allowed_chats is None else allowed_chats)
+        )
 
     @property
     def allowed_chats(self) -> frozenset[str]:
         """返回不可变的白名单快照。"""
 
-        return self._allowed_chats
+        return self.policy.rules
 
     def check(self, context: GateContext) -> GateResult:
         """按完整 chat key 或对应命名空间通配符匹配。"""
 
-        prefix = context.chat_key.partition(":")[0]
-        wildcard = f"{prefix}:*"
-        if (
-            not self._allowed_chats
-            or context.chat_key in self._allowed_chats
-            or wildcard in self._allowed_chats
-        ):
+        if self.policy.allows(context.chat_key):
             return GateResult(True, "passed")
         return GateResult(False, "chat_not_allowed")
 
@@ -79,7 +76,7 @@ class MutedGroupGate(Gate):
 class GateRegistry:
     """以固定顺序短路执行 Self、allowlist 和 mute 三道 Gate。"""
 
-    def __init__(self, allowed_chats: Iterable[str] | None = None) -> None:
+    def __init__(self, allowed_chats: Iterable[str] | ChatPolicy | None = None) -> None:
         """创建只读配置的 Gate registry。"""
 
         self._gates: tuple[Gate, ...] = (

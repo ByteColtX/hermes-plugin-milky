@@ -129,7 +129,7 @@ def test_tracker_fails_closed_before_ordered_initial_sync() -> None:
     """未完成登录、群列表和成员扫描前不得放行群状态。"""
 
     client = FakeMuteClient([700000001, 700000002])
-    tracker = MuteTracker(client, clock=lambda: 100)
+    tracker = MuteTracker(client, allowed_chats={"group:*"}, clock=lambda: 100)
 
     assert tracker.initialized is False
     assert tracker.is_muted(700000001) is True
@@ -155,7 +155,9 @@ def test_tracker_fan_outs_large_initial_scan_without_refresh_limit() -> None:
 
     group_ids = [700000000 + index for index in range(240)]
     client = FakeMuteClient(group_ids, delay=0.001)
-    tracker = MuteTracker(client, clock=lambda: 100, max_concurrent_refreshes=1)
+    tracker = MuteTracker(
+        client, allowed_chats={"group:*"}, clock=lambda: 100, max_concurrent_refreshes=1
+    )
 
     asyncio.run(tracker.initialize())
 
@@ -179,7 +181,7 @@ def test_tracker_initial_failure_waits_for_all_results_and_summarizes_fail_close
         member_results={700000002: ActionError("rejected", "member", "denied")},
         delay=0.001,
     )
-    tracker = MuteTracker(client, clock=lambda: 100)
+    tracker = MuteTracker(client, allowed_chats={"group:*"}, clock=lambda: 100)
 
     with (
         caplog.at_level(logging.INFO, logger="hermes_plugins.milky.state.mute_tracker"),
@@ -212,7 +214,7 @@ def test_tracker_cancels_and_awaits_all_initial_member_queries() -> None:
 
     group_ids = [700000001 + index for index in range(8)]
     client = FakeMuteClient(group_ids, block_members=True)
-    tracker = MuteTracker(client, clock=lambda: 100)
+    tracker = MuteTracker(client, allowed_chats={"group:*"}, clock=lambda: 100)
 
     async def scenario() -> None:
         task = asyncio.create_task(tracker.initialize())
@@ -239,7 +241,7 @@ def test_tracker_treats_null_and_omitted_mute_end_as_unmuted() -> None:
         [700000001, 700000002],
         member_results={700000001: member(700000001), 700000002: member(700000002)},
     )
-    tracker = MuteTracker(client, clock=lambda: 100)
+    tracker = MuteTracker(client, allowed_chats={"group:*"}, clock=lambda: 100)
 
     asyncio.run(tracker.initialize())
 
@@ -256,7 +258,7 @@ def test_tracker_expires_member_mute_from_end_time_without_remote_refresh() -> N
         [700000001],
         member_results={700000001: member(700000001, shut_up_end_time=130)},
     )
-    tracker = MuteTracker(client, clock=lambda: current_time)
+    tracker = MuteTracker(client, allowed_chats={"group:*"}, clock=lambda: current_time)
     asyncio.run(tracker.initialize())
 
     assert tracker.get_snapshot(700000001).member_mute == "muted"
@@ -276,7 +278,7 @@ def test_tracker_expiry_task_updates_state_and_closes_cleanly() -> None:
 
     current_time = 100
     client = FakeMuteClient([700000001])
-    tracker = MuteTracker(client, clock=lambda: current_time)
+    tracker = MuteTracker(client, allowed_chats={"group:*"}, clock=lambda: current_time)
 
     async def scenario() -> None:
         nonlocal current_time
@@ -360,6 +362,7 @@ def test_tracker_scans_only_group_allowlist_and_logs_raw_identity_and_results(
     [
         ({"group:*", "dm:*"}, (700000001, 700000002)),
         ({"dm:*"}, ()),
+        (set(), ()),
     ],
 )
 def test_tracker_applies_namespace_wildcards_to_group_scanning(
@@ -386,7 +389,7 @@ def test_tracker_logs_only_muted_groups_and_summarizes_all_states(
         [700000001, 700000002, 700000003],
         member_results={700000001: member(700000001, shut_up_end_time=200)},
     )
-    tracker = MuteTracker(client, clock=lambda: 100)
+    tracker = MuteTracker(client, allowed_chats={"group:*"}, clock=lambda: 100)
 
     with caplog.at_level(logging.INFO, logger="hermes_plugins.milky.state.mute_tracker"):
         asyncio.run(tracker.initialize())
@@ -401,10 +404,10 @@ def test_tracker_logs_only_muted_groups_and_summarizes_all_states(
     assert len(records) == 1
     summary = records[0]
     fields = log_fields(summary)
-    assert fields["scope"] == "all_groups"
+    assert fields["scope"] == "allowlist"
     assert (fields["total"], fields["succeeded"], fields["failed"]) == ("3", "3", "0")
     assert (fields["muted"], fields["unmuted"], fields["unknown"]) == ("1", "0", "2")
-    assert summary.getMessage().count("scope=all_groups") == 1
+    assert summary.getMessage().count("scope=allowlist") == 1
     assert summary.getMessage().count("total=3") == 1
 
 
@@ -415,7 +418,7 @@ def test_tracker_initial_failure_keeps_not_ready_and_muted() -> None:
         [700000001, 700000002],
         member_results={700000002: ActionError("rejected", "member", "denied")},
     )
-    tracker = MuteTracker(client, clock=lambda: 100)
+    tracker = MuteTracker(client, allowed_chats={"group:*"}, clock=lambda: 100)
 
     with pytest.raises(Exception, match="initial mute sync failed"):
         asyncio.run(tracker.initialize())
@@ -434,7 +437,9 @@ def test_tracker_refresh_failure_preserves_existing_two_state_values() -> None:
         [700000001], member_results={700000001: member(700000001, shut_up_end_time=200)}
     )
     current_time = 100
-    tracker = MuteTracker(client, clock=lambda: current_time, refresh_cooldown=0)
+    tracker = MuteTracker(
+        client, allowed_chats={"group:*"}, clock=lambda: current_time, refresh_cooldown=0
+    )
     asyncio.run(tracker.initialize())
     tracker.apply_event(
         {
@@ -459,7 +464,7 @@ def test_tracker_full_sync_cleans_groups_missing_from_new_list() -> None:
     """全量群列表变化时应清理已经离开的群。"""
 
     client = FakeMuteClient([700000001, 700000002])
-    tracker = MuteTracker(client, clock=lambda: 100)
+    tracker = MuteTracker(client, allowed_chats={"group:*"}, clock=lambda: 100)
     asyncio.run(tracker.initialize())
     client.group_ids[:] = [700000002, 700000003]
 
@@ -473,7 +478,7 @@ def test_tracker_applies_mute_events_using_milky_duration_and_is_mute() -> None:
     """成员 duration=0 应解除禁言，全体状态应直接使用 is_mute。"""
 
     client = FakeMuteClient([700000001])
-    tracker = MuteTracker(client, clock=lambda: 100)
+    tracker = MuteTracker(client, allowed_chats={"group:*"}, clock=lambda: 100)
     asyncio.run(tracker.initialize())
 
     tracker.apply_event(
@@ -534,6 +539,7 @@ def test_tracker_limits_same_group_refresh_and_never_refreshes_dm() -> None:
     client = FakeMuteClient([700000001], delay=0.01)
     tracker = MuteTracker(
         client,
+        allowed_chats={"group:*"},
         clock=lambda: now,
         refresh_cooldown=0,
         max_concurrent_refreshes=1,
@@ -568,6 +574,7 @@ def test_sender_concurrent_failures_use_one_refresh_and_keep_dm_isolated() -> No
     client = FakeMuteClient([700000001], delay=0.01)
     tracker = MuteTracker(
         client,
+        allowed_chats={"group:*"},
         clock=lambda: now,
         refresh_cooldown=0,
         max_concurrent_refreshes=1,
@@ -610,6 +617,7 @@ def test_tracker_refreshes_different_groups_with_global_limit() -> None:
     client = FakeMuteClient([700000001, 700000002, 700000003], delay=0.01)
     tracker = MuteTracker(
         client,
+        allowed_chats={"group:*"},
         clock=lambda: now,
         refresh_cooldown=0,
         max_concurrent_refreshes=2,
@@ -629,3 +637,18 @@ def test_tracker_refreshes_different_groups_with_global_limit() -> None:
 
     assert asyncio.run(refreshes()) == [True, True, True]
     assert client.max_inflight <= 2
+
+
+def test_empty_scan_logs_none_and_zero_counts(caplog):
+    """空名单保留登录和群列表，零成员请求及零扫描计数。"""
+    caplog.set_level(logging.INFO)
+    client = FakeMuteClient([700000001, 700000002])
+    tracker = MuteTracker(client)
+    assert asyncio.run(tracker.initialize())
+    assert client.calls == [("login", None, None), ("groups", None, None)]
+    summary = next(record for record in caplog.records if "scope=none" in record.getMessage())
+    fields = log_fields(summary)
+    assert all(
+        fields[key] == "0"
+        for key in ("total", "succeeded", "failed", "muted", "unmuted", "unknown")
+    )

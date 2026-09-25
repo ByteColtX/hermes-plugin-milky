@@ -52,7 +52,7 @@ optional_env:
     prompt: Milky 服务地址
     password: false
   - name: MILKY_ALLOWED_CHATS
-    description: "Optional inbound chat whitelist, e.g. group:123456789,dm:987654321; empty means allow all"
+    description: "Optional inbound chat whitelist, e.g. group:123456789,dm:987654321; empty denies all ordinary inbound chats; use group:* and dm:* to allow all"
     prompt: 入站 chat 白名单
     password: false
   - name: MILKY_WILL_POLICY
@@ -92,7 +92,7 @@ config_schema:
   allowed_chats:
     type: array
     default: []
-    label: 入站白名单
+    label: 入站白名单（空列表阻止全部普通入站）
   will_policy:
     type: object
     default: {}

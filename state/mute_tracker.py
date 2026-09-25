@@ -16,6 +16,7 @@ from milky.logging import render_event
 from milky.models import Event, GroupList, GroupMemberInfo, LoginInfo
 from milky.parser import ParseError, parse_event
 from session.identity import normalize_chat_key, validate_chat_rule
+from state.chat_policy import ChatPolicy
 
 MuteState = Literal["muted", "unmuted", "unknown"]
 
@@ -86,7 +87,7 @@ class MuteTracker:
         self,
         client: MuteSyncClient,
         *,
-        allowed_chats: Collection[str] | None = None,
+        allowed_chats: Collection[str] | ChatPolicy | None = None,
         clock: Clock | None = None,
         refresh_cooldown: float = 5.0,
         max_concurrent_refreshes: int = 2,
@@ -121,7 +122,15 @@ class MuteTracker:
         self._initialized = False
         self._self_id: int | None = None
         self._nickname: str | None = None
-        self._allowed_chats = _normalize_allowed_chats(allowed_chats)
+        self._policy = (
+            allowed_chats
+            if isinstance(allowed_chats, ChatPolicy)
+            else ChatPolicy(_normalize_allowed_chats(allowed_chats))
+        )
+        self._known_group_ids: set[int] = set()
+        self._member_revisions: dict[int, int] = {}
+        self._prepared: set[int] = set()
+        self._group_list_lock = asyncio.Lock()
 
     @property
     def initialized(self) -> bool:
@@ -184,6 +193,8 @@ class MuteTracker:
         if not self._initialized:
             return "muted", "muted"
         snapshot = self.get_snapshot(group_id)
+        if group_id not in self._prepared:
+            return "muted", snapshot.whole_mute
         return snapshot.member_mute, snapshot.whole_mute
 
     def is_muted(self, group_id: object) -> bool:
@@ -246,6 +257,9 @@ class MuteTracker:
                 raise MuteSyncError("initial mute sync failed")
             self._self_id = _validate_id(login.uin, "self_id")
             self._nickname = login.nickname
+            self._known_group_ids = {group.group_id for group in groups.groups}
+            self._prepared.clear()
+            self._refresh_attempts.clear()
             group_ids = self._select_group_ids(groups)
             self._retain_current_groups(group_ids)
 
@@ -288,6 +302,7 @@ class MuteTracker:
                     continue
                 try:
                     self._apply_member_info(group_id, result.member_info, self._read_clock())
+                    self._prepared.add(group_id)
                     successful_count += 1
                     snapshot = self._snapshots[group_id]
                     state = _effective_mute_state(snapshot)
@@ -303,7 +318,7 @@ class MuteTracker:
                     failures = True
                     self._record("initial_member_query_failed")
 
-            scan_scope = "allowlist" if self._allowed_chats else "all_groups"
+            scan_scope = "allowlist" if self._policy.rules else "none"
             logger.log(
                 logging.WARNING if failures else logging.INFO,
                 render_event(
@@ -371,10 +386,20 @@ class MuteTracker:
             self._refresh_attempts[normalized_id] = now
             async with self._refresh_slots:
                 try:
+                    revision = self._member_revisions.get(normalized_id, 0)
                     member_info = await self._client.get_group_member_info(
                         normalized_id, self._self_id, no_cache=True
                     )
-                    self._apply_member_info(normalized_id, member_info, now)
+                    # 先验证响应身份，再决定是否保留查询期间较新的成员事件。
+                    if (
+                        not isinstance(member_info, GroupMemberInfo)
+                        or member_info.member.group_id != normalized_id
+                        or member_info.member.user_id != self._self_id
+                    ):
+                        return False
+                    if revision == self._member_revisions.get(normalized_id, 0):
+                        self._apply_member_info(normalized_id, member_info, self._read_clock())
+                    self._prepared.add(normalized_id)
                 except asyncio.CancelledError:
                     raise
                 except Exception:  # noqa: BLE001
@@ -399,6 +424,46 @@ class MuteTracker:
                 )
             )
             return True
+
+    async def prepare_group(self, group_id: int) -> bool:
+        """仅在明确管理调用中确认归属，再以拒绝状态建立跟踪。"""
+        group_id = _validate_id(group_id, "group_id")
+        if not self._initialized:
+            return False
+        if group_id not in self._known_group_ids and not await self.refresh_membership():
+            return False
+        if group_id not in self._known_group_ids:
+            return False
+        if group_id in self._prepared:
+            return True
+        # 在首个查询等待前登记，保留随后到达的成员和全体禁言事件。
+        self._snapshots.setdefault(group_id, MuteSnapshot(group_id))
+        return await self.refresh_group(group_id)
+
+    async def refresh_membership(self) -> bool:
+        """以受控只读查询更新当前 Bot 的群归属，不隐式扫描成员。"""
+        async with self._group_list_lock, self._refresh_slots:
+            try:
+                groups = await self._client.get_group_list()
+                if not isinstance(groups, GroupList):
+                    return False
+                self._known_group_ids = {group.group_id for group in groups.groups}
+                return True
+            except Exception:  # noqa: BLE001 - 不返回协议正文
+                return False
+
+    async def prepare_rules(self, rules: frozenset[str]) -> bool:
+        """准备候选群范围；通配符只查询当前群，不改变持久条目。"""
+        if "group:*" in rules:
+            if not await self.refresh_membership():
+                return False
+            targets = sorted(self._known_group_ids)
+        else:
+            targets = sorted(int(rule.split(":")[1]) for rule in rules if rule.startswith("group:"))
+        for group_id in targets:
+            if not await self.prepare_group(group_id):
+                return False
+        return True
 
     async def refresh_after_send_failure(self, target: object) -> bool:
         """仅为明确的 group 目标触发受控刷新，dm 目标直接忽略。"""
@@ -454,6 +519,7 @@ class MuteTracker:
             return False
         if user_id != self._self_id or group_id not in self._snapshots:
             return False
+        self._member_revisions[group_id] = self._member_revisions.get(group_id, 0) + 1
         current = self._snapshots[group_id]
         deadline = None if duration == 0 else event.time + duration
         self._snapshots[group_id] = MuteSnapshot(
@@ -536,13 +602,13 @@ class MuteTracker:
         """按白名单选择需要查询禁言状态的群。"""
 
         group_ids = tuple(_validate_id(group.group_id, "group_id") for group in groups.groups)
-        if not self._allowed_chats:
-            return group_ids
-        if "group:*" in self._allowed_chats:
+        if not self._policy.rules:
+            return ()
+        if "group:*" in self._policy.rules:
             return group_ids
         allowed_group_ids = {
             int(chat_key.split(":", 1)[1])
-            for chat_key in self._allowed_chats
+            for chat_key in self._policy.rules
             if chat_key.startswith("group:") and chat_key != "group:*"
         }
         return tuple(group_id for group_id in group_ids if group_id in allowed_group_ids)

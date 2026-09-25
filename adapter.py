@@ -10,6 +10,7 @@ from collections import deque
 from config import DEFAULT_MAX_LOCAL_MEDIA_BYTES, MilkyConfig, load_config
 from gates import GateRegistry
 from inbound.pipeline import InboundPipeline
+from management.allowlist import AllowlistManager
 from milky.client import MilkyClient
 from milky.event_stream import SseEventStream
 from milky.logging import render_event
@@ -31,6 +32,7 @@ from session import (
     validate_chat_key,
 )
 from state import MuteTracker
+from state.chat_policy import ChatPolicy
 from will import build_engine
 
 try:
@@ -111,11 +113,25 @@ class MilkyAdapter(BasePlatformAdapter):
         identity_snapshot: BotIdentitySnapshot | None = None,
         session_context_store: ChatMetadataSnapshotStore | None = None,
         plugin_context: object | None = None,
+        allowed_chats_reader=None,
+        profile_settings=None,
     ) -> None:
         """组装进程内依赖；构造阶段不建立网络连接或后台任务。"""
 
         super().__init__(platform_config, Platform(self.PLATFORM_NAME))
         self._config = milky_config or load_config()
+        self._allowed_chats_reader = allowed_chats_reader
+        self._chat_policy = ChatPolicy(self._config.allowed_chats)
+        self._injected = {
+            "client": client,
+            "event_stream": event_stream,
+            "mute_tracker": mute_tracker,
+            "resource_resolver": resource_resolver,
+            "will_engine": will_engine,
+            "pipeline": pipeline,
+            "outbound_sender": outbound_sender,
+            "hermes_media_helpers": hermes_media_helpers,
+        }
         self._client = client if client is not None else MilkyClient(self._config)
         self._event_stream = (
             event_stream if event_stream is not None else SseEventStream(self._config)
@@ -123,7 +139,7 @@ class MilkyAdapter(BasePlatformAdapter):
         self._mute_tracker = (
             mute_tracker
             if mute_tracker is not None
-            else MuteTracker(self._client, allowed_chats=self._config.allowed_chats)
+            else MuteTracker(self._client, allowed_chats=self._chat_policy)
         )
         self._resource_resolver = (
             resource_resolver
@@ -136,7 +152,7 @@ class MilkyAdapter(BasePlatformAdapter):
         self._will_engine = (
             will_engine if will_engine is not None else build_engine(self._config.will_policy)
         )
-        self._gate_registry = GateRegistry(self._config.allowed_chats)
+        self._gate_registry = GateRegistry(self._chat_policy)
         self._wait_buffer = WaitBuffer(self._config.session_buffer_size)
         self._admission = ChatAdmissionCoordinator()
         self._deduplicator = TtlDeduplicator()
@@ -155,6 +171,9 @@ class MilkyAdapter(BasePlatformAdapter):
 
             slash_command_service = SlashCommandService()
         self._slash_command_service = slash_command_service
+        self._allowlist_manager = AllowlistManager(
+            self._chat_policy, self._mute_tracker, profile_settings, self._publish_allowlist
+        )
         self._identity_snapshot = (
             identity_snapshot if identity_snapshot is not None else BotIdentitySnapshot()
         )
@@ -262,21 +281,17 @@ class MilkyAdapter(BasePlatformAdapter):
         del is_reconnect
         async with self._lifecycle_lock:
             if self._closed:
-                self._record("connect_after_stop")
-                logger.warning(
-                    render_event(
-                        "milky.lifecycle",
-                        stage="connect",
-                        classification="unsupported",
-                        reason="stopped",
-                    )
-                )
-                return False
+                self._rebuild_connection()
             if self._connected and self._event_task is not None and not self._event_task.done():
                 return True
             logger.info(render_event("milky.lifecycle", stage="connect", operation="connecting"))
             try:
                 if not self._initial_sync_complete:
+                    if self._allowed_chats_reader is not None:
+                        rules = self._allowed_chats_reader()
+                        if inspect.isawaitable(rules):
+                            rules = await rules
+                        self._chat_policy.publish(rules)
                     await self._initialize_state()
                 await self._restore_confirmed_session_keys()
                 if self._pipeline is None:
@@ -336,6 +351,8 @@ class MilkyAdapter(BasePlatformAdapter):
                 return
             self._closed = True
             self._connected = False
+            self._unbind_command_service()
+            await self._allowlist_manager.close()
             logger.info(render_event("milky.lifecycle", stage="disconnect", operation="stopping"))
             event_task = self._event_task
             self._event_task = None
@@ -697,6 +714,41 @@ class MilkyAdapter(BasePlatformAdapter):
             if inspect.isawaitable(result):
                 await result
 
+    def _publish_allowlist(self, rules) -> None:
+        """发布完整规则并同步撤销插件等待状态。"""
+        if not self._connected or self._closed:
+            raise RuntimeError("stopped")
+        revoked = self._chat_policy.publish(rules)
+        if self._pipeline is not None:
+            self._pipeline.revoke(revoked)
+
+    def _rebuild_connection(self) -> None:
+        """完整重连重建已关闭的自有资源，保留宿主 adapter 身份和启动配置。"""
+        injected = self._injected
+        self._client = injected["client"] or MilkyClient(self._config)
+        self._event_stream = injected["event_stream"] or SseEventStream(self._config)
+        self._mute_tracker = injected["mute_tracker"] or MuteTracker(
+            self._client, allowed_chats=self._chat_policy
+        )
+        self._resource_resolver = injected["resource_resolver"] or ResourceResolver(
+            self._client, injected["hermes_media_helpers"] or _HermesMediaHelperBridge()
+        )
+        self._will_engine = injected["will_engine"] or build_engine(self._config.will_policy)
+        self._wait_buffer = WaitBuffer(self._config.session_buffer_size)
+        self._admission = ChatAdmissionCoordinator()
+        self._deduplicator = TtlDeduplicator()
+        self._outbound = injected["outbound_sender"] or MilkyOutboundSender(
+            self._client,
+            mute_tracker=self._mute_tracker,
+            max_local_media_bytes=self._config.max_local_media_bytes,
+            long_text_forward_threshold=self._config.long_text_forward_threshold,
+        )
+        self._allowlist_manager.tracker = self._mute_tracker
+        self._pipeline = injected["pipeline"]
+        self._pipeline_started = False
+        self._initial_sync_complete = False
+        self._closed = False
+
     def _build_pipeline(self) -> InboundPipeline:
         """使用初始同步确认的 Bot 身份组装入站 pipeline。"""
 
@@ -707,6 +759,8 @@ class MilkyAdapter(BasePlatformAdapter):
             hermes=self,
             resource_resolver=self._resource_resolver,
             gate_registry=self._gate_registry,
+            chat_policy=self._chat_policy,
+            allowlist_manager=self._allowlist_manager,
             will_engine=self._will_engine,
             wait_buffer=self._wait_buffer,
             admission=self._admission,
@@ -805,6 +859,10 @@ class MilkyAdapter(BasePlatformAdapter):
     def _bind_command_service(self) -> None:
         """将已连接的同一 Milky client 交给命令 service。"""
 
+        self._allowlist_manager.start()
+        bind_manager = getattr(self._slash_command_service, "bind_manager", None)
+        if callable(bind_manager):
+            bind_manager(self._allowlist_manager)
         bind = getattr(self._slash_command_service, "bind_client", None)
         if callable(bind):
             bind(self._client)
@@ -812,6 +870,10 @@ class MilkyAdapter(BasePlatformAdapter):
     def _unbind_command_service(self) -> None:
         """在连接失败或停止后解除命令 service 的 client 绑定。"""
 
+        self._allowlist_manager.stop()
+        unbind_manager = getattr(self._slash_command_service, "unbind_manager", None)
+        if callable(unbind_manager):
+            unbind_manager(self._allowlist_manager)
         unbind = getattr(self._slash_command_service, "unbind_client", None)
         if callable(unbind):
             unbind(self._client)

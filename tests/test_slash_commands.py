@@ -178,7 +178,7 @@ def make_pipeline(
         self_id=900000001,
         hermes=hermes,
         resource_resolver=resolver,
-        gate_registry=GateRegistry(),
+        gate_registry=GateRegistry({"group:*", "dm:*"}),
         will_engine=will,
         wait_buffer=WaitBuffer(),
         admission=ChatAdmissionCoordinator(),

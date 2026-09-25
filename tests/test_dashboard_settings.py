@@ -163,3 +163,32 @@ def test_managed_overlay_preserves_explicit_and_effective_distinction(monkeypatc
     assert result["effective"]["session_buffer_size"] == 20
     assert result["sources"]["session_buffer_size"] == "settings"
     assert not result["writable"]["session_buffer_size"]
+
+
+def test_allowlist_save_promotes_environment_and_empty_shadows_it(monkeypatch):
+    """QQ/Web 共享单键保存，显式空名单遮蔽环境且不改其他配置。"""
+    current = {"base_url": "http://127.0.0.1:4000", "session_buffer_size": 7}
+    env = {"MILKY_ALLOWED_CHATS": "group:*"}
+    monkeypatch.setattr(
+        settings,
+        "_inputs",
+        lambda: (copy.deepcopy(current), {}, copy.deepcopy(current), env, "synthetic"),
+    )
+    monkeypatch.setattr(settings, "_writable", lambda: dict.fromkeys(settings.KEYS, True))
+    module = ModuleType("hermes_cli.plugins_state")
+    writes = []
+
+    def save(_plugin, keys, value):
+        writes.append(keys)
+        current[keys[0]] = value
+
+    module.save_plugin_setting = save
+    monkeypatch.setitem(sys.modules, "hermes_cli.plugins_state", module)
+    before = settings.read()
+    assert before["sources"]["allowed_chats"] == "environment"
+    assert settings.save(before["version"], {"allowed_chats": []})["status"] == "saved"
+    after = settings.read()
+    assert after["effective"]["allowed_chats"] == []
+    assert after["sources"]["allowed_chats"] == "settings"
+    assert after["runtime_status"] == "unknown"
+    assert current["session_buffer_size"] == 7 and writes == [("allowed_chats",)]

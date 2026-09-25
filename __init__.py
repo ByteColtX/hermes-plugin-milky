@@ -108,6 +108,7 @@ def register(ctx: Any) -> None:
     网络连接或创建长期后台任务。
     """
 
+    from management.profile import ProfileSettings
     from outbound.standalone import make_standalone_sender
 
     from .config import load_config
@@ -115,6 +116,7 @@ def register(ctx: Any) -> None:
     from .stickers import StickerMaintenanceService
 
     milky_config = load_config()
+    profile_settings = ProfileSettings()
     command_service = SlashCommandService(StickerMaintenanceService(plugin_context=ctx))
     _register_bundled_skill(ctx)
     register_tools(ctx)
@@ -123,8 +125,8 @@ def register(ctx: Any) -> None:
         register_command(
             "milky",
             command_service.handle,
-            description="Show Milky implementation information",
-            args_hint="",
+            description="Milky 信息、sticker 维护与 allowlist 管理",
+            args_hint="[sticker ... | allowlist list/add/del (remove) ...]",
         )
     standalone_sender = make_standalone_sender(milky_config)
 
@@ -145,6 +147,8 @@ def register(ctx: Any) -> None:
         adapter_factory=lambda platform_config: MilkyAdapter(
             platform_config,
             milky_config=milky_config,
+            allowed_chats_reader=profile_settings.allowed_chats,
+            profile_settings=profile_settings,
             plugin_context=ctx,
             slash_command_service=command_service,
             identity_snapshot=identity_snapshot,
