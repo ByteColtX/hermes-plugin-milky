@@ -18,7 +18,7 @@
 - **THEN** ChatAllowlist gate SHALL 拒绝消息
 - **AND** SHALL 不调用 Agent 或资源接口
 
-管理命令例外 SHALL 仅豁免来源会话的白名单匹配；canonical、自身消息和去重边界仍然适用，管理来源群的禁言检查 SHALL 延后至 core 放行后、名单读写前完成。普通正文和其他命令 MUST NOT 获得此路由豁免。Gate MUST NOT 读取管理员名单或判断 slash 权限；所有命令权限 SHALL 由 core 决定。Gate 本身 SHALL 保持只读；按需群状态准备 SHALL 由 core 放行后的管理流程负责。
+管理命令例外 SHALL 豁免来源会话的白名单与入站禁言匹配；canonical、自身消息和去重边界仍然适用，管理命令 SHALL 不查询来源群或目标群状态，回执仍遵守既有发送限制。普通正文和其他命令 MUST NOT 获得此路由豁免。Gate MUST NOT 读取管理员名单或判断 slash 权限；所有命令权限 SHALL 由 core 决定。Gate 本身 SHALL 保持只读；按需群状态准备 SHALL 由通过自身与白名单检查后的普通入站流程负责，查询后重新检查授权与撤销代次。
 
 #### Scenario: 空名单仍能管理
 

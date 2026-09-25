@@ -225,8 +225,31 @@ class InboundPipeline:
         async with self._admission.admit(canonical.chat_key) as ticket:
             command = recognize_slash_command(canonical)
             management_route = is_management_command(command)
+            # 管理命令不查询群状态；获准入站的群首次使用时独立准备。
+            if (
+                not management_route
+                and canonical.scene == "group"
+                and canonical.sender_id != self._self_id
+                and self._chat_policy is not None
+                and self._chat_policy.allows(canonical.chat_key)
+                and self._mute_tracker is not None
+            ):
+                prepare = getattr(self._mute_tracker, "prepare_group", None)
+                if callable(prepare):
+                    generation = self._chat_policy.generation(canonical.chat_key)
+                    ready = await prepare(int(canonical.chat_key.split(":")[1]))
+                    if not self._accepting:
+                        return PipelineResult("stopped", canonical=canonical)
+                    if generation != self._chat_policy.generation(canonical.chat_key):
+                        return PipelineResult(
+                            "denied", canonical=canonical, reason="chat_not_allowed"
+                        )
+                    if not ready:
+                        return PipelineResult(
+                            "denied", canonical=canonical, reason="mute_state_unknown"
+                        )
             gate_result = (
-                SelfMessageGate().check(self._gate_context(canonical))
+                SelfMessageGate().check(self._gate_context(canonical, include_mute=False))
                 if management_route
                 else self._gates.check(self._gate_context(canonical))
             )
@@ -497,10 +520,10 @@ class InboundPipeline:
                 )
             )
 
-    def _gate_context(self, message: CanonicalMessage) -> GateContext:
+    def _gate_context(self, message: CanonicalMessage, *, include_mute=True) -> GateContext:
         member_mute = "muted"
         whole_mute = "muted"
-        if message.scene == "group" and self._mute_tracker is not None:
+        if include_mute and message.scene == "group" and self._mute_tracker is not None:
             snapshot = getattr(self._mute_tracker, "gate_snapshot", None)
             if callable(snapshot):
                 try:

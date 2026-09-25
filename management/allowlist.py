@@ -10,9 +10,23 @@ from management.errors import ManagementError
 from session.identity import validate_chat_key, validate_chat_rule
 
 USAGE = (
-    "usage: /milky allowlist list [--page <正整数>] | add [目标] | del [目标] "
-    "(remove 等价于 del)；保存无法保证与 Web/人工修改完全原子"
+    "指令格式不正确\n\n"
+    "查看白名单\n/milky allowlist list\n\n"
+    "添加规则\n/milky allowlist add [目标]\n\n"
+    "移除规则\n/milky allowlist del [目标]\n\n"
+    "省略目标时，使用当前会话。\n"
+    "目标支持 group:群号、dm:QQ号、group:* 和 dm:*。\n"
+    "remove 与 del 等效。\n\n"
+    "同时从多个入口修改白名单可能导致更改被覆盖。"
 )
+UNAVAILABLE = "白名单管理暂不可用\n\n请检查插件连接状态后重试。"
+STOPPED = "插件连接已停止\n\n本次操作未执行。请在连接恢复后重试。"
+INVALID_CONFIG = "白名单配置无效\n\n请检查 allowed_chats 的配置格式。"
+BLOCKED = "无法修改白名单\n\n此设置受 Hermes 托管策略限制。"
+CONFLICT = "更改未保存\n\n白名单已发生变化。请查看最新名单后重试。"
+UNKNOWN = "无法确认操作结果\n\n请先查看白名单，确认状态后再操作。"
+SAVED = "更改已保存，尚未生效\n\n请重启 Gateway 以应用更改。"
+RELOAD = "配置与当前运行不同。\n请重启 Gateway 以应用当前配置。"
 
 
 @dataclass(frozen=True)
@@ -21,7 +35,6 @@ class Operation:
 
     verb: str
     target: str | None = None
-    page: int = 1
 
 
 def parse(raw_args: str) -> Operation:
@@ -34,18 +47,8 @@ def parse(raw_args: str) -> Operation:
         verb = "del"
     if verb in {"add", "del"} and len(parts) in {2, 3}:
         return Operation(verb, validate_chat_rule(parts[2]) if len(parts) == 3 else None)
-    if verb == "list":
-        if len(parts) == 2:
-            return Operation(verb)
-        if (
-            len(parts) == 4
-            and parts[2] == "--page"
-            and parts[3].isascii()
-            and parts[3].isdecimal()
-            and 0 < len(parts[3]) <= 9
-            and int(parts[3]) > 0
-        ):
-            return Operation(verb, page=int(parts[3]))
+    if verb == "list" and len(parts) == 2:
+        return Operation(verb)
     raise ValueError("invalid_input")
 
 
@@ -74,11 +77,10 @@ current_invocation: ContextVar[Invocation | None] = ContextVar("milky_invocation
 
 
 class AllowlistManager:
-    """由活动 adapter 拥有，串行准备、保存和发布完整规则。"""
+    """由活动 adapter 拥有，串行保存和发布完整规则。"""
 
-    def __init__(self, policy, tracker, store, publish):
+    def __init__(self, policy, store, publish):
         self.policy = policy
-        self.tracker = tracker
         self.store = store
         self._publish = publish
         self._lock = asyncio.Lock()
@@ -132,101 +134,85 @@ class AllowlistManager:
         )
 
     async def handle(self, operation, invocation):
-        """宿主放行后先准备来源群，再读取名单及处理目标。"""
+        """宿主放行后读写规则；不查询来源或目标群状态。"""
         if not self.accepts(invocation):
-            return "unsupported: 无可信会话、profile 或活动实例"
+            return UNAVAILABLE
         invocation.consumed = True
         task = asyncio.current_task()
         self._tasks.add(task)
         try:
             async with self._lock:
                 if not self.active or invocation.epoch != self.epoch:
-                    return "unsupported: 实例已停止"
+                    return STOPPED
                 source = invocation.chat_key
-                if source.startswith("group:"):
-                    group_id = int(source.split(":")[1])
-                    if not await self.tracker.prepare_group(group_id):
-                        return "blocked: 来源群状态准备失败"
-                    member, whole = self.tracker.gate_snapshot(group_id)
-                    if member != "unmuted" or whole == "muted":
-                        return "blocked: 来源群禁言"
-                if not self.active:
-                    return "unsupported: 实例已停止"
+                version = self.policy.version
                 snapshot = self.store.read()
                 rules = snapshot["effective"].get("allowed_chats")
                 if rules is None:
-                    return "invalid_input: 持久白名单无效"
+                    return INVALID_CONFIG
                 rules = frozenset(validate_chat_rule(rule) for rule in rules)
                 if operation.verb == "list":
-                    return self._list(snapshot, rules, operation.page)
+                    return self._list(snapshot, rules)
                 target = operation.target or source
                 candidate = rules | {target} if operation.verb == "add" else rules - {target}
                 if candidate == rules:
-                    suffix = (
-                        "；持久与运行规则不同，需要重新加载" if rules != self.policy.rules else ""
-                    )
-                    return f"unchanged: 条目 {target} 未变化{suffix}"
+                    title = "规则已存在" if operation.verb == "add" else "规则不存在"
+                    result = f"{title}\n{target}\n\n未作更改。"
+                    if rules != self.policy.rules:
+                        result += "\n" + RELOAD
+                    return result
                 if not snapshot["writable"]["allowed_chats"]:
-                    return "blocked: 白名单由宿主管理"
-                version = self.policy.version
-                if not await self.tracker.prepare_rules(candidate):
-                    return "blocked: 目标群状态准备失败"
+                    return BLOCKED
                 if not self.active or invocation.epoch != self.epoch:
-                    return "unsupported: 实例已停止"
+                    return STOPPED
                 if version != self.policy.version:
-                    return "conflict: 运行版本已变化"
+                    return CONFLICT
                 result = self.store.save(snapshot["version"], candidate)
                 status = result["results"]["allowed_chats"]
                 if status != "saved":
-                    return f"{status if status != 'failed' else 'unknown'}: 持久化未确认，未应用"
+                    return BLOCKED if status == "blocked" else UNKNOWN
                 if not self.active or invocation.epoch != self.epoch:
-                    return "saved: 运行未应用，需要重新加载"
+                    return SAVED
                 try:
                     self._publish(candidate)
                 except Exception:  # noqa: BLE001 - 保存成功不得回滚或重试
-                    return "saved: 运行未应用，需要重新加载"
-                action = "已添加" if operation.verb == "add" else "已删除"
-                suffix = ""
-                if (
-                    operation.verb == "add"
-                    and target.startswith("group:")
-                    and target != "group:*"
-                    and self.tracker.is_muted(int(target.split(":")[1]))
-                ):
-                    suffix = "；目标仍受禁言限制"
-                if (
-                    operation.verb == "add"
-                    and target == "group:*"
-                    and any(
-                        self.tracker.is_muted(group)
-                        for group in getattr(self.tracker, "group_ids", ())
-                    )
-                ):
-                    suffix = "；部分目标仍受禁言限制"
-                return f"saved applied: 条目 {target} {action}{suffix}"
+                    return SAVED
+                action = "已添加" if operation.verb == "add" else "已移除"
+                return f"{action}白名单规则\n{target}\n\n更改已保存并生效。"
         except ManagementError as error:
-            return f"{error.status}: 管理操作未应用"
+            return {
+                "blocked": BLOCKED,
+                "conflict": CONFLICT,
+                "unsupported": UNAVAILABLE,
+                "invalid_input": INVALID_CONFIG,
+                "malformed": INVALID_CONFIG,
+            }.get(error.status, UNKNOWN)
         except Exception:  # noqa: BLE001 - 宿主异常不能泄漏原始配置或异常正文
-            return "unknown: 配置或运行状态无法确认"
+            return UNKNOWN
         finally:
             self._tasks.discard(task)
 
-    def _list(self, snapshot, rules, page):
-        """按两种规则的并集分页，每页至多展示五十个条目。"""
-        entries = sorted(rules | self.policy.rules)
-        pages = max(1, (len(entries) + 49) // 50)
-        if page > pages:
-            return "invalid_input: 页码超出范围"
-        lines = [
-            f"白名单 {page}/{pages}；来源 {snapshot['sources']['allowed_chats']}",
-            f"持久/运行{'一致' if rules == self.policy.rules else '不同，需要重新加载'}",
-        ]
-        if not rules:
-            lines.append("持久名单为空：阻止全部普通入站")
-        if not self.policy.rules:
-            lines.append("运行名单为空：阻止全部普通入站")
-        for rule in entries[(page - 1) * 50 : page * 50]:
-            lines.append(
-                f"{rule} 持久={'是' if rule in rules else '否'} 运行={'是' if rule in self.policy.rules else '否'}"
-            )
+    def _list(self, snapshot, rules):
+        """完整返回已排序规则，长消息由既有发送流程处理。"""
+        runtime = self.policy.rules
+        source = snapshot["sources"]["allowed_chats"]
+        lines = ["会话白名单", ""]
+        if rules == runtime:
+            if rules:
+                lines.extend(sorted(rules))
+                lines.extend(["", f"共 {len(rules)} 条规则"])
+            else:
+                lines.extend(["尚未添加规则。", "当前不接收任何会话的普通消息。", ""])
+            lines.extend([f"配置来源：{source}", "配置与当前运行一致。"])
+            if not rules:
+                lines.extend(["", "添加当前会话：", "/milky allowlist add"])
+        else:
+            lines.extend(["当前配置", *(sorted(rules) or ["（空）"]), "", "当前运行"])
+            lines.extend(sorted(runtime) or ["（空）"])
+            lines.extend(["", f"配置来源：{source}", ""])
+            if not rules:
+                lines.append("当前配置为空，应用后将停止接收所有会话的普通消息。")
+            if not runtime:
+                lines.append("当前运行的白名单为空，尚不接收任何会话的普通消息。")
+            lines.append(RELOAD)
         return "\n".join(lines)

@@ -172,7 +172,7 @@ class MilkyAdapter(BasePlatformAdapter):
             slash_command_service = SlashCommandService()
         self._slash_command_service = slash_command_service
         self._allowlist_manager = AllowlistManager(
-            self._chat_policy, self._mute_tracker, profile_settings, self._publish_allowlist
+            self._chat_policy, profile_settings, self._publish_allowlist
         )
         self._identity_snapshot = (
             identity_snapshot if identity_snapshot is not None else BotIdentitySnapshot()
@@ -743,7 +743,6 @@ class MilkyAdapter(BasePlatformAdapter):
             max_local_media_bytes=self._config.max_local_media_bytes,
             long_text_forward_threshold=self._config.long_text_forward_threshold,
         )
-        self._allowlist_manager.tracker = self._mute_tracker
         self._pipeline = injected["pipeline"]
         self._pipeline_started = False
         self._initial_sync_complete = False

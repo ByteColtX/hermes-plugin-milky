@@ -85,7 +85,7 @@ class Tracker:
 def setup(rules=()):
     """组装无网络管理实例。"""
     policy, tracker, store = ChatPolicy(rules), Tracker(), Store(rules)
-    manager = AllowlistManager(policy, tracker, store, policy.publish)
+    manager = AllowlistManager(policy, store, policy.publish)
     manager.start()
     return manager, policy, tracker, store
 
@@ -109,6 +109,8 @@ async def invoke(manager, args, source="dm:123"):
         "allowlist add dm:**",
         "allowlist del dm:1 dm:2",
         "allowlist list dm:1",
+        "allowlist list --page 1",
+        "allowlist list --page 2",
         "allowlist list --page 0",
         "allowlist list --page -1",
         "allowlist other",
@@ -120,7 +122,7 @@ def test_invalid_syntax_has_no_service_effects(raw):
     service = SlashCommandService()
     service.bind_manager(manager)
     result = asyncio.run(service.handle(raw))
-    assert result.startswith("invalid_input")
+    assert result.startswith("指令格式不正确")
     assert store.reads == 0 and not store.writes and not tracker.calls
 
 
@@ -134,11 +136,11 @@ def test_delete_aliases_are_single_literal_operations(verb, source, target):
     result = asyncio.run(
         invoke(manager, f"allowlist {verb}" + (f" {target}" if target else ""), source)
     )
-    assert result.startswith("saved applied")
+    assert result.endswith("更改已保存并生效。")
     assert len(store.writes) == 1
     assert policy.rules == store.rules == {"group:456"}
     assert "会话已关闭" not in result
-    assert asyncio.run(invoke(manager, f"allowlist {verb} {rule}", source)).startswith("unchanged")
+    assert asyncio.run(invoke(manager, f"allowlist {verb} {rule}", source)).startswith("规则不存在")
     assert len(store.writes) == 1
 
 
@@ -148,11 +150,11 @@ def test_literal_add_and_wildcard_revoke_generation():
     async def scenario():
         manager, policy, _tracker, store = setup({"dm:*"})
         generation = policy.generation("dm:123")
-        assert (await invoke(manager, "allowlist add")).startswith("saved applied")
+        assert (await invoke(manager, "allowlist add")).endswith("更改已保存并生效。")
         assert store.rules == {"dm:*", "dm:123"}
-        assert (await invoke(manager, "allowlist del dm:123")).startswith("saved applied")
+        assert (await invoke(manager, "allowlist del dm:123")).endswith("更改已保存并生效。")
         assert policy.generation("dm:123") == generation
-        assert (await invoke(manager, "allowlist del dm:*")).startswith("saved applied")
+        assert (await invoke(manager, "allowlist del dm:*")).endswith("更改已保存并生效。")
         assert policy.generation("dm:123") == generation + 1
         await invoke(manager, "allowlist add")
         assert policy.generation("dm:123") == generation + 1
@@ -161,13 +163,17 @@ def test_literal_add_and_wildcard_revoke_generation():
     asyncio.run(scenario())
 
 
-def test_source_mute_and_preparation_fail_before_settings():
-    """来源群拒绝时连名单读取也不能发生。"""
-    for muted, ready in [(True, True), (False, False)]:
-        manager, policy, tracker, store = setup()
-        tracker.muted, tracker.prepare_ok = muted, ready
-        assert asyncio.run(invoke(manager, "allowlist list", "group:123")).startswith("blocked")
-        assert store.reads == 0 and policy.rules == frozenset()
+@pytest.mark.parametrize("verb", ["list", "add", "del", "remove"])
+def test_management_does_not_query_group_state(verb):
+    """来源禁言或状态不可用不阻止规则管理，也不触发群查询。"""
+    manager, policy, tracker, store = setup({"group:123"} if verb in {"del", "remove"} else ())
+    tracker.muted, tracker.prepare_ok = True, False
+    response = asyncio.run(invoke(manager, f"allowlist {verb}", "group:123"))
+    assert "白名单" in response and "禁言" not in response
+    assert not tracker.calls
+    assert store.reads == 1
+    if verb != "list":
+        assert len(store.writes) == 1 and policy.rules == store.rules
 
 
 def test_missing_stale_and_environment_context_is_unsupported(monkeypatch):
@@ -178,17 +184,21 @@ def test_missing_stale_and_environment_context_is_unsupported(monkeypatch):
         invocation = manager.invocation("dm:123")
         monkeypatch.setenv("HERMES_SESSION_PLATFORM", "milky")
         monkeypatch.setenv("HERMES_SESSION_CHAT_ID", "dm:123")
-        assert (await manager.handle(parse("allowlist list"), invocation)).startswith("unsupported")
+        assert (await manager.handle(parse("allowlist list"), invocation)).startswith(
+            "白名单管理暂不可用"
+        )
         a, b = PLATFORM.set("milky"), CHAT.set("dm:123")
         try:
             assert "白名单" in await manager.handle(parse("allowlist list"), invocation)
             assert (await manager.handle(parse("allowlist list"), invocation)).startswith(
-                "unsupported"
+                "白名单管理暂不可用"
             )
             old = manager.invocation("dm:123")
             manager.stop()
             manager.start()
-            assert (await manager.handle(parse("allowlist add"), old)).startswith("unsupported")
+            assert (await manager.handle(parse("allowlist add"), old)).startswith(
+                "白名单管理暂不可用"
+            )
         finally:
             PLATFORM.reset(a)
             CHAT.reset(b)
@@ -204,7 +214,7 @@ def test_multiple_instances_do_not_select_arbitrarily():
     second, *_ = setup()
     service.bind_manager(first)
     service.bind_manager(second)
-    assert asyncio.run(service.handle("allowlist list")).startswith("unsupported")
+    assert asyncio.run(service.handle("allowlist list")).startswith("白名单管理暂不可用")
 
 
 @pytest.mark.parametrize("result", ["blocked", "conflict", "unknown", "failed"])
@@ -213,7 +223,7 @@ def test_failed_save_never_publishes_or_retries(result):
     manager, policy, _tracker, store = setup()
     store.result = result
     response = asyncio.run(invoke(manager, "allowlist add"))
-    assert "applied" not in response
+    assert response.startswith("无法修改白名单" if result == "blocked" else "无法确认操作结果")
     assert not policy.rules and len(store.writes) == 1
 
 
@@ -221,20 +231,23 @@ def test_external_conflict_and_serial_commands():
     """并发命令读最新设置；准备期间 Web 修改产生 conflict。"""
 
     async def scenario():
-        manager, policy, tracker, store = setup()
+        manager, policy, _tracker, store = setup()
         results = await asyncio.gather(
             invoke(manager, "allowlist add dm:1"), invoke(manager, "allowlist add dm:2")
         )
-        assert all(result.startswith("saved applied") for result in results)
+        assert all(result.endswith("更改已保存并生效。") for result in results)
         assert store.rules == policy.rules == {"dm:1", "dm:2"}
 
-        async def conflict():
+        save = store.save
+
+        def conflict(version, rules):
             store.rules = frozenset({"dm:9"})
             store.version += 1
+            return save(version, rules)
 
-        tracker.prepare_hook = conflict
+        store.save = conflict
         result = await invoke(manager, "allowlist add dm:3")
-        assert result.startswith("conflict")
+        assert result.startswith("更改未保存")
         assert policy.rules == {"dm:1", "dm:2"} and store.rules == {"dm:9"}
         assert len(store.writes) == 2
 
@@ -245,10 +258,10 @@ def test_persisted_but_not_published_and_unchanged_does_not_reload():
     """已保存后停止或发布异常不回滚；重复操作不隐式同步。"""
     manager, policy, _tracker, store = setup()
     store.after_save = manager.stop
-    assert asyncio.run(invoke(manager, "allowlist add")).startswith("saved:")
+    assert asyncio.run(invoke(manager, "allowlist add")).startswith("更改已保存，尚未生效")
     assert store.rules == {"dm:123"} and not policy.rules
     manager.start()
-    assert "需要重新加载" in asyncio.run(invoke(manager, "allowlist add"))
+    assert "请重启 Gateway" in asyncio.run(invoke(manager, "allowlist add"))
     assert len(store.writes) == 1 and not policy.rules
     store.after_save = lambda: None
 
@@ -256,36 +269,39 @@ def test_persisted_but_not_published_and_unchanged_does_not_reload():
         raise RuntimeError("synthetic")
 
     manager._publish = fail
-    assert asyncio.run(invoke(manager, "allowlist add dm:456")).startswith("saved:")
+    assert asyncio.run(invoke(manager, "allowlist add dm:456")).startswith("更改已保存，尚未生效")
     assert store.rules == {"dm:123", "dm:456"}
 
 
-def test_pagination_and_empty_rules():
-    """稳定并集分页，每页最多五十条，不执行目标扫描。"""
+def test_complete_list_and_empty_rules():
+    """完整输出所有规则，保留原始来源，区分配置与运行且不查询群状态。"""
     manager, policy, tracker, store = setup()
-    assert "阻止全部普通入站" in asyncio.run(invoke(manager, "allowlist list"))
+    empty = asyncio.run(invoke(manager, "allowlist list"))
+    assert "当前不接收任何会话的普通消息。" in empty
+    assert "配置来源：settings" in empty
     store.rules = frozenset(f"dm:{number}" for number in range(101))
-    result = asyncio.run(invoke(manager, "allowlist list --page 2"))
-    assert len([line for line in result.splitlines() if line.startswith("dm:")]) == 50
-    assert "不同，需要重新加载" in result and not policy.rules and not tracker.calls
+    policy.publish({"group:123"})
+    result = asyncio.run(invoke(manager, "allowlist list"))
+    assert [line for line in result.splitlines() if line.startswith("dm:")] == sorted(store.rules)
+    assert "当前配置" in result and "当前运行\ngroup:123" in result
+    assert "请重启 Gateway" in result and not tracker.calls
+    policy.publish(store.rules)
+    result = asyncio.run(invoke(manager, "allowlist list"))
+    assert "共 101 条规则" in result and "配置与当前运行一致。" in result
+    assert len([line for line in result.splitlines() if line.startswith("dm:")]) == 101
 
 
-def test_stop_during_preparation_cancels_owned_work():
-    """关闭取消并等待准备，旧调用不能提交。"""
+def test_stop_during_lock_wait_cancels_owned_work():
+    """关闭取消并等待排队修改，旧调用不能提交。"""
 
     async def scenario():
-        manager, policy, tracker, store = setup()
-        started = asyncio.Event()
-
-        async def block():
-            started.set()
-            await asyncio.Event().wait()
-
-        tracker.prepare_hook = block
+        manager, policy, _tracker, store = setup()
+        await manager._lock.acquire()
         task = asyncio.create_task(invoke(manager, "allowlist add"))
-        await started.wait()
+        await asyncio.sleep(0)
         await manager.close()
         assert task.cancelled() and not store.writes and not policy.rules
+        manager._lock.release()
         await manager.close()
 
     asyncio.run(scenario())
@@ -434,7 +450,8 @@ def test_revoke_clears_wait_context_and_willingness():
 
 @pytest.mark.parametrize("verb", ["add", "del", "remove", "list"])
 @pytest.mark.parametrize("allowed", [False, True])
-def test_management_route_reaches_core_without_resources(verb, allowed):
+@pytest.mark.parametrize("scene", ["friend", "group"])
+def test_management_route_reaches_core_without_resources(verb, allowed, scene):
     """白名单内外固定管理语法均交宿主，自身和普通命令仍拒绝。"""
     from tests.test_slash_commands import (
         FIXTURE_ROOT,
@@ -449,7 +466,12 @@ def test_management_route_reaches_core_without_resources(verb, allowed):
         will = SimpleNamespace(decide=lambda _value: pytest.fail("management entered Will"))
         pipeline = make_pipeline(hermes, resolver, will)
         pipeline._gates = GateRegistry({"group:*", "dm:*"} if allowed else ())
-        event = load_fixture(FIXTURE_ROOT / "events/friend_plain_text.json")
+        pipeline._mute_tracker = SimpleNamespace(
+            gate_snapshot=lambda _: pytest.fail("management checked group state"),
+            prepare_group=lambda _: pytest.fail("management queried group state"),
+        )
+        fixture = "friend_plain_text.json" if scene == "friend" else "group_plugin_milky.json"
+        event = load_fixture(FIXTURE_ROOT / "events" / fixture)
         event["data"]["segments"] = [{"type": "text", "data": {"text": f"/milky allowlist {verb}"}}]
         result = await pipeline.handle_event(event)
         assert result.classification == "command"
@@ -508,30 +530,113 @@ def test_prepare_cancel_retains_events_but_not_send_permission():
     asyncio.run(scenario())
 
 
-def test_wildcard_preparation_is_all_or_nothing_and_keeps_muted_target():
-    """群通配符任一准备失败不提交，禁言目标可保存但发送仍拒绝。"""
+def test_wildcard_edit_does_not_prepare_members():
+    """规则修改无需目标状态，群通配符与具体条目独立保存。"""
 
     async def scenario():
-        from tests.test_mute_tracker import member
-
-        client = FakeMuteClient(
-            [700000001, 700000002], member_results={700000002: RuntimeError("synthetic")}
-        )
-        tracker = MuteTracker(client, clock=lambda: 100, refresh_cooldown=0)
+        client = FakeMuteClient([700000001, 700000002], block_members=True)
+        tracker = MuteTracker(client)
         await tracker.initialize()
         store, policy = Store(), ChatPolicy()
-        manager = AllowlistManager(policy, tracker, store, policy.publish)
+        manager = AllowlistManager(policy, store, policy.publish)
         manager.start()
-        assert (await invoke(manager, "allowlist add group:*")).startswith("blocked")
-        assert not store.writes and not policy.rules
-        client.member_results[700000002] = member(700000002, shut_up_end_time=200)
-        assert (await invoke(manager, "allowlist add group:700000002")).startswith("saved applied")
-        assert tracker.is_muted(700000002)
-        assert (await invoke(manager, "allowlist add group:*")).startswith("saved applied")
-        assert store.rules == {"group:*", "group:700000002"}
-        assert (await invoke(manager, "allowlist del group:*")).startswith("saved applied")
-        assert tracker.is_muted(700000002)
+        for args in ["add group:700000002", "add group:*", "del group:*"]:
+            assert (await invoke(manager, "allowlist " + args)).endswith("更改已保存并生效。")
+        assert store.rules == policy.rules == {"group:700000002"}
+        assert not client.all_members_started.is_set()
+        assert tracker.gate_snapshot(700000002)[0] == "muted"
         await manager.close()
         await tracker.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "outcome", ["ready", "failed", "muted", "revoked", "readded", "denied", "self"]
+)
+def test_new_group_prepares_only_on_allowed_inbound(outcome):
+    """热添加后首次入站准备状态；拒绝、自身及撤销消息不能进入 Will 或宿主。"""
+    from tests.test_hermes_pipeline import FakeHermes, FakeResolver, load_fixture, make_pipeline
+    from tests.test_mute_tracker import member
+
+    async def scenario():
+        client = FakeMuteClient([700000001])
+        release = asyncio.Event()
+        original_query = client.get_group_member_info
+
+        async def blocked_query(*args, **kwargs):
+            client.all_members_started.set()
+            await release.wait()
+            return await original_query(*args, **kwargs)
+
+        if outcome in {"revoked", "readded"}:
+            client.get_group_member_info = blocked_query
+        if outcome == "failed":
+            client.member_results[700000001] = RuntimeError("synthetic")
+        elif outcome == "muted":
+            client.member_results[700000001] = member(700000001, shut_up_end_time=200)
+        tracker = MuteTracker(client, clock=lambda: 100)
+        await tracker.initialize()
+        hermes, resolver = FakeHermes(), FakeResolver()
+        pipeline = make_pipeline(hermes, resolver)
+        policy = ChatPolicy() if outcome == "denied" else ChatPolicy({"group:*"})
+        pipeline._chat_policy, pipeline._gates = policy, GateRegistry(policy)
+        pipeline._mute_tracker = tracker
+        event = load_fixture("events/message_receive.group.all_segments.json")
+        if outcome == "self":
+            event["data"]["sender_id"] = pipeline._self_id
+            event["data"]["group_member"]["user_id"] = pipeline._self_id
+        task = asyncio.create_task(pipeline.handle_event(event))
+        if outcome in {"revoked", "readded"}:
+            await client.all_members_started.wait()
+            pipeline.revoke(policy.publish([]))
+            if outcome == "readded":
+                policy.publish({"group:*"})
+            release.set()
+        result = await task
+        await pipeline.wait_idle()
+        if outcome == "ready":
+            assert result.classification == "trigger"
+            assert len(hermes.events) == 1
+        else:
+            assert result.classification == "denied"
+            assert not hermes.events and pipeline.reply_costs == 0
+        if outcome in {"self", "denied"}:
+            assert not client.all_members_started.is_set()
+        await pipeline.close()
+        await tracker.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("threshold", [0, 100])
+def test_complete_list_uses_existing_long_message_delivery(threshold):
+    """完整名单经普通分块或合并转发发送，所有规则保持顺序且不截断。"""
+    from outbound.sender import MilkyOutboundSender
+    from tests.test_long_text_forwarding import ForwardClient, _forward_body, _text_content
+
+    async def scenario():
+        manager, _policy, _tracker, _store = setup({f"dm:{n}" for n in range(200)})
+        text = await invoke(manager, "allowlist list")
+        client = ForwardClient()
+        sender = MilkyOutboundSender(
+            client,
+            max_text_length=100,
+            long_text_forward_threshold=threshold,
+            identity_loader=client.get_login_info,
+        )
+        result = await sender.send("dm:800000001", text)
+        assert result.success
+        if threshold:
+            delivered = _text_content(_forward_body(client)["messages"])
+        else:
+            assert len(client.calls) > 1
+            delivered = "".join(
+                segment["data"]["text"]
+                for _, body in client.calls
+                for segment in body["message"]
+                if segment["type"] == "text"
+            )
+        assert delivered == text
 
     asyncio.run(scenario())

@@ -7,7 +7,7 @@ import inspect
 import json
 from threading import RLock
 
-from management.allowlist import USAGE, current_invocation, parse
+from management.allowlist import UNAVAILABLE, USAGE, current_invocation, parse
 from milky.client import ActionError
 from stickers.maintenance import StickerMaintenanceService
 
@@ -110,9 +110,9 @@ class SlashCommandService:
                 try:
                     operation = parse(stripped)
                 except (ValueError, TypeError):
-                    return "invalid_input: " + USAGE
+                    return USAGE
                 if len(self._managers) != 1:
-                    return "unsupported: 无唯一活动实例"
+                    return UNAVAILABLE
                 return await self._managers[0].handle(operation, current_invocation.get())
             if stripped.split(maxsplit=1)[0].lower() == "sticker":
                 return await self._sticker_service.handle(raw_args)

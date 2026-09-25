@@ -6,7 +6,7 @@
 
 对于已经通过协议解析、canonical、TTL dedup、per-chat admission 和 Gate 的 friend 或
 group message_receive，当消息是可识别的斜杠命令时，系统 MUST 在 wait buffer 和 Will
-之前将其交给 Hermes gateway control 通道。白名单管理路由例外 SHALL 按 hot-chat-allowlist 契约进入 core，其来源群状态检查在 core 放行后、名单读写前完成。命令 SHALL NOT 增长 wait buffer、进行 Will 评分、触发资源补全或创建普通 Agent turn。白名单管理提交导致撤销时 SHALL 按 hot-chat-allowlist 契约清理失效会话的旧等待与 Will 状态，这不属于命令正文参与普通消息策略。
+之前将其交给 Hermes gateway control 通道。白名单管理路由例外 SHALL 按 hot-chat-allowlist 契约进入 core，其管理读写不查询来源或目标群状态。命令 SHALL NOT 增长 wait buffer、进行 Will 评分、触发资源补全或创建普通 Agent turn。白名单管理提交导致撤销时 SHALL 按 hot-chat-allowlist 契约清理失效会话的旧等待与 Will 状态，这不属于命令正文参与普通消息策略。
 
 所有 slash 指令的权限 MUST 完全由 Hermes core 管理。插件 MUST NOT 自行解析管理员名单、判断角色、复制命令许可或新增子命令权限门禁；core 放行后 SHALL 仅执行参数、操作对象与运行状态检查。core 拒绝 SHALL 不触发插件管理读写或状态准备；插件 MUST NOT 绕过 core 直接执行指令。
 
@@ -28,13 +28,13 @@ group message_receive，当消息是可识别的斜杠命令时，系统 MUST �
 - **THEN** 消息 SHALL 继续按照既有 wait/trigger Will 流水线处理
 - **AND** SHALL 不因正文包含普通斜杠字符而进入命令通道
 
-纯文本直接 /milky allowlist 固定子命令 SHALL 依照 hot-chat-allowlist 契约，在来源白名单未放行时仍进入 core 分发。路由例外 SHALL 不预先检查发送者管理员身份；core 允许并完成参数校验后，管理 handler SHALL 准备和检查来源群状态，通过后才读写名单或准备目标。该例外 MUST NOT 扩展到其他 /milky 子命令、其他命令的别名展开或普通正文；已通过普通会话 Gate 的 core 别名 SHALL 不被插件额外拒绝。无法确定可信来源/profile/实例时 SHALL 返回 unsupported，不借用环境中的旧会话。
+纯文本直接 /milky allowlist 固定子命令 SHALL 依照 hot-chat-allowlist 契约，在来源白名单未放行时仍进入 core 分发。路由例外 SHALL 不预先检查发送者管理员身份；core 允许并完成参数校验后，管理 handler SHALL 直接执行名单读写，不查询来源或目标群状态。该例外 MUST NOT 扩展到其他 /milky 子命令、其他命令的别名展开或普通正文；已通过普通会话 Gate 的 core 别名 SHALL 不被插件额外拒绝。无法确定可信来源/profile/实例时 SHALL 返回 unsupported，不借用环境中的旧会话。
 
 #### Scenario: 白名单外群管理员启用当前群
 
 - **WHEN** 来源群未放行，发送者发送 /milky allowlist add 且 core 允许
 - **THEN** 系统 SHALL 在 core 分发后检查来源群状态，通过后执行当前群的管理操作
-- **AND** SHALL 不另查管理员名单、不先把群加入白名单来绕过状态准备，且不触发普通 Agent turn
+- **AND** SHALL 不另查管理员名单、不查询群状态，且不触发普通 Agent turn
 
 #### Scenario: 普通用户获准使用 milky 命令
 
@@ -50,9 +50,9 @@ group message_receive，当消息是可识别的斜杠命令时，系统 MUST �
 
 #### Scenario: core 允许后来源群状态不可用
 
-- **WHEN** core 已分发管理指令，但来源群已禁言或必要状态准备失败
-- **THEN** 插件 SHALL 停止后续名单读写、目标准备和规则发布
-- **AND** 此前在 core 允许后进行的必要只读群查询 SHALL 不被视作越过 slash 权限；回执不得绕过禁言
+- **WHEN** core 已分发管理指令，来源或目标群状态未知或已禁言
+- **THEN** 插件 SHALL 正常执行规则读写，不查询群状态或附加禁言提示
+- **AND** 回执 SHALL 沿既有发送流程处理，发送失败不得重放修改
 
 ### Requirement: `/milky` 必须格式化返回 get_impl_info 的实现信息
 
@@ -66,7 +66,7 @@ HTTP POST、Bearer 认证和 JSON `{}` body。成功时，命令回复正文 MUS
 `cleanup [--dry-run]` 和 `reindex` SHALL 遵守贴纸维护规范；只有显式 `add` 或 `reanalyze` 路径可以调用
 Hermes core 的辅助视觉能力，该路径不得调用 `get_impl_info` 或任意 Milky Action。
 
-同一命令 SHALL 接受 /milky allowlist list [--page <正整数>]、/milky allowlist add [目标] 和 /milky allowlist del [目标]，并接受 remove 作为 del 的等价别名，按 hot-chat-allowlist 契约处理。合法 allowlist SHALL 不被归类为未知参数；它 SHALL 不调用 get_impl_info 或贴纸维护，只能按该契约执行必要的群状态查询、名单读写与回执。所有路径的 slash 权限 SHALL 由 Hermes core 决定。
+同一命令 SHALL 接受 /milky allowlist list、/milky allowlist add [目标] 和 /milky allowlist del [目标]，并接受 remove 作为 del 的等价别名，按 hot-chat-allowlist 契约处理。合法 allowlist SHALL 不被归类为未知参数；它 SHALL 不调用 get_impl_info 或贴纸维护，只能按该契约执行名单读写与回执，不查询来源或目标群状态。所有路径的 slash 权限 SHALL 由 Hermes core 决定。
 
 #### Scenario: 成功获取协议端信息
 
@@ -142,6 +142,6 @@ Hermes core 的辅助视觉能力，该路径不得调用 `get_impl_info` 或任
 
 #### Scenario: allowlist 非法参数不回退
 
-- **WHEN** 调用参数为 allowlist 未知子命令、非法目标、额外参数或非法页码
+- **WHEN** 调用参数为 allowlist 未知子命令、非法目标、额外参数（包括任何分页参数）
 - **THEN** 命令 SHALL 返回 invalid_input 或安全 usage 提示
 - **AND** SHALL 不读写名单、不查询群状态、不回退协议摘要或贴纸维护

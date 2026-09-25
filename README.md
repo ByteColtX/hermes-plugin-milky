@@ -894,8 +894,7 @@ fixture、测试和文档改进的贡献者。
 门禁也服从 core。未放行会话可以发送下面的直接管理命令，其他命令仍需通过会话 Gate。
 结构化 mention、图片、未知子命令和其他命令展开的别名不享有路由例外；已放行会话的 core 别名正常执行。
 
-- /milky allowlist list：查看持久及运行规则、来源和差异；每页最多 50 条。
-- /milky allowlist list --page 2：读取后续页。
+- /milky allowlist list：完整查看配置及运行规则、来源和差异，不支持分页；长消息由既有发送流程合并转发或拆分。
 - /milky allowlist add：添加当前群或当前私聊。
 - /milky allowlist add dm:123456：添加显式目标；同样支持 group:123456、group:*、dm:*。
 - /milky allowlist del：删除当前会话的字面条目；remove 与 del 完全等价。
@@ -903,13 +902,17 @@ fixture、测试和文档改进的贡献者。
 
 目标管理范围是当前 profile 的 group/dm 规则，裸数字和 temp 被拒绝。具体条目与通配符独立，
 添加具体条目不会因已有通配符返回 unchanged；删除具体条目不会修改通配符。回执只报告条目结果。
-来源群必须在 core 放行后确认可发送；目标群先确认 Bot 归属与成员状态，确认禁言的目标可保存但仍受禁言限制。
+管理命令不查询来源群或目标群状态，不以禁言状态阻止名单读写，也不附加禁言提示。
+新授权群首次收到获准入站的消息时按需准备成员状态；状态未知、准备失败或禁言仍拒绝普通消息。
+回执沿既有发送流程处理，是否送达不改变已提交的规则。
 
 QQ 修改只保存 plugins.entries.hermes-plugin-milky.settings.allowed_chats，读回确认后在线发布。
-settings 空列表遮蔽环境值；纯环境部署首次实际修改提升为 settings。saved applied 表示已保存并在线应用；
-saved 且未应用需重新加载；unchanged 不写入也不偷偷 reload；blocked、conflict、unsupported、invalid_input、unknown
-均不代表在线成功。缺少可信调用来源、明确 profile 或唯一活动实例时返回 unsupported，绝不使用环境中的旧会话。
-list 可检查 Web 保存造成的持久/在线差异，Web 仍显示待重新加载及 unknown。
+settings 空列表遮蔽环境值；纯环境部署首次实际修改提升为 settings。回执使用中文结果：
+“更改已保存并生效”表示已持久化并在线应用；“更改已保存，尚未生效”提示重启 Gateway；
+“规则已存在／规则不存在”表示未作更改，不隐式 reload。无法确认的结果不会报告成功或自动重试。
+缺少可信调用来源、明确 profile 或唯一活动实例时提示管理暂不可用，绝不使用环境中的旧会话。
+list 保留 settings、legacy、environment、default 来源名称；一致时只显示一份完整名单，
+不一致时分别显示“当前配置”和“当前运行”，提示重启 Gateway。Web 仍只保存配置，不新增重启按钮。
 
 实例内修改串行，保存前版本检查及读回核验不等于与 Web/人工编辑的跨入口条件事务。
 未知结果不自动重试或回滚；回执发送失败不重放修改。其他配置保持启动快照。

@@ -81,7 +81,7 @@ async def checks(home):
         plugins._plugin_managers_by_home[home.resolve()] = manager
         plugins._plugin_manager = manager
         policy, tracker, store = ChatPolicy(), Tracker(), ProfileSettings()
-        control = AllowlistManager(policy, tracker, store, policy.publish)
+        control = AllowlistManager(policy, store, policy.publish)
         control.start()
         service.bind_manager(control)
         runner = object.__new__(GatewayRunner)
@@ -130,7 +130,7 @@ async def checks(home):
                     current_invocation.reset(invocation_token)
                 assert handled
                 if allowed:
-                    assert result.startswith(("saved applied", "unchanged")), result
+                    assert result.startswith(("已添加白名单规则", "规则已存在")), result
                 else:
                     assert "admin-only" in result
                     assert before == (len(tracker.calls), store.read()["version"])

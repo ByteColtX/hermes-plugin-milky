@@ -426,7 +426,7 @@ class MuteTracker:
             return True
 
     async def prepare_group(self, group_id: int) -> bool:
-        """仅在明确管理调用中确认归属，再以拒绝状态建立跟踪。"""
+        """为获准入站群确认归属，再以拒绝状态建立跟踪。"""
         group_id = _validate_id(group_id, "group_id")
         if not self._initialized:
             return False
@@ -451,19 +451,6 @@ class MuteTracker:
                 return True
             except Exception:  # noqa: BLE001 - 不返回协议正文
                 return False
-
-    async def prepare_rules(self, rules: frozenset[str]) -> bool:
-        """准备候选群范围；通配符只查询当前群，不改变持久条目。"""
-        if "group:*" in rules:
-            if not await self.refresh_membership():
-                return False
-            targets = sorted(self._known_group_ids)
-        else:
-            targets = sorted(int(rule.split(":")[1]) for rule in rules if rule.startswith("group:"))
-        for group_id in targets:
-            if not await self.prepare_group(group_id):
-                return False
-        return True
 
     async def refresh_after_send_failure(self, target: object) -> bool:
         """仅为明确的 group 目标触发受控刷新，dm 目标直接忽略。"""

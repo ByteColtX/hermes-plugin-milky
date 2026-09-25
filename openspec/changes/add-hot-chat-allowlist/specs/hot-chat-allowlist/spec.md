@@ -42,15 +42,15 @@
 - **THEN** 插件 SHALL 返回 unsupported，不执行管理读写
 - **AND** SHALL 不选择默认 profile 或借用最近一次来源；该结果 SHALL 表示缺少执行上下文而非权限拒绝
 
-### Requirement: 管理入口只豁免来源白名单匹配
+### Requirement: 管理入口保留来源校验且不查询群状态
 
-规范的直接白名单管理指令 SHALL 能从未放行会话进入 Hermes core 命令分发，包括有效白名单为空的情况；路由资格 MUST NOT 依赖插件对发送者角色或命令权限的判断。canonical、自身消息拒绝、去重、同一 chat 的入站顺序和群禁言约束 MUST 保留。管理来源群状态 SHALL 在 core 放行和参数校验后、名单读写及目标准备之前检查；未跟踪时 SHALL 按需准备，准备成功且禁言条件允许后才执行管理操作。此检查 SHALL 不作为进入 core 授权入口的前置条件。准备 MUST NOT 自动放行来源群。已确认禁言或准备失败时 MUST 停止管理操作，不能先更改设置再尝试回复。
+规范的直接白名单管理指令 SHALL 能从未放行会话进入 Hermes core 命令分发，包括有效白名单为空的情况；路由资格 MUST NOT 依赖插件对发送者角色或命令权限的判断。canonical、自身消息拒绝、去重和同一 chat 的入站顺序 MUST 保留。管理操作 SHALL NOT 查询来源群或目标群状态，也不得以禁言状态阻止名单读写。回执 SHALL 使用既有发送流程，送达结果不得改变已提交规则；普通消息的白名单与禁言约束 MUST 保留。
 
 路由例外 MUST 只匹配规范化的直接 /milky allowlist 指令及固定子命令；其他子命令、普通正文、结构化 mention/图片消息、从其他命令展开的别名或未知子命令不获得此路由例外。已通过普通会话 Gate 的 slash 指令及别名 SHALL 继续交由 core 处理，插件不增设权限限制。管理命令 SHALL 不进入资源补全、Will、wait buffer 或普通 Agent turn。
 
 #### Scenario: 从关闭的群启用自己
 
-- **WHEN** 群未获准入站，调用者发送 /milky allowlist add，core 允许且后续群状态检查通过
+- **WHEN** 群未获准入站，调用者发送 /milky allowlist add，core 允许且参数、会话/profile/实例校验通过
 - **THEN** 系统 SHALL 接受当前群为目标并执行一次管理流程
 - **AND** 提交之前的普通消息 SHALL 不因发送者身份而被放行
 
@@ -60,15 +60,15 @@
 - **THEN** 前者 SHALL 由 core 拒绝且不执行管理操作，后者 SHALL 继续按普通会话白名单处理
 - **AND** SHALL 不因此发起群状态准备、设置写入或普通 Agent turn
 
-#### Scenario: 关闭群仍处于禁言
+#### Scenario: 管理操作不依赖群状态
 
-- **WHEN** core 已允许未放行群中的管理调用，但 Bot 已确认禁言或后续成员查询失败
-- **THEN** 系统 SHALL 不执行名单读写及目标准备，不绕过发送禁言
-- **AND** 调用者仍可从另一个由 core 允许且运行条件满足的来源管理该目标
+- **WHEN** core 已允许管理调用，来源或目标群状态未知或已禁言
+- **THEN** 系统 SHALL 按规则正常读写且不发起群列表或成员查询
+- **AND** 回执 SHALL 不附加禁言提示，不绕过既有发送限制，发送失败不得重放修改
 
 ### Requirement: 缺省目标与显式规则具有确定语义
 
-add/del 省略目标时 MUST 使用可信来源的完整当前 chat key；群内发送者 QQ 号不得替代当前群号。显式参数 SHALL 接受一个合法 group:<十进制群号>、dm:<十进制 QQ 号>、group:* 或 dm:* 规则。裸数字、temp、未知命名空间、多余参数、畸形通配符 MUST 在网络及持久化前拒绝，不回退当前会话。list SHALL 不接受目标参数。
+add/del 省略目标时 MUST 使用可信来源的完整当前 chat key；群内发送者 QQ 号不得替代当前群号。显式参数 SHALL 接受一个合法 group:<十进制群号>、dm:<十进制 QQ 号>、group:* 或 dm:* 规则。裸数字、temp、未知命名空间、多余参数、畸形通配符 MUST 在网络及持久化前拒绝，不回退当前会话。list SHALL 不接受目标、分页或其他附加参数。
 
 add SHALL 仅将指定字面规则加入集合；del SHALL 仅将指定字面规则从集合删除。具体规则与通配符 SHALL 作为独立条目处理，不按覆盖关系合并、展开或联动增减，不生成隐藏拒绝项。已有通配符 SHALL 不妨碍添加尚不存在的具体条目；添加或删除通配符 SHALL 保留其他具体条目。仅当添加的字面条目已存在或删除的字面条目不存在时 SHALL 返回 unchanged，不制造写入。增减回执 SHALL 只报告条目操作结果，不附带覆盖关系判断，不将删除条目表述为会话已关闭。删除最后一项 MUST 保存空列表并阻止全部普通入站。
 
@@ -130,7 +130,7 @@ add SHALL 仅将指定字面规则加入集合；del SHALL 仅将指定字面规
 
 管理修改 MUST 使用当前 profile 的宿主设置机制，仅修改 plugins.entries.hermes-plugin-milky.settings.allowed_chats，不改环境文件、凭证或其他设置，不建立第二份持久化名单。候选 SHALL 基于当前 profile 最新有效配置计算；纯环境部署首次实际修改 SHALL 保存为更高优先级 settings。空 settings 列表 MUST 遮蔽低优先级环境授权。
 
-同一活动实例的修改 SHALL 串行提交，新增授权群状态准备成功后才能持久化；保存前检查版本、托管限制和实例生命周期，保存后读回核验，确认持久化后才发布完整运行快照。无法确认唯一实例或 profile 时 MUST 在写入前返回 unsupported。保存失败或已发现竞争时 SHALL 不发布本次候选；保存已确认但发布失败 SHALL 分别报告 saved 与未应用。未知保存结果 SHALL 明示 unknown，不自动重试或盲目回滚。宿主无跨入口条件事务时 MUST 明示无法保证与人工/Web 并发完全原子。
+同一活动实例的修改 SHALL 串行提交，不依赖群状态准备；保存前检查版本、托管限制和实例生命周期，保存后读回核验，确认持久化后才发布完整运行快照。无法确认唯一实例或 profile 时 MUST 在写入前返回 unsupported。保存失败或已发现竞争时 SHALL 不发布本次候选；保存已确认但发布失败 SHALL 分别报告 saved 与未应用。未知保存结果 SHALL 明示 unknown，不自动重试或盲目回滚。宿主无跨入口条件事务时 MUST 明示无法保证与人工/Web 并发完全原子。
 
 #### Scenario: 从环境迁移到设置
 
@@ -138,10 +138,10 @@ add SHALL 仅将指定字面规则加入集合；del SHALL 仅将指定字面规
 - **THEN** 完整候选 SHALL 保存到当前 profile 的 settings 并在核验后在线应用
 - **AND** 重启 SHALL 读取该设置，旧环境值保持原样且不覆盖设置
 
-#### Scenario: 托管或准备失败
+#### Scenario: 托管限制
 
-- **WHEN** 宿主禁止写入，或新增群状态准备失败
-- **THEN** 系统 SHALL 返回 blocked 或明确准备失败状态，保持原名单
+- **WHEN** 宿主禁止写入
+- **THEN** 系统 SHALL 返回表示 blocked 的中文提示，保持原名单
 - **AND** SHALL 不报告 saved 或 applied
 
 #### Scenario: 并发指令与 Web 竞争
@@ -158,7 +158,7 @@ add SHALL 仅将指定字面规则加入集合；del SHALL 仅将指定字面规
 
 ### Requirement: 在线生效有明确的提交与撤销边界
 
-系统 SHALL 在持久化核验及状态准备完成后发布完整有效策略版本。成功回执后的新消息 MUST 使用该版本或更新版本；命令接收和完成之间的消息 SHALL 以实际授权检查时的版本判断，不承诺命令一到就生效。
+系统 SHALL 在持久化核验完成后发布完整有效策略版本。成功回执后的新消息 MUST 使用该版本或更新版本；命令接收和完成之间的消息 SHALL 以实际授权检查时的版本判断，不承诺命令一到就生效。
 
 失去授权的会话 SHALL 清除插件尚未交接的等待消息、待附加系统上下文和 Will 累计状态；已分离但尚未交给 Hermes 的普通批次 MUST 在交接前检查授权是否曾被撤销，重新添加也不得复活旧批次。已交给 Hermes 的任务和历史 SHALL 不被撤销或删除。删除规则不限制出站工具、cron 或 home-channel 权限，不提前丢弃这些路径仍需要的群禁言状态。
 
@@ -176,18 +176,18 @@ add SHALL 仅将指定字面规则加入集合；del SHALL 仅将指定字面规
 
 ### Requirement: 管理回执区分规则和真实运行状态
 
-list SHALL 稳定排序并分页返回当前 profile 的持久有效规则、配置来源、运行规则及二者是否一致；默认第一页，每页最多 50 条，可用 /milky allowlist list --page <正整数> 查询后续页。空列表 SHALL 明示全部普通入站阻止。反馈 SHALL 只发回原命令来源，不广播其他群。
+list SHALL 稳定排序并完整返回当前 profile 的持久有效规则、配置来源、运行规则及二者是否一致，不设分页或条数截断。来源 SHALL 保留 settings、legacy、environment、default 原名称；一致时只显示一份，不一致时分别显示“当前配置”和“当前运行”，提示重启 Gateway。空列表 SHALL 明示全部普通入站阻止。反馈 SHALL 只发回原命令来源，不广播其他群。
 
-add/del 回执 MUST 区分 saved、applied、unchanged、blocked、conflict、unsupported、invalid_input 和 unknown 等实际结果；目标群已授权但确认禁言时 SHALL 说明仍受禁言限制。回执发送失败 SHALL 不回滚配置、不重新执行修改或自动重发。诊断只保留操作、固定分类、版本或受限计数，不记录命令正文、完整列表、凭证、路径或底层异常正文。
+add/del 回执 MUST 区分 saved、applied、unchanged、blocked、conflict、unsupported、invalid_input 和 unknown 等实际结果的语义，使用简洁正式的中文，不要求展示英文状态码前缀，也不附加群禁言判断。回执发送失败 SHALL 不回滚配置、不重新执行修改或自动重发。诊断只保留操作、固定分类、版本或受限计数，不记录命令正文、完整列表、凭证、路径或底层异常正文。
 
 #### Scenario: 持久值与在线值不同
 
 - **WHEN** Web 已保存新白名单但实例尚未重新加载，调用者执行 list
-- **THEN** 列表 SHALL 区分持久配置与运行策略，说明需要重新加载
+- **THEN** 列表 SHALL 区分持久配置与运行策略，提示重启 Gateway
 - **AND** list SHALL 不隐式应用新配置或查询所有群状态
 
-#### Scenario: 分页读取与回执失败
+#### Scenario: 完整列表与回执失败
 
 - **WHEN** 列表超过 50 条，或成功提交后的 QQ 回执发送失败
-- **THEN** 前者 SHALL 返回有限页并提示后续页，后者 SHALL 保留提交结果
-- **AND** SHALL 不无限发送列表或因回执失败重放修改
+- **THEN** 前者 SHALL 完整返回规则并由既有发送流程处理长消息，后者 SHALL 保留提交结果
+- **AND** SHALL 不提供分页参数、截断规则或因回执失败重放修改
