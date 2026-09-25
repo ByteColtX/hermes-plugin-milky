@@ -270,7 +270,6 @@ platforms:
 
       # 私聊普通用户允许的只读命令
       user_allowed_commands:
-        - "milky"
         - "status"
         - "context"
         - "agents"
@@ -281,7 +280,6 @@ platforms:
 
       # 群聊普通用户允许的只读命令
       group_user_allowed_commands:
-        - "milky"
         - "status"
         - "context"
         - "agents"
@@ -320,6 +318,9 @@ session_reset:
 管理员可以执行所有已注册命令；普通用户默认可以执行 `/help` 和 `/whoami`，以及对应
 `user_allowed_commands` 中列出的命令。私聊和群聊的管理员列表分别配置；某个作用域未配置
 对应的 `*_allow_admin_from` 时，该作用域的 Slash Command 门禁不会启用。
+
+示例不向普通用户开放 `/milky`。Hermes core 按顶层命令授权，放行 `milky` 也会放行其子命令；
+插件不额外设置子命令权限门禁。
 
 建议只开放明确的只读命令。`config`、`tools`、`model`、`sessions`、`cron`、`goal`、
 `memory`、`suggestions` 和 `skills` 等命令包含配置、会话、工具或任务状态变更，不建议加入普通用户白名单。
