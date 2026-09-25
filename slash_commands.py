@@ -7,7 +7,7 @@ import inspect
 import json
 from threading import RLock
 
-from management.allowlist import UNAVAILABLE, USAGE, current_invocation, parse
+from management.allowlist import HELP, UNAVAILABLE, USAGE, current_invocation, parse
 from milky.client import ActionError
 from stickers.maintenance import StickerMaintenanceService
 
@@ -111,6 +111,8 @@ class SlashCommandService:
                     operation = parse(stripped)
                 except (ValueError, TypeError):
                     return USAGE
+                if operation.verb == "help":
+                    return HELP
                 if len(self._managers) != 1:
                     return UNAVAILABLE
                 return await self._managers[0].handle(operation, current_invocation.get())

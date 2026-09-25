@@ -894,6 +894,7 @@ fixture、测试和文档改进的贡献者。
 门禁也服从 core。未放行会话可以发送下面的直接管理命令，其他命令仍需通过会话 Gate。
 结构化 mention、图片、未知子命令和其他命令展开的别名不享有路由例外；已放行会话的 core 别名正常执行。
 
+- /milky allowlist 或 /milky allowlist help：显示帮助，包含命令、目标格式和示例；不读取或修改配置。
 - /milky allowlist list：完整查看配置及运行规则、来源和差异，不支持分页；长消息由既有发送流程合并转发或拆分。
 - /milky allowlist add：添加当前群或当前私聊。
 - /milky allowlist add dm:123456：添加显式目标；同样支持 group:123456、group:*、dm:*。
@@ -923,4 +924,4 @@ list 保留 settings、legacy、environment、default 来源名称；一致时�
 **BREAKING 迁移与回滚：** 升级前，需要全放行的部署将旧空配置改为两个通配符。
 旧版本把空列表解释为全部放行，回滚前先停止接收并设置经审阅的非空受限名单；
 若需全部关闭，在宿主停用平台。只回滚代码并保留空列表会扩大权限。
-真实 QQ 验收范围与当前验证结果见 openspec/changes/add-hot-chat-allowlist/evidence.md。
+真实 QQ 验收范围与当前验证结果见 openspec/changes/archive/2026-09-26-add-hot-chat-allowlist/evidence.md。

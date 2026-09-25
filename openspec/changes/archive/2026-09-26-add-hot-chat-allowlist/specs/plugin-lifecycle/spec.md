@@ -43,7 +43,7 @@ MUST 使用日志给出 `total`、`succeeded`、`failed`、`muted`、`unmuted` �
 #### Scenario: 空名单启动后自助开启
 
 - **WHEN** 白名单为空且登录、群列表初始化成功
-- **THEN** 系统 SHALL 启动 SSE 并接受由 core 允许且群状态条件满足的管理指令
+- **THEN** 系统 SHALL 启动 SSE 并接受由 core 允许的管理指令
 - **AND** SHALL 不因空名单停止插件，也不为所有群查询成员
 
 #### Scenario: 停止与保存竞争

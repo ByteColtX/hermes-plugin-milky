@@ -41,7 +41,12 @@
 
 - [x] 6.1 运行跨模块聚焦测试：uv run pytest -q tests/test_config.py tests/test_gate_registry.py tests/test_slash_commands.py tests/test_hermes_pipeline.py tests/test_mute_tracker.py tests/test_adapter_lifecycle.py tests/test_plugin_entry.py tests/test_dashboard_settings.py，以及新增管理测试；记录通过、失败和 skip，确认权限拒绝/保存失败无非预期副作用。
 - [x] 6.2 完成质量门禁：uv run pytest -q、uv run ruff check .、uv run ruff format --check .、uv build、git diff --check、openspec validate --changes --strict；修复本 change 引入的问题并记录无关外部阻塞。
-- [ ] 6.3 在明确获准的测试 profile/QQ 会话执行真实集成验收：空名单管理员启用当前群/私聊、成功回执后普通入站、指定目标增减、删除最后一项仍可管理、重启保留、Web 刷新、管理命令无群查询与普通入站禁言拒绝；外部配置修改和发送须有明确授权，smoke 写模式遵守 --allow-write 及目标限制，缺少条件记录 blocked/skip。
+- [x] 6.3 在明确获准的测试 profile/QQ 会话执行真实集成验收：空名单管理员启用当前群/私聊、成功回执后普通入站、指定目标增减、删除最后一项仍可管理、重启保留、Web 刷新、管理命令无群查询与普通入站禁言拒绝；外部配置修改和发送须有明确授权，smoke 写模式遵守 --allow-write 及目标限制，缺少条件记录 blocked/skip。
 - [x] 6.4 在本 change 的 evidence.md 记录合成场景、命令、结果、宿主版本与源码证据、真实集成边界、并发限制及回滚步骤；区分静态、fake host、真实宿主分发和真实 Milky，不以 skip 视为已验证，并核对 proposal/specs/design/tasks 与实现文档一致。
 
 任务 6.3 blocked：未指定明确获准的真实测试 profile、QQ 目标及发送/配置修改范围；详见 evidence.md。
+
+## 7. 帮助与文案收尾
+
+- [x] 7.1 添加空参数与 help 静态帮助，统一标题、英文栏目、e.g. 示例和紧凑格式错误；不添加并发 Note 或异常中的查看命令，验证帮助无配置读写及白名单外 core 路由。
+- [x] 7.2 验证真实 Hermes 帮助权限分发及质量门禁，记录用户实机验收确认，完成七份规格同步核验；联合校验中关联 change 的滞后情况记录于 evidence.md。

@@ -33,7 +33,7 @@ group message_receive，当消息是可识别的斜杠命令时，系统 MUST �
 #### Scenario: 白名单外群管理员启用当前群
 
 - **WHEN** 来源群未放行，发送者发送 /milky allowlist add 且 core 允许
-- **THEN** 系统 SHALL 在 core 分发后检查来源群状态，通过后执行当前群的管理操作
+- **THEN** 系统 SHALL 在 core 分发后校验参数与可信操作上下文，执行当前群的管理操作
 - **AND** SHALL 不另查管理员名单、不查询群状态，且不触发普通 Agent turn
 
 #### Scenario: 普通用户获准使用 milky 命令
@@ -66,7 +66,7 @@ HTTP POST、Bearer 认证和 JSON `{}` body。成功时，命令回复正文 MUS
 `cleanup [--dry-run]` 和 `reindex` SHALL 遵守贴纸维护规范；只有显式 `add` 或 `reanalyze` 路径可以调用
 Hermes core 的辅助视觉能力，该路径不得调用 `get_impl_info` 或任意 Milky Action。
 
-同一命令 SHALL 接受 /milky allowlist list、/milky allowlist add [目标] 和 /milky allowlist del [目标]，并接受 remove 作为 del 的等价别名，按 hot-chat-allowlist 契约处理。合法 allowlist SHALL 不被归类为未知参数；它 SHALL 不调用 get_impl_info 或贴纸维护，只能按该契约执行名单读写与回执，不查询来源或目标群状态。所有路径的 slash 权限 SHALL 由 Hermes core 决定。
+同一命令 SHALL 接受 /milky allowlist 与 /milky allowlist help 静态帮助，以及 /milky allowlist list、/milky allowlist add [目标] 和 /milky allowlist del [目标]，并接受 remove 作为 del 的等价别名，按 hot-chat-allowlist 契约处理。合法 allowlist SHALL 不被归类为未知参数；它 SHALL 不调用 get_impl_info 或贴纸维护，只能按该契约返回静态帮助或执行名单读写与回执，不查询来源或目标群状态。所有路径的 slash 权限 SHALL 由 Hermes core 决定。
 
 #### Scenario: 成功获取协议端信息
 
@@ -145,3 +145,9 @@ Hermes core 的辅助视觉能力，该路径不得调用 `get_impl_info` 或任
 - **WHEN** 调用参数为 allowlist 未知子命令、非法目标、额外参数（包括任何分页参数）
 - **THEN** 命令 SHALL 返回 invalid_input 或安全 usage 提示
 - **AND** SHALL 不读写名单、不查询群状态、不回退协议摘要或贴纸维护
+
+#### Scenario: allowlist 静态帮助分发
+
+- **WHEN** core 允许调用者执行 allowlist 或 allowlist help
+- **THEN** 命令 SHALL 返回相同静态帮助，不依赖唯一活动管理实例
+- **AND** SHALL 不调用 get_impl_info、贴纸维护、配置读写或群状态查询；core 拒绝时 SHALL 不执行帮助 handler

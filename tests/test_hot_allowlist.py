@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from gates import GateRegistry
-from management.allowlist import AllowlistManager, parse
+from management.allowlist import HELP, AllowlistManager, parse
 from management.errors import ManagementError
 from slash_commands import SlashCommandService
 from state.chat_policy import ChatPolicy
@@ -103,7 +103,8 @@ async def invoke(manager, args, source="dm:123"):
 @pytest.mark.parametrize(
     "raw",
     [
-        "allowlist",
+        "allowlist help extra",
+        "allowlist help dm:123",
         "allowlist add 123",
         "allowlist add temp:123",
         "allowlist add dm:**",
@@ -278,7 +279,7 @@ def test_complete_list_and_empty_rules():
     manager, policy, tracker, store = setup()
     empty = asyncio.run(invoke(manager, "allowlist list"))
     assert "当前不接收任何会话的普通消息。" in empty
-    assert "配置来源：settings" in empty
+    assert "Source: settings" in empty
     store.rules = frozenset(f"dm:{number}" for number in range(101))
     policy.publish({"group:123"})
     result = asyncio.run(invoke(manager, "allowlist list"))
@@ -448,7 +449,7 @@ def test_revoke_clears_wait_context_and_willingness():
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("verb", ["add", "del", "remove", "list"])
+@pytest.mark.parametrize("verb", ["", "help", "add", "del", "remove", "list"])
 @pytest.mark.parametrize("allowed", [False, True])
 @pytest.mark.parametrize("scene", ["friend", "group"])
 def test_management_route_reaches_core_without_resources(verb, allowed, scene):
@@ -640,3 +641,19 @@ def test_complete_list_uses_existing_long_message_delivery(threshold):
         assert delivered == text
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("raw", ["allowlist", "allowlist help", "ALLOWLIST HELP"])
+@pytest.mark.parametrize("manager_count", [0, 1, 2])
+def test_help_does_not_require_runtime_or_read_settings(raw, manager_count):
+    """帮助在 core 分发后独立返回，不依赖实例归属或触发管理副作用。"""
+    service = SlashCommandService()
+    managers = [setup() for _ in range(manager_count)]
+    for manager, *_ in managers:
+        service.bind_manager(manager)
+    assert asyncio.run(service.handle(raw)) == HELP
+    for manager, policy, tracker, store in managers:
+        assert not store.reads and not store.writes and not tracker.calls
+        assert not policy.rules
+        assert asyncio.run(manager.handle(parse(raw), None)) == HELP
+        assert not store.reads and not store.writes

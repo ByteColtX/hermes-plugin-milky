@@ -1,16 +1,16 @@
-# Spec Delta
+# hot-chat-allowlist Specification
 
 ## Purpose
 
 为经 Hermes core 允许的调用者提供可从未放行会话使用的显式白名单指令，统一当前会话推导、跨重启持久化和在线生效的可观察行为，并准确区分规则修改、入站授权、群可发送状态与失败结果。
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: 白名单管理的命令权限由 Hermes core 决定
 
-系统 MUST 提供 /milky allowlist list、/milky allowlist add [目标] 和 /milky allowlist del [目标] 纯文本指令。remove MUST 作为 del 的等价别名接受，统一执行同一删除流程；帮助 SHALL 优先展示 del 并注明 remove。两种拼写 SHALL 具有相同的参数校验、缺省目标、字面集合操作、持久化、回执和 core 权限语义；单次调用不得重复执行。remove SHALL 同样属于直接白名单管理路由，不属于其他命令展开的别名。包括这些子命令在内的所有 slash 权限 MUST 由 Hermes core 决定。插件 MUST NOT 读取、解释或复制管理员名单、普通用户命令许可、QQ 角色或子命令权限规则，MUST NOT 在 core 放行后额外要求调用者命中管理员名单。core 对管理员配置缺省、为空、格式异常及作用域的处理 SHALL 保持其自身语义；插件不得另设默认授权或拒绝规则。
+系统 MUST 提供 /milky allowlist 与 /milky allowlist help 静态帮助，以及 /milky allowlist list、/milky allowlist add [目标] 和 /milky allowlist del [目标] 纯文本指令。remove MUST 作为 del 的等价别名接受，统一执行同一删除流程；帮助 SHALL 优先展示 del 并注明 remove。两种拼写 SHALL 具有相同的参数校验、缺省目标、字面集合操作、持久化、回执和 core 权限语义；单次调用不得重复执行。remove SHALL 同样属于直接白名单管理路由，不属于其他命令展开的别名。包括这些子命令在内的所有 slash 权限 MUST 由 Hermes core 决定。插件 MUST NOT 读取、解释或复制管理员名单、普通用户命令许可、QQ 角色或子命令权限规则，MUST NOT 在 core 放行后额外要求调用者命中管理员名单。core 对管理员配置缺省、为空、格式异常及作用域的处理 SHALL 保持其自身语义；插件不得另设默认授权或拒绝规则。
 
-管理读写 MUST 经由 core 的命令分发；core 拒绝时 SHALL 不执行插件管理操作。core 放行后插件 SHALL 仅校验参数、可信来源会话、当前 profile、唯一活动实例及执行所需运行状态，不把这些校验用作角色或命令权限判断。来源与 profile SHALL 不从正文、参数或进程环境猜测，缺少必要上下文时 SHALL 返回 unsupported 且不读写设置。目标 SHALL 可为当前 profile 的合法 group/dm 规则。
+管理读写 MUST 经由 core 的命令分发；core 拒绝时 SHALL 不执行插件管理操作。core 放行后插件 SHALL 仅校验参数、可信来源会话、当前 profile、唯一活动实例及执行所需运行状态，不把这些校验用作角色或命令权限判断。来源与 profile SHALL 不从正文、参数或进程环境猜测，缺少必要上下文时 SHALL 返回 unsupported 且不读写设置。目标 SHALL 可为当前 profile 的合法 group/dm 规则。静态帮助 SHALL 仍经 core 授权，但不依赖活动实例、profile 或管理调用关联，不读取设置或查询群状态。
 
 #### Scenario: core 允许跨命名空间管理
 
@@ -68,7 +68,7 @@
 
 ### Requirement: 缺省目标与显式规则具有确定语义
 
-add/del 省略目标时 MUST 使用可信来源的完整当前 chat key；群内发送者 QQ 号不得替代当前群号。显式参数 SHALL 接受一个合法 group:<十进制群号>、dm:<十进制 QQ 号>、group:* 或 dm:* 规则。裸数字、temp、未知命名空间、多余参数、畸形通配符 MUST 在网络及持久化前拒绝，不回退当前会话。list SHALL 不接受目标、分页或其他附加参数。
+add/del 省略目标时 MUST 使用可信来源的完整当前 chat key；群内发送者 QQ 号不得替代当前群号。显式参数 SHALL 接受一个合法 group:<十进制群号>、dm:<十进制 QQ 号>、group:* 或 dm:* 规则。裸数字、temp、未知命名空间、多余参数、畸形通配符 MUST 在网络及持久化前拒绝，不回退当前会话。list 与 help SHALL 不接受目标、分页或其他附加参数。
 
 add SHALL 仅将指定字面规则加入集合；del SHALL 仅将指定字面规则从集合删除。具体规则与通配符 SHALL 作为独立条目处理，不按覆盖关系合并、展开或联动增减，不生成隐藏拒绝项。已有通配符 SHALL 不妨碍添加尚不存在的具体条目；添加或删除通配符 SHALL 保留其他具体条目。仅当添加的字面条目已存在或删除的字面条目不存在时 SHALL 返回 unchanged，不制造写入。增减回执 SHALL 只报告条目操作结果，不附带覆盖关系判断，不将删除条目表述为会话已关闭。删除最后一项 MUST 保存空列表并阻止全部普通入站。
 
@@ -176,7 +176,7 @@ add SHALL 仅将指定字面规则加入集合；del SHALL 仅将指定字面规
 
 ### Requirement: 管理回执区分规则和真实运行状态
 
-list SHALL 稳定排序并完整返回当前 profile 的持久有效规则、配置来源、运行规则及二者是否一致，不设分页或条数截断。来源 SHALL 保留 settings、legacy、environment、default 原名称；一致时只显示一份，不一致时分别显示“当前配置”和“当前运行”，提示重启 Gateway。空列表 SHALL 明示全部普通入站阻止。反馈 SHALL 只发回原命令来源，不广播其他群。
+list SHALL 稳定排序并完整返回当前 profile 的持久有效规则、配置来源、运行规则及二者是否一致，不设分页或条数截断。帮助及名单标题 SHALL 为“Milky · 会话白名单”，来源标签 SHALL 使用 Source。来源 SHALL 保留 settings、legacy、environment、default 原名称；一致时只显示一份，不一致时分别显示“当前配置”和“当前运行”，提示重启 Gateway。空列表 SHALL 明示全部普通入站阻止。反馈 SHALL 只发回原命令来源，不广播其他群。
 
 add/del 回执 MUST 区分 saved、applied、unchanged、blocked、conflict、unsupported、invalid_input 和 unknown 等实际结果的语义，使用简洁正式的中文，不要求展示英文状态码前缀，也不附加群禁言判断。回执发送失败 SHALL 不回滚配置、不重新执行修改或自动重发。诊断只保留操作、固定分类、版本或受限计数，不记录命令正文、完整列表、凭证、路径或底层异常正文。
 
@@ -191,3 +191,17 @@ add/del 回执 MUST 区分 saved、applied、unchanged、blocked、conflict、un
 - **WHEN** 列表超过 50 条，或成功提交后的 QQ 回执发送失败
 - **THEN** 前者 SHALL 完整返回规则并由既有发送流程处理长消息，后者 SHALL 保留提交结果
 - **AND** SHALL 不提供分页参数、截断规则或因回执失败重放修改
+
+#### Scenario: 空参数与显式帮助
+
+- **WHEN** core 允许调用者执行 /milky allowlist 或 /milky allowlist help
+- **THEN** 系统 SHALL 返回相同静态帮助，以 Usage、Commands、Targets、Examples 分段，命令行独立换行并缩进，目标示例使用 e.g.
+- **AND** SHALL 展示 list/add/del/help、remove 别名、可用目标和省略目标语义，不读取配置、不查询群状态，也不进入 Will 或普通 Agent
+- **AND** 帮助末尾 SHALL 不添加并发修改 Note
+
+#### Scenario: 紧凑格式错误
+
+- **WHEN** allowlist 参数非法，包括 help 后附加目标或其他参数
+- **THEN** 系统 SHALL 返回“指令格式不正确。”及分行缩进的 Usage 和 Help 区块
+- **AND** Usage SHALL 展示 /milky allowlist <list|add|del|help>，Help SHALL 展示 /milky allowlist help，不读写配置或查询群状态
+- **AND** 其他异常回执 SHALL 不附加查看名单命令

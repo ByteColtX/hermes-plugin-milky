@@ -9,15 +9,38 @@ from dataclasses import dataclass
 from management.errors import ManagementError
 from session.identity import validate_chat_key, validate_chat_rule
 
+HELP = (
+    "Milky · 会话白名单\n"
+    "\n"
+    "Usage:\n"
+    "  /milky allowlist <command> [target]\n"
+    "\n"
+    "Commands:\n"
+    "  list    查看全部规则\n"
+    "  add     添加规则\n"
+    "  del     移除规则（别名：remove）\n"
+    "  help    显示帮助\n"
+    "\n"
+    "Targets:\n"
+    "  group:群号    e.g. group:123456\n"
+    "  dm:QQ号       e.g. dm:654321\n"
+    "  group:*       所有群聊\n"
+    "  dm:*          所有私聊\n"
+    "\n"
+    "  add、del 省略目标时使用当前会话。\n"
+    "\n"
+    "Examples:\n"
+    "  /milky allowlist add\n"
+    "  /milky allowlist del group:123456"
+)
 USAGE = (
-    "指令格式不正确\n\n"
-    "查看白名单\n/milky allowlist list\n\n"
-    "添加规则\n/milky allowlist add [目标]\n\n"
-    "移除规则\n/milky allowlist del [目标]\n\n"
-    "省略目标时，使用当前会话。\n"
-    "目标支持 group:群号、dm:QQ号、group:* 和 dm:*。\n"
-    "remove 与 del 等效。\n\n"
-    "同时从多个入口修改白名单可能导致更改被覆盖。"
+    "指令格式不正确。\n"
+    "\n"
+    "Usage:\n"
+    "  /milky allowlist <list|add|del|help>\n"
+    "\n"
+    "Help:\n"
+    "  /milky allowlist help"
 )
 UNAVAILABLE = "白名单管理暂不可用\n\n请检查插件连接状态后重试。"
 STOPPED = "插件连接已停止\n\n本次操作未执行。请在连接恢复后重试。"
@@ -40,14 +63,16 @@ class Operation:
 def parse(raw_args: str) -> Operation:
     """接受固定纯文本参数；非法显式目标绝不回退当前来源。"""
     parts = raw_args.split()
-    if len(parts) < 2 or parts[0].lower() != "allowlist":
+    if not parts or parts[0].lower() != "allowlist":
         raise ValueError("invalid_input")
+    if len(parts) == 1:
+        return Operation("help")
     verb = parts[1].lower()
     if verb == "remove":
         verb = "del"
     if verb in {"add", "del"} and len(parts) in {2, 3}:
         return Operation(verb, validate_chat_rule(parts[2]) if len(parts) == 3 else None)
-    if verb == "list" and len(parts) == 2:
+    if verb in {"list", "help"} and len(parts) == 2:
         return Operation(verb)
     raise ValueError("invalid_input")
 
@@ -135,6 +160,8 @@ class AllowlistManager:
 
     async def handle(self, operation, invocation):
         """宿主放行后读写规则；不查询来源或目标群状态。"""
+        if operation.verb == "help":
+            return HELP
         if not self.accepts(invocation):
             return UNAVAILABLE
         invocation.consumed = True
@@ -196,20 +223,20 @@ class AllowlistManager:
         """完整返回已排序规则，长消息由既有发送流程处理。"""
         runtime = self.policy.rules
         source = snapshot["sources"]["allowed_chats"]
-        lines = ["会话白名单", ""]
+        lines = ["Milky · 会话白名单", ""]
         if rules == runtime:
             if rules:
                 lines.extend(sorted(rules))
                 lines.extend(["", f"共 {len(rules)} 条规则"])
             else:
                 lines.extend(["尚未添加规则。", "当前不接收任何会话的普通消息。", ""])
-            lines.extend([f"配置来源：{source}", "配置与当前运行一致。"])
+            lines.extend([f"Source: {source}", "配置与当前运行一致。"])
             if not rules:
-                lines.extend(["", "添加当前会话：", "/milky allowlist add"])
+                lines.extend(["", "添加当前会话：", "  /milky allowlist add"])
         else:
             lines.extend(["当前配置", *(sorted(rules) or ["（空）"]), "", "当前运行"])
             lines.extend(sorted(runtime) or ["（空）"])
-            lines.extend(["", f"配置来源：{source}", ""])
+            lines.extend(["", f"Source: {source}", ""])
             if not rules:
                 lines.append("当前配置为空，应用后将停止接收所有会话的普通消息。")
             if not runtime:

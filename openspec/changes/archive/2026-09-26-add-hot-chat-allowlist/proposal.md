@@ -7,6 +7,7 @@
 ## What Changes
 
 - **BREAKING**：`MILKY_ALLOWED_CHATS` 未配置或为空、对应原生设置 `allowed_chats: []`，均表示阻止全部普通入站；全部放行必须显式使用 `group:*` 和 `dm:*`，不增加模式或黑名单字段。
+- 提供 /milky allowlist 与 /milky allowlist help 静态帮助，统一英文栏目、中文说明与 e.g. 示例；参数错误使用紧凑的 Usage/Help 提示。
 - 新增纯文本 `/milky allowlist list`、`/milky allowlist add [目标]`、`/milky allowlist del [目标]`；remove 作为 del 的等价别名；增减省略目标时使用可信消息来源中的当前会话。显式目标接受具体 chat key 或已有命名空间通配符。
 - 所有 slash 指令的权限统一由 Hermes core 管理，包括白名单的 list/add/del；插件不读取或解释管理员名单、不自行判断角色、不为子命令增设权限。allow_admin_from、group_allow_admin_from、普通用户命令许可及未配置时的行为均服从 core。当前 core 按顶层 /milky 授权，其允许结果同样适用于 allowlist 子命令。
 - 为白名单管理指令设置不依赖发送者角色的路由例外，允许从未放行会话进入 Hermes core 命令分发；core 拒绝时不执行插件管理读写或群状态准备。保留 canonical、自身消息和去重；管理读写不检查来源或目标群状态，回执遵守既有发送边界。其他命令及普通正文不享有该路由例外。

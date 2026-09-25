@@ -119,7 +119,7 @@ Action 工具。另 SHALL 保留现有 sticker_send 与 sticker_search 的独立
 
 ### Requirement: 启动时解析正式配置契约
 
-适配器 MUST 按本规范的来源优先级在启动时一次性解析配置。以下 MILKY_* 名称表示对应配置及其兼容环境输入，相同校验 SHALL 适用于最终选中的原生类型设置；必需连接地址可来自任一合法普通配置来源，凭证来自宿主凭证机制。 `MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN` 和可选的
+适配器 MUST 按本规范的来源优先级在启动时解析配置。经过 Hermes core 允许的白名单管理指令 SHALL 按 hot-chat-allowlist 契约持久化并在线更新入站白名单；其他配置仍为启动快照。以下 MILKY_* 名称表示对应配置及其兼容环境输入，相同校验 SHALL 适用于最终选中的原生类型设置；必需连接地址可来自任一合法普通配置来源，凭证来自宿主凭证机制。 `MILKY_BASE_URL`、`MILKY_ACCESS_TOKEN` 和可选的
 `MILKY_ALLOWED_CHATS`、`MILKY_WILL_POLICY`、`MILKY_SESSION_BUFFER_SIZE`、`MILKY_HOME_CHANNEL`、
 `MILKY_MAX_LOCAL_MEDIA_BYTES`、`MILKY_LONG_TEXT_FORWARD_THRESHOLD` 和
 `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` SHALL 共同构成启动配置；`MILKY_MAX_LOCAL_MEDIA_BYTES` SHALL 是表示字节数的十进制整数，
@@ -154,8 +154,8 @@ Action 工具。另 SHALL 保留现有 sticker_send 与 sticker_search 的独立
 #### Scenario: 多入口保持同一启动快照
 
 - **WHEN** 当前实例已经完成配置解析，随后操作者保存新设置
-- **THEN** 该实例的普通 adapter、独立 sender 和 home-channel 元数据 SHALL 保持已解析快照
-- **AND** 新设置 SHALL 在新的启动或宿主明确重新加载该配置后才适用
+- **THEN** 除已经通过白名单管理指令核验并发布的入站白名单外，该实例的普通 adapter、独立 sender 和 home-channel 元数据 SHALL 保持已解析快照
+- **AND** 其他新设置及单独通过 Web 保存的白名单 SHALL 在新的启动或宿主明确重新加载该配置后才适用
 
 ### Requirement: 超长文本合并转发阈值配置可验证
 
@@ -210,7 +210,7 @@ Action 工具。另 SHALL 保留现有 sticker_send 与 sticker_search 的独立
 SHALL 归一化。`group:*` SHALL 表示所有合法 group chat，`dm:*` SHALL 表示所有合法 friend
 chat；通配符 SHALL 只在完整条目中出现。除上述格式外的通配符、未知场景、空 ID、负数、
 额外分隔符和空条目 MUST 使启动失败并指出安全的 `MILKY_ALLOWED_CHATS` 配置错误类别。
-空值或未配置时 SHALL 保持空白名单语义，不因该配置拒绝合法 friend/group 消息。
+空值、未配置或原生空列表 SHALL 表示阻止全部普通 friend/group 入站。全部放行 MUST 显式配置 `group:*` 与 `dm:*`。此语义 SHALL 同时适用于启动、重连恢复和管理指令更新，不新增模式字段。
 
 #### Scenario: 混合具体条目和通配符
 
@@ -233,9 +233,17 @@ chat；通配符 SHALL 只在完整条目中出现。除上述格式外的通配
 
 #### Scenario: 空白名单保持原有语义
 
+本场景沿用既有标识以便规范迁移；原有放行结果由本 BREAKING 变更替换为阻止。
+
 - **WHEN** `MILKY_ALLOWED_CHATS` 未配置或为空字符串
 - **THEN** 配置 SHALL 产生空白名单
-- **AND** 合法 friend/group 消息 SHALL 不因 ChatAllowlist 被拒绝
+- **AND** 合法 friend/group 普通消息 SHALL 被白名单门禁拒绝；白名单管理命令按独立路由契约进入 core，由 core 判断命令权限
+
+#### Scenario: 高优先级空列表不回退
+
+- **WHEN** settings 显式保存空列表，低优先级环境仍有非空白名单
+- **THEN** 有效白名单 SHALL 为空并阻止全部普通入站
+- **AND** SHALL 不恢复环境授权或自动写入通配符
 
 ### Requirement: 普通配置遵循宿主插件来源回退顺序
 

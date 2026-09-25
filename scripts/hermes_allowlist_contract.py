@@ -39,7 +39,7 @@ async def checks(home):
     from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
-    from management.allowlist import AllowlistManager, current_invocation
+    from management.allowlist import HELP, AllowlistManager, current_invocation
     from management.profile import ProfileSettings
     from slash_commands import SlashCommandService
     from state.chat_policy import ChatPolicy
@@ -134,6 +134,24 @@ async def checks(home):
                 else:
                     assert "admin-only" in result
                     assert before == (len(tracker.calls), store.read()["version"])
+                for command in ("/milky allowlist", "/milky allowlist help"):
+                    event.text = command
+                    before = store.read()["version"]
+                    with (
+                        patch.object(socket.socket, "connect", no_network),
+                        patch.object(
+                            store, "read", side_effect=AssertionError("help read settings")
+                        ),
+                        patch.object(
+                            store, "save", side_effect=AssertionError("help wrote settings")
+                        ),
+                    ):
+                        handled, result = await runner._hm_dispatch_idle_commands(
+                            event, source, "contract:" + chat_id
+                        )
+                    assert handled
+                    assert result == HELP if allowed else "admin-only" in result
+                    assert store.read()["version"] == before
             runner.config.quick_commands = {
                 "acl": {"type": "alias", "target": "/milky allowlist list"}
             }

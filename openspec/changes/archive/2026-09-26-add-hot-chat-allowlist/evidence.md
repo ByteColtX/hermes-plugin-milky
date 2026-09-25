@@ -6,7 +6,8 @@
 新授权群改在首次获准入站时准备。以下旧版测试数字保留为历史记录，以文末本轮证据为准。
 
 本地实现、合成验证、真实本地 Hermes 命令分发契约和质量门禁已完成。
-真实 Milky/QQ 验收尚未执行，任务 6.3 保持未完成。本文记录实测证据；
+用户已在本会话明确确认“我已完成实机验收了”，任务 6.3 据此完成。该结论是用户确认，
+不是代理执行或观测的真实 Milky/QQ 测试；未提供逐项日志或环境详情。本文区分证据来源；
 设计文档 Context 中的“仅静态源码”描述是实施前基线，不代表当前验证进度。
 
 ## 已实现行为与证据分层
@@ -87,11 +88,11 @@ wheel 构建策略拒绝。改用上述 editable 方式后成功，不修改宿�
 Gateway 生命周期或忙碌会话队列，也没有验证实际 QQ 回执送达。插件在资源补全后、
 调用宿主前无等待地检查授权和撤销代次；已经交给宿主的消息不由插件取消。
 
-## 真实 Milky/QQ 验收：blocked
+## 真实 Milky/QQ 验收：早期 blocked 记录（已由后续用户确认解除）
 
-当前未指定明确获准的测试 profile、QQ 群/私聊目标及发送/配置修改范围。
+当时未指定明确获准的测试 profile、QQ 群/私聊目标及发送/配置修改范围。
 依照本 change 任务 6.3 和项目工作边界，没有改写真实配置，没有执行真实发送或上传。
-仍需在明确授权后逐项验收：
+当时列出的待验收范围如下；后续仅收到用户整体完成确认，不据此虚构各项详细结果：
 
 1. 空名单冷启动后，从 core 允许的群与私聊执行省略目标的 add；收到成功回执后普通入站生效。
 2. 指定目标及通配符增减，del/remove 等价；删除最后一项后仍能管理，普通入站拒绝。
@@ -145,4 +146,33 @@ Gateway。Web 保留现有保存与刷新按钮，不新增重启操作。
 禁言、撤销、删除再添加、自身及未授权场景。首次全量中新增发送测试因使用不满足发送
 协议最小值的合成 QQ 号失败，修正测试目标后最终全量通过，未改动发送实现。
 
-真实 QQ 验收仍未执行，任务 6.3 保持 blocked；未重启 Gateway、修改真实配置或发送消息。
+以上修订验证结束时，代理尚未执行真实 QQ 验收，任务 6.3 当时保持 blocked；代理未重启 Gateway、修改真实配置或发送消息。后续用户确认见下节。
+
+## 2026-09-26 帮助收尾、用户验收确认与规格同步
+
+用户明确确认“我已完成实机验收了”，据此完成任务 6.3。此项标记为用户报告，
+未提供逐项日志、测试 profile 或协议端版本，代理没有重复执行真实 Milky/QQ 操作。
+该确认早于本节 help 文案改动，本节新增行为的证据为以下自动化验证。
+
+新增空参数及 help 静态帮助，标题统一为 Milky · 会话白名单，使用 Usage、Commands、
+Targets、Examples 与 e.g. 示例；非法参数使用紧凑 Usage/Help 提示。list 使用 Source
+标签及原始配置来源。按用户要求，帮助不加并发 Note，异常提示不附加查看命令。
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest -q tests/test_hot_allowlist.py tests/test_slash_commands.py tests/test_plugin_entry.py | 137 passed |
+| uv run pytest -q -rs | 1262 passed、3 skipped，原因同前述记录 |
+| uv run --with-editable /Users/bytecolt/PythonProjects/hermes-agent scripts/hermes_allowlist_contract.py | 真实本地 Hermes 分发契约通过；新增群/私聊帮助权限允许、拒绝及配置零读写检查，无 Milky 网络 |
+| uv run ruff check . | 通过 |
+| uv run ruff format --check . | 534 files already formatted |
+| uv build | sdist 与 wheel 通过 |
+| openspec validate --specs --strict | 30 passed、0 failed |
+| openspec validate --changes --strict | 4 passed、1 failed；当前白名单 change 通过，关联差异见下文 |
+
+七份 delta 已合并到主规格，新增 hot-chat-allowlist，其余六份更新对应要求；
+核验全部 delta 要求及场景落入主规格，未涉及的要求保持原内容。
+同时修正本 change 两处残留的“管理操作须检查来源群状态”描述，与已实现及用户确认的边界一致。
+
+同步使未实施的 add-group-moderation-workflow 的 inbound-gates MODIFIED 块落后于
+新主规格：缺少“空名单仍能管理”场景。联合 change 校验因此失败；该关联 change 需在
+后续实施前更新，当前没有修改其规划或代码。当前白名单 change 与所有主规格校验通过。
