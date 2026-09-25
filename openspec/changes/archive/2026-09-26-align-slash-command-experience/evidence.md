@@ -66,3 +66,16 @@
 
 仅进行本地代码、文档、测试和构建修改；未发起真实 Milky Action、QQ 收发、图库维护、
 发布或合并。Web/Tool 和共享维护结果保留结构化接口，slash 纯文本不作为程序接口。
+
+## 2026-09-26 规范同步与归档
+
+实现提交 `9ecf0d6` 已合入本地 `main`。本次将三个 delta 同步到
+`hot-chat-allowlist`、`qq-sticker-maintenance` 和 `slash-commands` 主规范，
+合计修改 3 条要求、新增 8 条要求；逐项确认原有其他要求与既有场景保留。
+提案在 CLI 中记录的 17/17 项任务完成，全部规划产物完成，随后整体移入本目录，
+保留 `.openspec.yaml`、设计、任务、delta 和原始验证证据。
+
+归档后 `openspec validate --all --strict --json` 通过 34 项
+（30 个主规范、4 个剩余未归档提案），0 项失败；`git diff --check` 通过。
+此次仅修改规范和归档位置，没有重跑运行时代码测试，没有推送远端。
+上方真实 Hermes / Milky / QQ 验收的 blocked / unknown 状态保持不变。
