@@ -94,8 +94,8 @@ def _create_sticker(tmp_path: Path) -> str:
         data_dir=tmp_path,
         vision_analyzer=lambda *_args, **_kwargs: _vision(),
     )
-    assert json.loads(asyncio.run(service.handle("sticker add")))["created"] == 1
-    item = json.loads(asyncio.run(service.handle("sticker list")))
+    assert asyncio.run(service.add())["created"] == 1
+    item = service.list()
     return str(item["items"][0]["sticker_id"])
 
 
@@ -110,8 +110,8 @@ def _create_two_stickers(tmp_path: Path) -> tuple[str, str]:
         data_dir=tmp_path,
         vision_analyzer=lambda *_args, **_kwargs: _vision(),
     )
-    assert json.loads(asyncio.run(service.handle("sticker add")))["created"] == 2
-    items = json.loads(asyncio.run(service.handle("sticker list")))["items"]
+    assert asyncio.run(service.add())["created"] == 2
+    items = service.list()["items"]
     assert len(items) == 2
     return str(items[0]["sticker_id"]), str(items[1]["sticker_id"])
 

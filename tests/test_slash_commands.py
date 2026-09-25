@@ -16,7 +16,7 @@ from config import load_config
 from gates import GateRegistry
 from inbound import canonicalize_event, is_slash_command, map_command_event, recognize_slash_command
 from inbound.pipeline import InboundPipeline
-from milky.client import MilkyClient, TransportResponse
+from milky.client import ActionError, MilkyClient, TransportResponse
 from milky.resources import ResolvedMessage, ResolvedTriggerBatch
 from session import ChatAdmissionCoordinator, TtlDeduplicator, WaitBuffer
 from slash_commands import SlashCommandService, format_impl_info
@@ -453,7 +453,7 @@ def test_format_impl_info_returns_human_readable_summary_without_extensions() ->
     raw = (FIXTURE_ROOT / "actions/get_impl_info.ok.json").read_text(encoding="utf-8")
 
     assert format_impl_info(raw) == (
-        "Milky 信息\n"
+        "Milky · 实现信息\n\n"
         "实现: Synthetic Milky\n"
         "版本: fixture-1\n"
         "Milky 版本: 1.3\n"
@@ -487,7 +487,14 @@ def test_get_impl_info_failures_are_classified_without_body_or_exception_text(
 
     result = asyncio.run(scenario())
 
-    assert result.startswith(classification)
+    assert result.startswith(
+        {
+            "malformed": "无法读取 Milky 信息",
+            "rejected": "查询请求被拒绝",
+            "http_error": "Milky 服务请求失败",
+            "transport_unknown": "无法确认查询结果",
+        }[classification]
+    )
     assert "fixture secret" not in result
     assert "synthetic service failure" not in result
 
@@ -509,9 +516,9 @@ def test_slash_service_rejects_arguments_and_requires_one_bound_client() -> None
     requests, with_args, unbound, multiple = asyncio.run(scenario())
 
     assert requests == []
-    assert with_args.startswith("invalid_input")
-    assert unbound.startswith("unsupported")
-    assert multiple.startswith("unsupported")
+    assert with_args.startswith("指令格式不正确。")
+    assert unbound.startswith("Milky 信息暂不可用")
+    assert multiple.startswith("Milky 信息暂不可用")
 
 
 def test_fake_hermes_keeps_builtin_plugin_unknown_and_agent_paths_separate() -> None:
@@ -578,7 +585,7 @@ def test_friend_group_pipeline_connects_command_service_to_one_fake_action_clien
 
     assert hermes.routes == ["plugin", "plugin"]
     expected_result = (
-        "Milky 信息\n"
+        "Milky · 实现信息\n\n"
         "实现: Synthetic Milky\n"
         "版本: fixture-1\n"
         "Milky 版本: 1.3\n"
@@ -666,3 +673,189 @@ def test_slash_command_fixtures_are_synthetic_and_redacted() -> None:
             continue
         contents = path.read_text(encoding="utf-8")
         assert not any(value in contents for value in forbidden), path
+
+
+@pytest.mark.parametrize("count", [0, 1, 2])
+@pytest.mark.parametrize("command", ["help", "HeLP", "allowlist", "ALLOWLIST HELP"])
+def test_static_help_does_not_consult_runtime_dependencies(command, count):
+    """零、单、多实例下帮助均不读取运行依赖。"""
+
+    class Forbidden:
+        """任何依赖调用都表示帮助越界。"""
+
+        def __getattr__(self, name):
+            raise AssertionError(name)
+
+    service = SlashCommandService(sticker_service=Forbidden())
+    for _ in range(count):
+        dependency = Forbidden()
+        service.bind_client(dependency)
+        service.bind_manager(dependency)
+        service.bind_status_provider(dependency)
+    result = asyncio.run(service.handle(command))
+    assert result.startswith("Milky · ")
+    assert "\n\nUsage:\n  /milky " in result
+    assert "\n\nCommands:\n" in result
+    assert "Examples:" not in result
+    assert "Targets:" not in result
+    if command.lower().startswith("allowlist"):
+        assert "别名 remove" in result
+        assert "e.g. target: group:123456、dm:654321、group:*、dm:*" in result
+        assert "add/del 省略目标时使用当前会话。" in result
+    else:
+        assert "/milky [command] [args...]" in result
+        assert "不带参数时查看实现信息。" in result
+        assert "  status      查看运行状态" in result
+        assert "（无参数）" not in result
+
+
+@pytest.mark.parametrize(
+    ("command", "usage", "help_command"),
+    [
+        ("secret-sentinel", "/milky [command] [args...]", "/milky help"),
+        ("help secret-sentinel", "/milky help", "/milky help"),
+        ("status secret-sentinel", "/milky status", "/milky help"),
+        ("STATUS --refresh", "/milky status", "/milky help"),
+        (
+            "allowlist secret-sentinel",
+            "/milky allowlist <list|add|del|help>",
+            "/milky allowlist help",
+        ),
+        ("allowlist list secret-sentinel", "/milky allowlist list", "/milky allowlist help"),
+        ("allowlist help secret-sentinel", "/milky allowlist help", "/milky allowlist help"),
+        ("allowlist add secret-sentinel", "/milky allowlist add [target]", "/milky allowlist help"),
+        ("allowlist del secret-sentinel", "/milky allowlist del [target]", "/milky allowlist help"),
+        (
+            "allowlist REMOVE secret-sentinel",
+            "/milky allowlist del [target]",
+            "/milky allowlist help",
+        ),
+    ],
+)
+def test_invalid_arguments_use_local_safe_syntax_before_operations(command, usage, help_command):
+    """错误只展示已知语法，且不读取配置、状态或业务依赖。"""
+
+    class Forbidden:
+        """防止格式错误落入任一业务分支。"""
+
+        def __getattr__(self, name):
+            raise AssertionError(name)
+
+    dependency = Forbidden()
+    service = SlashCommandService(sticker_service=dependency)
+    service.bind_client(dependency)
+    service.bind_manager(dependency)
+    service.bind_status_provider(dependency)
+    result = asyncio.run(service.handle(command))
+    assert result == f"指令格式不正确。\n\nUsage:\n  {usage}\n\nHelp:\n  {help_command}"
+    assert "secret-sentinel" not in result
+
+
+@pytest.mark.parametrize(
+    ("classification", "title"),
+    [
+        ("unsupported", "Milky 信息暂不可用"),
+        ("invalid_input", "查询参数无效"),
+        ("rejected", "查询请求被拒绝"),
+        ("malformed", "无法读取 Milky 信息"),
+        ("http_error", "Milky 服务请求失败"),
+        ("transport_unknown", "无法确认查询结果"),
+        ("future-secret-sentinel", "无法读取 Milky 信息"),
+    ],
+)
+def test_impl_failure_mapping_is_safe_and_called_once(classification, title):
+    """完整固定分类保留不同结果语义，异常正文永不进入回执。"""
+
+    class Client:
+        """提供一次失败的只读实现查询。"""
+
+        calls = 0
+
+        async def get_impl_info(self):
+            self.calls += 1
+            raise ActionError(classification, "get_impl_info", "secret-sentinel")
+
+    client = Client()
+    service = SlashCommandService()
+    service.bind_client(client)
+    result = asyncio.run(service.handle(""))
+    assert result.startswith(title + "\n\n")
+    assert "secret-sentinel" not in result
+    assert client.calls == 1
+
+
+def test_status_binding_change_during_read_invalidates_whole_response():
+    """读取等待中解绑重绑同一实例也不能返回旧结果。"""
+
+    async def scenario():
+        service = SlashCommandService()
+        started = asyncio.Event()
+        finish = asyncio.Event()
+
+        class Provider:
+            """模拟跨越解绑的只读快照。"""
+
+            async def status(self):
+                started.set()
+                await finish.wait()
+                return "Milky · 运行状态\n\n插件: 运行中"
+
+        provider = Provider()
+        service.bind_status_provider(provider)
+        task = asyncio.create_task(service.handle("status"))
+        await started.wait()
+        service.unbind_status_provider(provider)
+        service.bind_status_provider(provider)
+        finish.set()
+        assert (await task).startswith("运行状态暂不可用")
+        service.bind_status_provider(object())
+        assert (await service.handle("status")).startswith("运行状态暂不可用")
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("response", [None, "", 7, "{}", "[]", "not-json"])
+def test_impl_invalid_result_remains_safe(response):
+    """未确认响应不能显示成功或原始正文。"""
+
+    async def get_impl_info():
+        return response
+
+    service = SlashCommandService()
+    service.bind_client(SimpleNamespace(get_impl_info=get_impl_info))
+    assert asyncio.run(service.handle("")).startswith("无法读取 Milky 信息\n\n")
+
+
+def test_impl_unknown_exception_is_safe_and_cancellation_propagates():
+    """未知异常用固定文案，取消继续归调用生命周期管理。"""
+
+    async def scenario():
+        service = SlashCommandService()
+
+        async def broken():
+            raise RuntimeError("secret-sentinel-path-token-response")
+
+        client = SimpleNamespace(get_impl_info=broken)
+        service.bind_client(client)
+        result = await service.handle("")
+        assert result.startswith("无法读取 Milky 信息")
+        assert "secret-sentinel" not in result
+
+        async def cancelled():
+            raise asyncio.CancelledError
+
+        client.get_impl_info = cancelled
+        with pytest.raises(asyncio.CancelledError):
+            await service.handle("")
+
+    asyncio.run(scenario())
+
+
+def test_documented_help_matches_actual_static_contract():
+    """文档中可复制的帮助与命令实际输出逐字保持一致。"""
+    from management.allowlist import HELP
+    from slash_commands import HELP_TEXT
+
+    readme = (Path(__file__).parents[1] / "README.md").read_text()
+    assert HELP in readme
+    assert HELP_TEXT in readme

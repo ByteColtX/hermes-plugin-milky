@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .coordination import library_guard
 from .errors import StickerError, StickerStorageError, StickerUnsupportedError
+from .presentation import HELP, render, usage_for
 from .storage import PLUGIN_NAME, StickerPaths, StickerStore
 from .validation import ImageCandidate, validate_image_file, validate_library_name
 
@@ -179,9 +180,15 @@ def parse_sticker_command(raw_args: str) -> StickerCommand:
     if not tokens or tokens[0].lower() != "sticker":
         raise StickerCommandError("unknown sticker command")
     if len(tokens) < 2:
-        raise StickerCommandError("missing sticker operation")
+        return StickerCommand("help")
     operation = tokens[1].lower()
+    if operation == "remove":
+        operation = "del"
     rest = tokens[2:]
+    if operation == "help":
+        if rest:
+            raise StickerCommandError("invalid help arguments")
+        return StickerCommand("help")
     if operation == "add":
         if rest not in ([], ["--dry-run"]):
             raise StickerCommandError("invalid add arguments")
@@ -327,7 +334,9 @@ class StickerMaintenanceService:
         try:
             command = parse_sticker_command(raw_args)
         except StickerCommandError:
-            return self._format_result({"status": "invalid_input", "usage": USAGE})
+            return usage_for(raw_args)
+        if command.operation == "help":
+            return HELP
         try:
             result = await self._run(command)
         except StickerUnsupportedError:
@@ -338,7 +347,7 @@ class StickerMaintenanceService:
             raise
         except Exception:  # noqa: BLE001 - handler 不泄漏路径、参数或异常正文
             result = {"status": "storage_error"}
-        return self._format_result(result)
+        return render(command.operation, result, dry_run=command.dry_run)
 
     async def add(self, *, dry_run: bool = False) -> dict[str, object]:
         """执行一次 add，供集成测试和宿主 adapter 使用。"""

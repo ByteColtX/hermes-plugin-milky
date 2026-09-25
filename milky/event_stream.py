@@ -309,6 +309,17 @@ class SseEventStream:
         self._stopping = False
         self._stop_event: asyncio.Event | None = None
         self._cancellation_logged = False
+        self._connection_state = "stopped"
+
+    def prepare_start(self) -> None:
+        """在接收任务调度前观察首次连接阶段，不建立网络。"""
+        if self._run_task is None:
+            self._connection_state = "connecting"
+
+    @property
+    def connection_state(self) -> str:
+        """返回当前连接阶段的本地观察，不执行网络探测。"""
+        return self._connection_state
 
     @property
     def diagnostics(self) -> tuple[StreamDiagnostic, ...]:
@@ -324,6 +335,7 @@ class SseEventStream:
         if not callable(handler):
             raise TypeError("handler must be callable")
         self._stopping = False
+        self._connection_state = "connecting"
         self._stop_event = asyncio.Event()
         self._run_task = asyncio.current_task()
         backoff = self._initial_backoff
@@ -352,6 +364,7 @@ class SseEventStream:
                     if self._stopping:
                         break
                     connection_established = True
+                    self._connection_state = "connected"
                     if reconnect_pending:
                         _log_stream_event(
                             "milky_event_stream_reconnected",
@@ -384,6 +397,9 @@ class SseEventStream:
                     self._record("stream_error", "event stream processing failed")
                     disconnect_reason = "stream_error"
                 finally:
+                    self._connection_state = (
+                        "stopped" if self._stopping or run_cancelled else "reconnecting"
+                    )
                     if connection_established and not self._stopping and not run_cancelled:
                         _log_stream_event(
                             "milky_event_stream_disconnected",
@@ -412,6 +428,7 @@ class SseEventStream:
                 backoff = min(self._max_backoff, max(self._initial_backoff, backoff * 2))
         finally:
             self._stopping = True
+            self._connection_state = "stopped"
             if self._stop_event is not None:
                 self._stop_event.set()
             await self._close_connection()
@@ -429,6 +446,7 @@ class SseEventStream:
         """主动停止 receive loop，取消 handler 并释放连接资源。"""
 
         self._stopping = True
+        self._connection_state = "stopped"
         if self._stop_event is not None:
             self._stop_event.set()
         await self._close_connection()

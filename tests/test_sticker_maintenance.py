@@ -118,33 +118,33 @@ def test_add_edit_reanalyze_list_and_delete_preserve_library_bytes(tmp_path: Pat
         return _vision()
 
     service = StickerMaintenanceService(data_dir=tmp_path, vision_analyzer=analyze)
-    added = json.loads(asyncio.run(service.handle("sticker add")))
+    added = asyncio.run(service.add())
     assert added["created"] == 1
     assert not source.exists()
 
-    listed = json.loads(asyncio.run(service.handle("sticker list")))
+    listed = service.list()
     item = listed["items"][0]
     sticker_id = item["sticker_id"]
     library_files = list((tmp_path / "stickers" / "library").rglob("*.png"))
     assert len(library_files) == 1
     original_bytes = library_files[0].read_bytes()
 
-    edited = json.loads(asyncio.run(service.handle(f"sticker edit {sticker_id} --tags=安慰,摸头")))
+    edited = service.edit(sticker_id, sets={"tags": ["安慰", "摸头"]})
     assert edited["status"] == "updated"
-    assert json.loads(asyncio.run(service.handle("sticker list")))["items"][0]["source"] == "manual"
+    assert service.list()["items"][0]["source"] == "manual"
     assert library_files[0].read_bytes() == original_bytes
 
-    reanalyzed = json.loads(asyncio.run(service.handle(f"sticker reanalyze {sticker_id}")))
+    reanalyzed = asyncio.run(service.reanalyze(sticker_id))
     assert reanalyzed["status"] == "reanalyzed"
-    assert json.loads(asyncio.run(service.handle("sticker list")))["items"][0]["tags"] == [
+    assert service.list()["items"][0]["tags"] == [
         "安慰",
         "摸头",
     ]
 
-    deleted = json.loads(asyncio.run(service.handle(f"sticker del {sticker_id}")))
+    deleted = service.delete(sticker_id)
     assert deleted["status"] == "deleted"
-    assert json.loads(asyncio.run(service.handle("sticker list")))["count"] == 0
-    cleanup = json.loads(asyncio.run(service.handle("sticker cleanup")))
+    assert service.list()["count"] == 0
+    cleanup = service.cleanup()
     assert cleanup["orphan"] == 1
     assert not library_files[0].exists()
 
@@ -156,8 +156,8 @@ def test_usage_count_is_atomic_and_maintenance_does_not_change_it(tmp_path: Path
     service = StickerMaintenanceService(
         data_dir=tmp_path, vision_analyzer=lambda *_args, **_kwargs: _vision()
     )
-    added = json.loads(asyncio.run(service.handle("sticker add")))
-    sticker_id = json.loads(asyncio.run(service.handle("sticker list")))["items"][0]["sticker_id"]
+    added = asyncio.run(service.add())
+    sticker_id = service.list()["items"][0]["sticker_id"]
     assert added["created"] == 1
     assert service.record_send_started(sticker_id, invocation_id="one")["status"] == "counted"
     assert (
@@ -180,16 +180,16 @@ def test_reanalyze_false_keeps_entry_and_reindex_reports_missing_and_orphan(tmp_
 
     service = StickerMaintenanceService(data_dir=tmp_path, vision_analyzer=analyze)
     asyncio.run(service.handle("sticker add"))
-    item = json.loads(asyncio.run(service.handle("sticker list")))["items"][0]
-    result = json.loads(asyncio.run(service.handle(f"sticker reanalyze {item['sticker_id']}")))
+    item = service.list()["items"][0]
+    result = asyncio.run(service.reanalyze(item["sticker_id"]))
     assert result["status"] == "not_sticker"
-    assert json.loads(asyncio.run(service.handle("sticker list")))["count"] == 1
+    assert service.list()["count"] == 1
 
     library_file = next((tmp_path / "stickers" / "library").rglob("*.png"))
     library_file.unlink()
-    index = json.loads(asyncio.run(service.handle("sticker reindex")))
+    index = service.reindex()
     assert index["missing_file"] == 1
-    assert json.loads(asyncio.run(service.handle("sticker list")))["count"] == 1
+    assert service.list()["count"] == 1
 
 
 def test_batch_limit_and_visual_failure_leave_deferred_files_in_inbox(tmp_path: Path) -> None:
@@ -212,7 +212,7 @@ def test_batch_limit_and_visual_failure_leave_deferred_files_in_inbox(tmp_path: 
         return "not-json" if call_number == 1 else _vision()
 
     service = StickerMaintenanceService(data_dir=tmp_path, vision_analyzer=analyze)
-    result = json.loads(asyncio.run(service.handle("sticker add")))
+    result = asyncio.run(service.add())
     assert calls == 50
     assert peak <= 10
     assert result["batch_deferred"] == 1
@@ -231,10 +231,10 @@ def test_false_visual_result_moves_to_junk_and_dry_run_does_not_move(tmp_path: P
         return _vision(is_sticker=False)
 
     service = StickerMaintenanceService(data_dir=tmp_path, vision_analyzer=analyze)
-    preview = json.loads(asyncio.run(service.handle("sticker add --dry-run")))
+    preview = asyncio.run(service.add(dry_run=True))
     assert preview["items"][0]["status"] == "would_move_to_junk"
     assert source.exists()
-    result = json.loads(asyncio.run(service.handle("sticker add")))
+    result = asyncio.run(service.add())
     assert result["junk"] == 1
     assert not source.exists()
     assert len(list((tmp_path / "stickers" / "junk").iterdir())) == 1
@@ -249,7 +249,7 @@ def test_fresh_dry_run_does_not_create_database_or_move_file(tmp_path: Path) -> 
     service = StickerMaintenanceService(
         data_dir=tmp_path, vision_analyzer=lambda *_args, **_kwargs: _vision()
     )
-    result = json.loads(asyncio.run(service.handle("sticker add --dry-run")))
+    result = asyncio.run(service.add(dry_run=True))
     assert result["items"][0]["status"] == "would_add"
     assert source.exists()
     assert not (tmp_path / "stickers.db").exists()
@@ -276,7 +276,7 @@ def test_gif_add_preserves_original_bytes(tmp_path: Path) -> None:
     service = StickerMaintenanceService(
         data_dir=tmp_path, vision_analyzer=lambda *_args, **_kwargs: _vision()
     )
-    assert json.loads(asyncio.run(service.handle("sticker add")))["created"] == 1
+    assert asyncio.run(service.add())["created"] == 1
     library_file = next((tmp_path / "stickers" / "library").rglob("*.gif"))
     assert library_file.read_bytes() == _GIF
 
@@ -297,8 +297,8 @@ def test_image_validation_rejects_text(tmp_path: Path) -> None:
 def test_slash_service_routes_explicit_sticker_without_milky_client(tmp_path: Path) -> None:
     service = StickerMaintenanceService(data_dir=tmp_path)
     command_service = SlashCommandService(sticker_service=service)
-    result = json.loads(asyncio.run(command_service.handle("sticker list")))
-    assert result == {"count": 0, "items": [], "status": "ok"}
+    result = asyncio.run(command_service.handle("sticker list"))
+    assert "本次显示 0 条" in result and "尚未添加贴纸。" in result
     assert command_service.active_client_count == 0
-    invalid = json.loads(asyncio.run(command_service.handle("sticker add --unknown")))
-    assert invalid["status"] == "invalid_input"
+    invalid = asyncio.run(command_service.handle("sticker add --unknown"))
+    assert invalid.startswith("指令格式不正确。")

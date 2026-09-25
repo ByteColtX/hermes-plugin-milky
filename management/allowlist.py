@@ -6,42 +6,40 @@ import asyncio
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
 
+from command_text import format_usage
 from management.errors import ManagementError
 from session.identity import validate_chat_key, validate_chat_rule
 
-HELP = (
-    "Milky · 会话白名单\n"
-    "\n"
-    "Usage:\n"
-    "  /milky allowlist <command> [target]\n"
-    "\n"
-    "Commands:\n"
-    "  list    查看全部规则\n"
-    "  add     添加规则\n"
-    "  del     移除规则（别名：remove）\n"
-    "  help    显示帮助\n"
-    "\n"
-    "Targets:\n"
-    "  group:群号    e.g. group:123456\n"
-    "  dm:QQ号       e.g. dm:654321\n"
-    "  group:*       所有群聊\n"
-    "  dm:*          所有私聊\n"
-    "\n"
-    "  add、del 省略目标时使用当前会话。\n"
-    "\n"
-    "Examples:\n"
-    "  /milky allowlist add\n"
-    "  /milky allowlist del group:123456"
-)
-USAGE = (
-    "指令格式不正确。\n"
-    "\n"
-    "Usage:\n"
-    "  /milky allowlist <list|add|del|help>\n"
-    "\n"
-    "Help:\n"
-    "  /milky allowlist help"
-)
+HELP = """Milky · 会话白名单
+
+Usage:
+  /milky allowlist [command] [args...]
+
+Commands:
+  list          查看名单
+  add [target]  添加规则
+  del [target]  移除规则（别名 remove）
+  help          显示帮助
+
+  e.g. target: group:123456、dm:654321、group:*、dm:*
+
+add/del 省略目标时使用当前会话。
+不带子命令时显示帮助。"""
+USAGE = format_usage("/milky allowlist <list|add|del|help>", "/milky allowlist help")
+
+
+def usage_for(raw_args: str) -> str:
+    """仅从固定动词选择就近语法，不拼接用户目标。"""
+    parts = raw_args.split()
+    verb = parts[1].lower() if len(parts) > 1 else ""
+    if verb == "remove":
+        verb = "del"
+    if verb not in {"add", "del", "list", "help"}:
+        return USAGE
+    suffix = " [target]" if verb in {"add", "del"} else ""
+    return format_usage(f"/milky allowlist {verb}{suffix}", "/milky allowlist help")
+
+
 UNAVAILABLE = "白名单管理暂不可用\n\n请检查插件连接状态后重试。"
 STOPPED = "插件连接已停止\n\n本次操作未执行。请在连接恢复后重试。"
 INVALID_CONFIG = "白名单配置无效\n\n请检查 allowed_chats 的配置格式。"

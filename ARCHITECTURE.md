@@ -103,6 +103,19 @@ get_login_info
 
 SSE 重连不会假设服务端补发断线期间的消息，也不会恢复 wait buffer、system context 或 Will 分数。
 
+`/milky status` 的状态归生命周期拥有者管理：adapter 记录初始化、运行、停止或失败阶段及当前
+运行代次的单调计时；SSE 组件观察连接中、已连接、重连中和已停止。adapter 已就绪或存在 client/task
+不能替代 SSE 建连证据，内部重连不重置本次运行计时。停止及失败冻结已确认时长，新的运行代次重新开始。
+
+命令服务只在本注册作用域绑定并选取唯一可信状态观察者，读取前后复核实例归属和运行代次。
+它只读取得同一可信 profile 最新有效白名单，与当前已发布规则集合比较，并复核规则版本；
+规则版本变化或配置读取失败仅降级配置一致性为未知，实例归属或运行代次变化则整条暂不可用。
+规则数是字面集合大小，通配符各计一条；不会枚举规则、泄漏 profile 路径或从环境/最近会话猜选实例。
+
+状态生成不调用 Milky Action、群状态准备、视觉、图库或配置写入，不启动 SSE、探测、轮询或后台任务。
+它提供本地观察，不声称验证 QQ 登录或端到端收发健康。普通 Gate 和既有回执发送仍保留原网络边界。
+顶层和贴纸帮助、status 及 remove 别名仍走普通 Gate；白名单外直接管理语法例外未扩大。
+
 ### 3.2 Milky 协议层
 
 协议层按职责分为：`models.py` 的 typed DTO；`parser.py` 的事件/response 解析；`client.py` 的
@@ -185,7 +198,12 @@ accept_group_invitation, reject_group_invitation, get_group_files, get_friend_in
 
 ### 3.6 贴纸子系统
 
-`/milky sticker` 提供 `add`、`list`、`edit`、`reanalyze`、`del`、`cleanup`、`reindex`。维护服务批量上限为 50，视觉分析并发上限为 10，图片输入、路径、格式、大小和 SHA-256 均校验。
+`/milky sticker` 提供静态帮助，以及 `add`、`list`、`edit`、`reanalyze`、`del`、`cleanup`、`reindex`。维护服务批量上限为 50，视觉分析并发上限为 10，图片输入、路径、格式、大小和 SHA-256 均校验。
+
+贴纸 slash 展示层将原结构化维护结果映射为中文列表、单项回执、分类批次和预览；
+`remove` 与 `del` 使用同一解析与单次删除路径。静态帮助和格式错误先于运行依赖，
+不会打开数据库或创建目录。Web 和 Tool 继续消费原字段与固定分类，不解析 slash 中文文本。
+长文本沿既有发送路径交付，发送失败不重放维护操作。
 
 贴纸库只在显式命令、`sticker_search` 或 `sticker_send` 首次需要时懒加载。数据库和文件目录不参与普通消息、SSE 或 Will。`StickerStore` 使用 plugin-data 下的 `stickers.db`，并维护 `sticker_items`、`sticker_files`、`sticker_send_usage`；图片位于受控的 inbox/library/junk 目录。
 

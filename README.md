@@ -739,19 +739,162 @@ CQ image 仅用于本地 `file://` URI 的 sticker，例如：
 ### Slash command
 
 纯文本 `/...` 消息会在 canonical、去重和 Gate 之后分流，不进入 Will 历史或普通 Agent 正文。
-合法命令交给 Hermes 既有命令分发；插件自身提供无参数 `/milky`，用于以可读摘要返回 Milky 实现信息。
-
-`/milky sticker` 只处理显式人工维护参数，固定命令为：
+合法命令交给 Hermes 既有命令分发。无参数 `/milky` 继续查询实现信息，
+`/milky help` 显示顶层帮助；`/milky sticker` 与 `/milky sticker help` 等价，
+`/milky allowlist` 与 `/milky allowlist help` 等价。三层帮助均为静态文本，
+不要求活动连接，也不会读取配置、创建图库或执行视觉分析；可达性仍由会话 Gate 和 core 授权决定。
 
 ```text
-/milky sticker add [--dry-run]
-/milky sticker list [--limit 1..100]
-/milky sticker edit <sticker_id> [--emotion=<enum>] [--tags=<tag1>,<tag2>,...] [--description=<text>] [--clear=<field>[,<field>...]]
-/milky sticker reanalyze <sticker_id>
-/milky sticker del <sticker_id>
-/milky sticker cleanup [--dry-run]
-/milky sticker reindex
+Milky · 命令帮助
+
+Usage:
+  /milky [command] [args...]
+
+不带参数时查看实现信息。
+
+Commands:
+  status      查看运行状态
+  sticker     维护贴纸库
+  allowlist   管理会话白名单
+  help        显示帮助
+
+子命令帮助: /milky <command> help（sticker、allowlist）
 ```
+
+`/milky status` 只读取当前可信实例的本地状态及同一 profile 的最新白名单配置，
+不会探测网络、查询 QQ 登录状态、打开图库或应用配置。例如：
+
+```text
+Milky · 运行状态
+
+插件: 运行中
+事件流: 已连接
+本次运行: 2 小时 18 分钟
+
+运行白名单: 6 条规则
+白名单配置与当前运行一致。
+```
+
+首次 SSE 建连时显示“事件流: 连接中”，首次失败后的退避、重试和内部重连显示
+“事件流: 重连中”。本地观察到连接建立后才显示“已连接”，这一状态不保证端到端收发健康。
+“本次运行”从实例完成初始化、进入运行阶段开始，按单调时间累计；SSE 内部重连不重置，
+停止或失败后冻结，新运行代次重新计时。少于一分钟显示“不足 1 分钟”，其余舍去秒，
+按天、小时、分钟显示非零部分；确认尚未开始时显示“尚未开始”，缺少证据时显示“未知”。
+
+运行白名单统计字面规则，一个通配符计一条。Web 保存与运行集合不同，即使条数相等，也显示：
+
+```text
+白名单配置与当前运行不同。
+请重启 Gateway 以应用当前配置。
+```
+
+配置读取失败、非法或规则版本变化时显示“白名单配置一致性未知。”，保留其他可确认字段。
+缺少事件流观察能力时显示“事件流: 未知”。无唯一可信实例、profile 归属失效或读取期间运行
+代次变化时，整条回执为“运行状态暂不可用”及安全说明，不猜选其他 profile。
+空运行集合显示 0 条，并说明“当前不接收任何会话的普通消息。”，不等同于插件停止。
+
+贴纸只处理显式人工维护；remove 是 del 的等价别名，例如 /milky sticker remove demo_id。
+实际贴纸帮助如下：
+
+```text
+Milky · 贴纸维护
+
+Usage:
+  /milky sticker [command] [args...]
+
+Commands:
+  add [--dry-run]  导入图片
+  list [--limit <n>]  查看贴纸
+  edit <sticker_id> [--emotion=<enum>] [--tags=<tag1>,<tag2>,...] [--description=<text>] [--clear=<field>[,<field>...]]  编辑字段
+  reanalyze <sticker_id>  重新分析
+  del <sticker_id>  移除贴纸（别名 remove）
+  cleanup [--dry-run]  清理库文件
+  reindex  重建技术索引
+  help  显示帮助
+
+Options:
+  --dry-run  仅适用于 add/cleanup；只预览，未作更改。
+  --limit <n>  默认 20，十进制整数 1 至 100；也接受 --limit=<n>。
+  --emotion=<enum>  joy、sadness、anger、surprise、fear、disgust、love、approval、confusion、neutral、mixed、unknown
+  --tags=<tag1>,<tag2>,...  2 至 5 个不重复标签，每个不超过 16 字符且含中文。
+  --description=<text>  非空、不超过 20 字符且含中文，不跨空白 token；不支持 shell 引号语法。
+  --clear=<field>[,<field>...]  恢复 emotion、tags、description 对应视觉基线。
+  edit 至少指定一个 set/clear；同一字段不能同时设置和清除，不接受重复选项或清除字段。
+
+Examples:
+  /milky sticker add --dry-run
+  /milky sticker edit demo_id --clear=tags
+
+不带子命令时显示帮助。
+```
+
+非法参数在业务操作前返回就近 Usage 和 Help，不回显输入。例如删除缺少 ID：
+
+```text
+指令格式不正确。
+
+Usage:
+  /milky sticker del <sticker_id>
+
+Help:
+  /milky sticker help
+```
+
+查询使用“Milky · 贴纸维护”标题及“本次显示 N 条”，数量表示当前有界返回数。
+空库示例为“尚未添加贴纸。”和“本次显示 0 条”，附贴纸帮助入口；非空列表保留 ID、
+情绪中文含义及枚举、标签、描述、字段来源、格式、大小、创建时间、使用次数和最近使用 UTC 时间。
+尚未使用时明确显示“尚未使用”。
+
+预览使用“贴纸导入预览”或“贴纸清理预览”标题，计划结果显示“待添加”“待隔离”或
+“待清理”，末尾明确“未作更改。”；导入预览逐候选保留情绪、标签、描述和贴纸判定，
+不虚构 ID 或显示原文件名。正式批次分别报告添加、重复、隔离、拒绝、失败和延后计数，
+有失败或延后时明确未完成项；空 inbox 显示“没有待处理的图片。”。
+清理和索引重建分别保留各自计数单位，不声称缺失文件已恢复。
+
+下列列表与导入预览使用合成条目，文本由实际展示入口生成：
+
+```text
+Milky · 贴纸维护
+
+本次显示 1 条
+
+ID: demo_id
+情绪: 喜悦 (joy)
+标签: 开心、反应
+描述: 小图表达情绪
+来源: 人工 (manual)
+字段来源: 情绪=视觉 (vision)、标签=人工 (manual)、描述=视觉 (vision)
+格式: PNG
+大小: 68 字节
+创建时间: 2026-01-01T00:00:00+00:00 UTC
+使用次数: 0
+最近使用: 尚未使用
+```
+
+```text
+贴纸导入预览
+
+待添加: 1
+待隔离: 0
+重复图片: 0
+拒绝图片: 0
+视觉分析失败: 0
+存储失败: 0
+延后处理: 0
+
+候选 1: 待添加
+贴纸判定: 是
+情绪: 喜悦 (joy)
+标签: 开心、反应
+描述: 小图表达情绪
+
+未作更改。
+```
+
+slash 回执已从贴纸 JSON、实现信息英文错误前缀和旧标题改为中文纯文本；allowlist 帮助也改为
+紧凑布局。这是展示兼容性变化，程序消费者继续使用原有结构化维护结果、Web JSON 和 Agent Tool
+字段与分类，不应解析中文回执。长帮助、列表和批次继续由既有发送流程分块或合并转发，发送失败
+不会重复执行维护操作。
 
 首次有效维护命令才会在 Hermes plugin-data 下创建 `stickers/inbox/`、`stickers/library/`、
 `stickers/junk/` 和独立 `stickers.db`。`add` 递归扫描 inbox，只接受 PNG、JPEG、GIF、WebP，单文件
@@ -766,7 +909,7 @@ CQ image 仅用于本地 `file://` URI 的 sticker，例如：
 报告 `not_sticker` 并保留原条目。`list` 输出受限摘要，不输出路径、URL、原文件名或图片 bytes。
 `cleanup` 不扫描或删除 junk；`reindex` 只重建 library 的 `sticker_files` 技术索引，不创建贴纸条目。
 
-当前 command handler 只收到 `raw_args`，本 change 不推断 Milky friend/group 或操作者身份，也不增加
+贴纸 command handler 只收到 `raw_args`，不推断 Milky friend/group 或操作者身份，也不增加
 `MILKY_STICKER_OPERATOR_IDS` 等插件授权配置。贴纸维护不创建旁路 Milky client、Agent Tool、主 Agent
 transcript、普通消息 handoff 或脱离命令生命周期的后台视觉任务。
 
@@ -894,7 +1037,27 @@ fixture、测试和文档改进的贡献者。
 门禁也服从 core。未放行会话可以发送下面的直接管理命令，其他命令仍需通过会话 Gate。
 结构化 mention、图片、未知子命令和其他命令展开的别名不享有路由例外；已放行会话的 core 别名正常执行。
 
-- /milky allowlist 或 /milky allowlist help：显示帮助，包含命令、目标格式和示例；不读取或修改配置。
+帮助使用紧凑的 Usage 与 Commands，不另列 Targets 或 Examples：
+
+```text
+Milky · 会话白名单
+
+Usage:
+  /milky allowlist [command] [args...]
+
+Commands:
+  list          查看名单
+  add [target]  添加规则
+  del [target]  移除规则（别名 remove）
+  help          显示帮助
+
+  e.g. target: group:123456、dm:654321、group:*、dm:*
+
+add/del 省略目标时使用当前会话。
+不带子命令时显示帮助。
+```
+
+- /milky allowlist 或 /milky allowlist help：显示静态帮助；Commands 末尾的一行 e.g. 给出 add/del 共用目标，不读取或修改配置。
 - /milky allowlist list：完整查看配置及运行规则、来源和差异，不支持分页；长消息由既有发送流程合并转发或拆分。
 - /milky allowlist add：添加当前群或当前私聊。
 - /milky allowlist add dm:123456：添加显式目标；同样支持 group:123456、group:*、dm:*。

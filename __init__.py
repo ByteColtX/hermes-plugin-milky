@@ -125,8 +125,8 @@ def register(ctx: Any) -> None:
         register_command(
             "milky",
             command_service.handle,
-            description="Milky 信息、sticker 维护与 allowlist 管理",
-            args_hint="[sticker ... | allowlist list/add/del (remove)/help ...]",
+            description="Milky 实现信息、运行状态、贴纸维护与白名单管理；help 查看帮助",
+            args_hint="[command] [args...]",
         )
     standalone_sender = make_standalone_sender(milky_config)
 

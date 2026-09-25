@@ -33,6 +33,7 @@ from session import (
 )
 from state import MuteTracker
 from state.chat_policy import ChatPolicy
+from state.runtime_status import RuntimeStatus
 from will import build_engine
 
 try:
@@ -115,6 +116,7 @@ class MilkyAdapter(BasePlatformAdapter):
         plugin_context: object | None = None,
         allowed_chats_reader=None,
         profile_settings=None,
+        status_clock=None,
     ) -> None:
         """组装进程内依赖；构造阶段不建立网络连接或后台任务。"""
 
@@ -173,6 +175,12 @@ class MilkyAdapter(BasePlatformAdapter):
         self._slash_command_service = slash_command_service
         self._allowlist_manager = AllowlistManager(
             self._chat_policy, profile_settings, self._publish_allowlist
+        )
+        self._runtime_status = RuntimeStatus(
+            self._chat_policy,
+            profile_settings,
+            lambda: self._event_stream,
+            **({"clock": status_clock} if status_clock is not None else {}),
         )
         self._identity_snapshot = (
             identity_snapshot if identity_snapshot is not None else BotIdentitySnapshot()
@@ -284,6 +292,10 @@ class MilkyAdapter(BasePlatformAdapter):
                 self._rebuild_connection()
             if self._connected and self._event_task is not None and not self._event_task.done():
                 return True
+            self._runtime_status.starting()
+            bind_status = getattr(self._slash_command_service, "bind_status_provider", None)
+            if callable(bind_status):
+                bind_status(self._runtime_status)
             logger.info(render_event("milky.lifecycle", stage="connect", operation="connecting"))
             try:
                 if not self._initial_sync_complete:
@@ -303,8 +315,12 @@ class MilkyAdapter(BasePlatformAdapter):
                     self._pipeline_started = True
                 self._mark_connected()
                 self._connected = True
+                self._runtime_status.running()
                 self._bind_command_service()
                 self._bind_sender()
+                prepare_start = getattr(self._event_stream, "prepare_start", None)
+                if callable(prepare_start):
+                    prepare_start()
                 self._event_task = asyncio.create_task(
                     self._run_event_stream(),
                     name="milky-event-stream",
@@ -324,9 +340,12 @@ class MilkyAdapter(BasePlatformAdapter):
                 )
                 return True
             except asyncio.CancelledError:
+                self._runtime_status.stop(failed=True)
+                self._unbind_status_provider()
                 raise
             except Exception as error:  # noqa: BLE001 - 连接边界必须 fail-closed
                 self._connected = False
+                self._runtime_status.stop(failed=True)
                 self._mark_disconnected()
                 self._unbind_command_service()
                 self._unbind_sender()
@@ -351,6 +370,7 @@ class MilkyAdapter(BasePlatformAdapter):
                 return
             self._closed = True
             self._connected = False
+            self._runtime_status.stop()
             self._unbind_command_service()
             await self._allowlist_manager.close()
             logger.info(render_event("milky.lifecycle", stage="disconnect", operation="stopping"))
@@ -833,12 +853,17 @@ class MilkyAdapter(BasePlatformAdapter):
                 await result
             if not self._closed:
                 self._connected = False
+                self._runtime_status.stop()
                 self._record("event_stream_stopped")
                 self._unbind_command_service()
                 self._mark_disconnected()
         except asyncio.CancelledError:
+            if not self._closed:
+                self._runtime_status.stop()
+                self._unbind_status_provider()
             raise
         except Exception as error:  # noqa: BLE001 - 事件流任务不得泄漏异常
+            self._runtime_status.stop(failed=True)
             self._record(f"event_stream_failed:{_safe_error_category(error)}")
             if not self._closed:
                 self._connected = False
@@ -869,6 +894,7 @@ class MilkyAdapter(BasePlatformAdapter):
     def _unbind_command_service(self) -> None:
         """在连接失败或停止后解除命令 service 的 client 绑定。"""
 
+        self._unbind_status_provider()
         self._allowlist_manager.stop()
         unbind_manager = getattr(self._slash_command_service, "unbind_manager", None)
         if callable(unbind_manager):
@@ -876,6 +902,12 @@ class MilkyAdapter(BasePlatformAdapter):
         unbind = getattr(self._slash_command_service, "unbind_client", None)
         if callable(unbind):
             unbind(self._client)
+
+    def _unbind_status_provider(self) -> None:
+        """移除状态观察者，禁止命令借用停止实例。"""
+        unbind = getattr(self._slash_command_service, "unbind_status_provider", None)
+        if callable(unbind):
+            unbind(self._runtime_status)
 
     def _unbind_sender(self) -> None:
         """在生命周期停止后撤销显式工具的 sender。"""

@@ -63,8 +63,8 @@ def _create_library(tmp_path: Path) -> tuple[str, str]:
         )
 
     service = StickerMaintenanceService(data_dir=tmp_path, vision_analyzer=vision)
-    assert json.loads(asyncio.run(service.handle("sticker add")))["created"] == 1
-    item = json.loads(asyncio.run(service.handle("sticker list")))["items"][0]
+    assert asyncio.run(service.add())["created"] == 1
+    item = service.list()["items"][0]
     return str(item["sticker_id"]), str(item["file_sha256"])
 
 
@@ -92,8 +92,8 @@ def _create_two_item_library(tmp_path: Path) -> tuple[str, str]:
         )
 
     service = StickerMaintenanceService(data_dir=tmp_path, vision_analyzer=vision)
-    assert json.loads(asyncio.run(service.handle("sticker add")))["created"] == 2
-    items = json.loads(asyncio.run(service.handle("sticker list")))["items"]
+    assert asyncio.run(service.add())["created"] == 2
+    items = service.list()["items"]
     ids = sorted(str(item["sticker_id"]) for item in items)
     return ids[0], ids[1]
 

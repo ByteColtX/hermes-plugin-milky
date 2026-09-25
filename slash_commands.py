@@ -7,20 +7,36 @@ import inspect
 import json
 from threading import RLock
 
-from management.allowlist import HELP, UNAVAILABLE, USAGE, current_invocation, parse
+from command_text import format_usage
+from management.allowlist import HELP, UNAVAILABLE, current_invocation, parse, usage_for
 from milky.client import ActionError
 from stickers.maintenance import StickerMaintenanceService
 
-_SAFE_FAILURES = frozenset(
-    {
-        "rejected",
-        "transport_unknown",
-        "malformed",
-        "unsupported",
-        "invalid_input",
-        "http_error",
-    }
-)
+HELP_TEXT = """Milky · 命令帮助
+
+Usage:
+  /milky [command] [args...]
+
+不带参数时查看实现信息。
+
+Commands:
+  status      查看运行状态
+  sticker     维护贴纸库
+  allowlist   管理会话白名单
+  help        显示帮助
+
+子命令帮助: /milky <command> help（sticker、allowlist）"""
+
+_FAILURE_TEXT = {
+    "unsupported": "Milky 信息暂不可用\n\n请检查插件连接状态后重试。",
+    "rejected": "查询请求被拒绝\n\n请检查 Milky 服务的访问设置。",
+    "malformed": "无法读取 Milky 信息\n\n服务返回的信息格式不正确。",
+    "http_error": "Milky 服务请求失败\n\n请检查服务状态后重试。",
+    "transport_unknown": "无法确认查询结果\n\n请检查连接状态后重新查询。",
+    "invalid_input": "查询参数无效\n\n请检查插件与 Milky 服务的兼容性。",
+}
+STATUS_UNAVAILABLE = "运行状态暂不可用\n\n无法确认当前插件实例及其归属。"
+
 
 _IMPL_INFO_FIELDS = (
     "impl_name",
@@ -48,7 +64,8 @@ def format_impl_info(raw_response: str) -> str:
 
     return "\n".join(
         (
-            "Milky 信息",
+            "Milky · 实现信息",
+            "",
             f"实现: {data['impl_name']}",
             f"版本: {data['impl_version']}",
             f"Milky 版本: {data['milky_version']}",
@@ -63,6 +80,8 @@ class SlashCommandService:
     def __init__(self, sticker_service: StickerMaintenanceService | None = None) -> None:
         self._clients: list[object] = []
         self._managers: list[object] = []
+        self._status_providers: list[object] = []
+        self._status_revision = 0
         self._lock = RLock()
         self._sticker_service = sticker_service or StickerMaintenanceService()
 
@@ -99,18 +118,57 @@ class SlashCommandService:
         if manager in self._managers:
             self._managers.remove(manager)
 
+    def bind_status_provider(self, provider: object) -> None:
+        """登记生命周期拥有的本地状态观察者。"""
+        with self._lock:
+            if not any(item is provider for item in self._status_providers):
+                self._status_providers.append(provider)
+                self._status_revision += 1
+
+    def unbind_status_provider(self, provider: object) -> None:
+        """解绑状态观察者并使等待中的读取失效。"""
+        with self._lock:
+            self._status_providers = [
+                item for item in self._status_providers if item is not provider
+            ]
+            self._status_revision += 1
+
+    async def _status(self) -> str:
+        """只调用唯一观察者，并在等待后复核绑定代次。"""
+        with self._lock:
+            if len(self._status_providers) != 1:
+                return STATUS_UNAVAILABLE
+            provider = self._status_providers[0]
+            revision = self._status_revision
+        try:
+            result = await provider.status()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - 状态错误不得暴露配置或异常正文
+            return STATUS_UNAVAILABLE
+        with self._lock:
+            if revision != self._status_revision:
+                return STATUS_UNAVAILABLE
+        return result if isinstance(result, str) and result else STATUS_UNAVAILABLE
+
     async def handle(self, raw_args: str) -> str:
         """处理 ``/milky``，并只返回安全分类或格式化成功信息。"""
 
         if not isinstance(raw_args, str):
-            return "invalid_input: usage: /milky"
+            return format_usage("/milky [command] [args...]", "/milky help")
         stripped = raw_args.strip()
         if stripped:
+            parts = stripped.split()
+            branch = parts[0].lower()
+            if branch in {"help", "status"}:
+                if len(parts) != 1:
+                    return format_usage(f"/milky {branch}", "/milky help")
+                return HELP_TEXT if branch == "help" else await self._status()
             if stripped.split(maxsplit=1)[0].lower() == "allowlist":
                 try:
                     operation = parse(stripped)
                 except (ValueError, TypeError):
-                    return USAGE
+                    return usage_for(stripped)
                 if operation.verb == "help":
                     return HELP
                 if len(self._managers) != 1:
@@ -118,13 +176,13 @@ class SlashCommandService:
                 return await self._managers[0].handle(operation, current_invocation.get())
             if stripped.split(maxsplit=1)[0].lower() == "sticker":
                 return await self._sticker_service.handle(raw_args)
-            return "invalid_input: usage: /milky"
+            return format_usage("/milky [command] [args...]", "/milky help")
         client = self._unique_client()
         if client is None:
-            return "unsupported: no unique active Milky client"
+            return self._failure("unsupported")
         method = getattr(client, "get_impl_info", None)
         if not callable(method):
-            return "unsupported: get_impl_info is unavailable"
+            return self._failure("unsupported")
         try:
             result = method()
             if inspect.isawaitable(result):
@@ -134,9 +192,9 @@ class SlashCommandService:
         except ActionError as error:
             return self._failure(getattr(error, "classification", None))
         except Exception:  # noqa: BLE001 - 命令结果不得泄漏底层异常
-            return "malformed: get_impl_info failed"
+            return self._failure("malformed")
         if not isinstance(result, str) or not result:
-            return "malformed: get_impl_info response is unavailable"
+            return self._failure("malformed")
         try:
             return format_impl_info(result)
         except ActionError as error:
@@ -150,12 +208,9 @@ class SlashCommandService:
     def _failure(classification: object) -> str:
         """将 Action 失败压缩为不含响应正文的用户可见结果。"""
 
-        safe = (
-            classification
-            if isinstance(classification, str) and classification in _SAFE_FAILURES
-            else "malformed"
-        )
-        return f"{safe}: get_impl_info failed"
+        if not isinstance(classification, str):
+            classification = "malformed"
+        return _FAILURE_TEXT.get(classification, _FAILURE_TEXT["malformed"])
 
     def close(self) -> None:
         """关闭命令 service 当前仍持有的贴纸操作资源。"""
