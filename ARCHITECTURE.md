@@ -22,6 +22,7 @@ hermes-plugin-milky/
 ├── __init__.py              # 唯一入口：注册 platform、command、tools、skills
 ├── adapter.py               # MilkyAdapter；连接、停止和 Hermes 边界
 ├── config/                  # 统一来源解析、启动快照、白名单和 Will policy
+├── management/              # 白名单配置读写、命令关联和在线规则发布
 ├── dashboard/               # 宿主 Web 管理路由、任务、独立上传和预构建页面
 ├── milky/                   # DTO、解析、HTTP Action、SSE、资源、日志
 ├── inbound/                 # canonical、pipeline、消息映射、系统事件
@@ -31,7 +32,7 @@ hermes-plugin-milky/
 ├── state/                   # MuteTracker
 ├── outbound/                # sender、CQ、媒体、上传、拆分和 ToolSpec handler
 ├── stickers/                # SQLite 贴纸库、维护命令和贴纸语义工具
-├── slash_commands.py        # `/milky` 命令服务
+├── slash_commands.py        # `/milky` 顶层命令分发
 ├── skills/、scripts/        # bundled skill；smoke、prompt、face catalog 工具
 ├── tests/、openspec/        # 测试 fixture；当前 spec、change、归档历史和 evidence
 ├── pyproject.toml、uv.lock  # uv、Setuptools、Ruff、pytest、构建和锁定依赖
@@ -47,6 +48,7 @@ hermes-plugin-milky/
 | 目标 | 先看哪里 | 主要影响 |
 |---|---|---|
 | 配置和默认值 | `config/__init__.py`、`plugin.yaml` | 启动校验、manifest、adapter 组装 |
+| 热白名单管理 | `management/allowlist.py`、`management/profile.py`、`inbound/pipeline.py` | core 命令分发例外、profile 设置读写与在线规则发布 |
 | 协议字段和 segment | `milky/models.py`、`parser.py`、`inbound/normalizer.py` | canonical、资源、context、fixture |
 | 普通消息触发 | `inbound/pipeline.py`、`gates/`、`will/`、`session/` | dedup、Gate、buffer、Agent handoff |
 | 系统事件 | `inbound/system_events.py`、`session/context.py` | context FIFO、即时成员通知 |
@@ -412,7 +414,7 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 
 ### 未交付规划与建议
 
-未归档 change 中的 idle-session wakeup、relationship system、自动 QQ sticker library 不是当前能力。在实现前应分别定义 session 注入授权、关系状态所有权、贴纸入站 hook 和持久化迁移边界。
+未归档 change 中的 idle-session wakeup、relationship system、自动 QQ sticker library 和 group-moderation workflow 均不是当前能力；各 change 已记录目标行为及其安全、所有权和生命周期边界，不能据此描述为已交付。
 
 基于当前结构的建议：先补 ToolSpec 授权，再考虑多实例；随后补 health/metrics/trace、SQLite 备份和恢复；同时把活动 sender 改为 adapter/session 级依赖注入，减少跨实例共享风险。
 
@@ -427,7 +429,7 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 | 公开入口 | `__init__.py::register(ctx)` |
 | manifest/package version | manifest 2；package 2.0.0 |
 | 维护者 | `ByteColtX`（manifest 和 pyproject author） |
-| 架构复核日期 | 2026-09-24 |
+| 架构复核日期 | 2026-09-26 |
 | 部署目标 | Hermes Gateway；具体 hosting 为 `Not evident from the repository` |
 
 | 术语 | 含义 |

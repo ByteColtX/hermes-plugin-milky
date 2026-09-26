@@ -48,6 +48,7 @@ change 和已归档 change 的测试证据见 [openspec/](openspec/)。
 - [日志](#%E6%97%A5%E5%BF%97)
 - [常用运维](#%E5%B8%B8%E7%94%A8%E8%BF%90%E7%BB%B4)
 - [功能与使用](#%E5%8A%9F%E8%83%BD%E4%B8%8E%E4%BD%BF%E7%94%A8)
+  - [QQ 热白名单管理](#qq-%E7%83%AD%E7%99%BD%E5%90%8D%E5%8D%95%E7%AE%A1%E7%90%86)
 - [API 与开发](#api-%E4%B8%8E%E5%BC%80%E5%8F%91)
 - [贡献](#%E8%B4%A1%E7%8C%AE)
 - [维护者、致谢与许可证](#%E7%BB%B4%E6%8A%A4%E8%80%85%E8%87%B4%E8%B0%A2%E4%B8%8E%E8%AE%B8%E5%8F%AF%E8%AF%81)
