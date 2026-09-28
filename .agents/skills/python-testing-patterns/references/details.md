@@ -8,6 +8,7 @@
 # test_calculator.py
 import pytest
 
+
 class Calculator:
     """Simple calculator for testing."""
 
@@ -69,6 +70,7 @@ def test_division_by_zero():
 import pytest
 from typing import Generator
 
+
 class Database:
     """Simple database class."""
 
@@ -115,11 +117,7 @@ def test_database_query(db):
 @pytest.fixture(scope="session")
 def app_config():
     """Session-scoped fixture - created once per test session."""
-    return {
-        "database_url": "postgresql://localhost/test",
-        "api_key": "test-key",
-        "debug": True
-    }
+    return {"database_url": "postgresql://localhost/test", "api_key": "test-key", "debug": True}
 
 
 @pytest.fixture(scope="module")
@@ -144,44 +142,55 @@ def test_api_client(api_client):
 # test_validation.py
 import pytest
 
+
 def is_valid_email(email: str) -> bool:
     """Check if email is valid."""
     return "@" in email and "." in email.split("@")[1]
 
 
-@pytest.mark.parametrize("email,expected", [
-    ("user@example.com", True),
-    ("test.user@domain.co.uk", True),
-    ("invalid.email", False),
-    ("@example.com", False),
-    ("user@domain", False),
-    ("", False),
-])
+@pytest.mark.parametrize(
+    "email,expected",
+    [
+        ("user@example.com", True),
+        ("test.user@domain.co.uk", True),
+        ("invalid.email", False),
+        ("@example.com", False),
+        ("user@domain", False),
+        ("", False),
+    ],
+)
 def test_email_validation(email, expected):
     """Test email validation with various inputs."""
     assert is_valid_email(email) == expected
 
 
-@pytest.mark.parametrize("a,b,expected", [
-    (2, 3, 5),
-    (0, 0, 0),
-    (-1, 1, 0),
-    (100, 200, 300),
-    (-5, -5, -10),
-])
+@pytest.mark.parametrize(
+    "a,b,expected",
+    [
+        (2, 3, 5),
+        (0, 0, 0),
+        (-1, 1, 0),
+        (100, 200, 300),
+        (-5, -5, -10),
+    ],
+)
 def test_addition_parameterized(a, b, expected):
     """Test addition with multiple parameter sets."""
     from test_calculator import Calculator
+
     calc = Calculator()
     assert calc.add(a, b) == expected
 
 
 # Using pytest.param for special cases
-@pytest.mark.parametrize("value,expected", [
-    pytest.param(1, True, id="positive"),
-    pytest.param(0, False, id="zero"),
-    pytest.param(-1, False, id="negative"),
-])
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        pytest.param(1, True, id="positive"),
+        pytest.param(0, False, id="zero"),
+        pytest.param(-1, False, id="negative"),
+    ],
+)
 def test_is_positive(value, expected):
     """Test with custom test IDs."""
     assert (value > 0) == expected
@@ -194,6 +203,7 @@ def test_is_positive(value, expected):
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 import requests
+
 
 class APIClient:
     """Simple API client."""
@@ -265,6 +275,7 @@ def test_create_user(mock_post):
 # test_exceptions.py
 import pytest
 
+
 def divide(a: float, b: float) -> float:
     """Divide a by b."""
     if b == 0:
@@ -317,14 +328,17 @@ def test_user_service():
     updated = service.update_user(user.id, {"name": "New"})
     assert updated.name == "New"
 
+
 # GOOD - focused tests
 def test_create_user_assigns_id():
     user = service.create_user(data)
     assert user.id is not None
 
+
 def test_create_user_stores_email():
     user = service.create_user(data)
     assert user.email == data["email"]
+
 
 def test_update_user_changes_name():
     user = service.create_user(data)
@@ -342,6 +356,7 @@ def test_get_user_raises_not_found():
         service.get_user("nonexistent-id")
 
     assert "nonexistent-id" in str(exc_info.value)
+
 
 def test_create_user_rejects_invalid_email():
     with pytest.raises(ValueError, match="Invalid email format"):

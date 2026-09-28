@@ -54,14 +54,17 @@ Comprehensive guide to implementing robust testing strategies in Python using py
 def add(a, b):
     return a + b
 
+
 def test_add():
     """Basic test example."""
     result = add(2, 3)
     assert result == 5
 
+
 def test_add_negative():
     """Test with negative numbers."""
     assert add(-1, 1) == 0
+
 
 # Run with: pytest test_example.py
 ```
@@ -94,34 +97,39 @@ A common pattern: `test_<unit>_<scenario>_<expected_outcome>`. Adapt to your tea
 
 ```python
 # Pattern: test_<unit>_<scenario>_<expected>
-def test_create_user_with_valid_data_returns_user():
-    ...
+def test_create_user_with_valid_data_returns_user(): ...
 
-def test_create_user_with_duplicate_email_raises_conflict():
-    ...
 
-def test_get_user_with_unknown_id_returns_none():
-    ...
+def test_create_user_with_duplicate_email_raises_conflict(): ...
+
+
+def test_get_user_with_unknown_id_returns_none(): ...
+
 
 # Good test names - clear and descriptive
 def test_user_creation_with_valid_data():
     """Clear name describes what is being tested."""
     pass
 
+
 def test_login_fails_with_invalid_password():
     """Name describes expected behavior."""
     pass
+
 
 def test_api_returns_404_for_missing_resource():
     """Specific about inputs and expected outcomes."""
     pass
 
+
 # Bad test names - avoid these
 def test_1():  # Not descriptive
     pass
 
+
 def test_user():  # Too vague
     pass
+
 
 def test_function():  # Doesn't explain what's tested
     pass
@@ -133,6 +141,7 @@ Verify that retry logic works correctly using mock side effects.
 
 ```python
 from unittest.mock import Mock
+
 
 def test_retries_on_transient_error():
     """Test that service retries on transient failures."""
@@ -150,6 +159,7 @@ def test_retries_on_transient_error():
     assert result == {"status": "ok"}
     assert client.request.call_count == 3
 
+
 def test_gives_up_after_max_retries():
     """Test that service stops retrying after max attempts."""
     client = Mock()
@@ -161,6 +171,7 @@ def test_gives_up_after_max_retries():
         service.fetch()
 
     assert client.request.call_count == 3
+
 
 def test_does_not_retry_on_permanent_error():
     """Test that permanent errors are not retried."""
@@ -184,11 +195,13 @@ Use freezegun to control time in tests for predictable time-dependent behavior.
 from freezegun import freeze_time
 from datetime import datetime, timedelta
 
+
 @freeze_time("2026-01-15 10:00:00")
 def test_token_expiry():
     """Test token expires at correct time."""
     token = create_token(expires_in_seconds=3600)
     assert token.expires_at == datetime(2026, 1, 15, 11, 0, 0)
+
 
 @freeze_time("2026-01-15 10:00:00")
 def test_is_expired_returns_false_before_expiry():
@@ -196,11 +209,13 @@ def test_is_expired_returns_false_before_expiry():
     token = create_token(expires_in_seconds=3600)
     assert not token.is_expired()
 
+
 @freeze_time("2026-01-15 12:00:00")
 def test_is_expired_returns_true_after_expiry():
     """Test token is expired after validity period."""
     token = Token(expires_at=datetime(2026, 1, 15, 11, 30, 0))
     assert token.is_expired()
+
 
 def test_with_time_travel():
     """Test behavior across time using freeze_time context."""
@@ -219,10 +234,12 @@ def test_with_time_travel():
 # test_markers.py
 import pytest
 
+
 @pytest.mark.slow
 def test_slow_operation():
     """Mark slow tests."""
     import time
+
     time.sleep(2)
 
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.0.1] - 2026-09-28
+
+### 新增
+
+- 入站视频上下文显示协议提供的 `resource_id` 和秒级 `duration`，缺失字段显示为 `NOT SUPPORTED`，不暴露临时 URL。
+- 新增显式 `get_resource_temp_url` Agent Tool；普通入站不自动查询视频链接，工具只交付 Milky 原始响应，不下载或分析视频。
+
+### 验证与边界
+
+- 全量测试：`1406 passed, 3 skipped`；跳过项需要 Hermes host 或显式启用真实集成。
+- Ruff、格式检查、`uv lock --check`、`uv build`、Dashboard build/check/test（3 passed）、`git diff --check` 和 OpenSpec 全量严格校验（36 项通过）均通过。
+- 未连接真实 Hermes/Milky，也未执行真实 QQ 消息发送。
+
 ## [2.0.0] - 2026-09-26
 
 ### 破坏性变更与迁移
