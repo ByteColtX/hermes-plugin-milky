@@ -977,60 +977,6 @@ HTTP/SSE 资源。
 非 Tool 出站成功在插件侧使用远端 `data.message_seq` 的稳定字符串作为 `message_seq`，交给 Hermes 时映射为宿主要求的 `message_id`；协议拒绝、传输未知、
 malformed 和 unsupported 会保持明确失败分类。缺少消息序号时不会伪造稳定去重 ID。
 
-## API 与开发
-
-插件不是以 Python package entry point 发布；Hermes 从根目录加载 `plugin.yaml`，再调用唯一
-公开入口 `__init__.py::register(ctx)`。
-
-| 对象 | 作用 |
-| --- | --- |
-| `__init__.py::register(ctx)` | 解析启动配置，注册 platform、`/milky`、ToolSpec、standalone sender、QQ 指引 section 和 QQ 会话介绍 section。 |
-| `__init__.py::register_tools(ctx)` | 委托 `outbound.tools` 注册固定 ToolSpec；注册阶段不联网。 |
-| `MilkyAdapter` | 管理连接、停止、入站交接和出站委托。 |
-| `MilkyOutboundSender` | 校验 `group:/dm:` 目标，格式化消息并调用 Milky Action/upload。 |
-| `SlashCommandService` | 管理活动 Milky client，处理 `/milky` 和显式贴纸维护命令。 |
-| `stickers/` | 懒加载独立 `stickers.db`，校验 inbox 图片，执行维护命令以及受限 `sticker_search`/`sticker_send` 搜索、精确发送和 claim；`jieba` 由插件运行时依赖提供。 |
-
-支持 `register_system_prompt_section` 的 Hermes 宿主会在 `after_memory` 登记
-`hermes-plugin-milky.qq-platform-guidance`，并在连接完成后使用已确认的 QQ UID 和昵称渲染
-媒体、CQ-compatible、无回复和 bundled skill 指引。旧宿主仍可完成平台注册，但只获得首句提示。
-
-同一宿主还会登记 `hermes-plugin-milky.qq-session-context`；其 callback 只读取当前
-`HERMES_SESSION_CHAT_ID` 对应的本地安全快照，不发起网络或文件 I/O。旧宿主、没有当前 chat
-context、资料缺失或快照已淘汰时不注入会话介绍。
-
-详细的稳定模块边界见 [ARCHITECTURE.md](ARCHITECTURE.md)；可观察行为和测试要求见
-[openspec/](openspec/)。新建的未归档 change 会放在 [openspec/changes/](openspec/changes/)。
-
-## 贡献
-
-欢迎通过 [GitHub Issues](https://github.com/ByteColtX/hermes-plugin-milky/issues) 提问、报告
-问题或提交 pull request。贡献前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 和
-[ARCHITECTURE.md](ARCHITECTURE.md)。
-
-贡献要求：
-
-- 行为变化先补充脱敏契约或 fixture，再实现并增加回归测试；
-- 使用 `uv` 管理 Python 环境和依赖，不使用 `pip`、`pipx` 或直接调用 `python`/`python3`；
-- 遵循 Google Python Style Guide，并保持各模块依赖边界；
-- 运行 `uv run pytest -q`、`uv run ruff check .`、`uv run ruff format --check .`、`uv build` 和
-  `git diff --check`；
-- 不提交 token、Authorization header、真实 QQ/群 ID、真实媒体 URL/路径、文件内容或敏感正文；
-- 使用中文 Conventional Commits。
-
-PR 应说明变更范围、实际执行的命令、测试结果和未解决风险。若行为契约发生变化，请同步
-更新对应的 OpenSpec change；安全问题不要公开粘贴到 issue。
-
-## 维护者、致谢与许可证
-
-维护者：[ByteColtX](https://github.com/ByteColtX)。问题、功能建议和安全联系入口见
-[CONTRIBUTING.md](CONTRIBUTING.md)。
-
-感谢 Hermes Gateway 的 platform adapter contract、Milky v1.3 协议生态，以及提供协议
-fixture、测试和文档改进的贡献者。
-
-本项目使用 MIT License，版权所有 © 2026 ByteColtX。完整条款见 [LICENSE](LICENSE)。
-
 ### QQ 热白名单管理
 
 纯文本命令通过 Hermes core 授权后执行；顶层 milky 许可覆盖 allowlist 的全部子命令。
@@ -1089,3 +1035,57 @@ list 保留 settings、legacy、environment、default 来源名称；一致时�
 旧版本把空列表解释为全部放行，回滚前先停止接收并设置经审阅的非空受限名单；
 若需全部关闭，在宿主停用平台。只回滚代码并保留空列表会扩大权限。
 真实 QQ 验收范围与当前验证结果见 openspec/changes/archive/2026-09-26-add-hot-chat-allowlist/evidence.md。
+
+## API 与开发
+
+插件不是以 Python package entry point 发布；Hermes 从根目录加载 `plugin.yaml`，再调用唯一
+公开入口 `__init__.py::register(ctx)`。
+
+| 对象 | 作用 |
+| --- | --- |
+| `__init__.py::register(ctx)` | 解析启动配置，注册 platform、`/milky`、ToolSpec、standalone sender、QQ 指引 section 和 QQ 会话介绍 section。 |
+| `__init__.py::register_tools(ctx)` | 委托 `outbound.tools` 注册固定 ToolSpec；注册阶段不联网。 |
+| `MilkyAdapter` | 管理连接、停止、入站交接和出站委托。 |
+| `MilkyOutboundSender` | 校验 `group:/dm:` 目标，格式化消息并调用 Milky Action/upload。 |
+| `SlashCommandService` | 管理活动 Milky client，处理 `/milky` 和显式贴纸维护命令。 |
+| `stickers/` | 懒加载独立 `stickers.db`，校验 inbox 图片，执行维护命令以及受限 `sticker_search`/`sticker_send` 搜索、精确发送和 claim；`jieba` 由插件运行时依赖提供。 |
+
+支持 `register_system_prompt_section` 的 Hermes 宿主会在 `after_memory` 登记
+`hermes-plugin-milky.qq-platform-guidance`，并在连接完成后使用已确认的 QQ UID 和昵称渲染
+媒体、CQ-compatible、无回复和 bundled skill 指引。旧宿主仍可完成平台注册，但只获得首句提示。
+
+同一宿主还会登记 `hermes-plugin-milky.qq-session-context`；其 callback 只读取当前
+`HERMES_SESSION_CHAT_ID` 对应的本地安全快照，不发起网络或文件 I/O。旧宿主、没有当前 chat
+context、资料缺失或快照已淘汰时不注入会话介绍。
+
+详细的稳定模块边界见 [ARCHITECTURE.md](ARCHITECTURE.md)；可观察行为和测试要求见
+[openspec/](openspec/)。新建的未归档 change 会放在 [openspec/changes/](openspec/changes/)。
+
+## 贡献
+
+欢迎通过 [GitHub Issues](https://github.com/ByteColtX/hermes-plugin-milky/issues) 提问、报告
+问题或提交 pull request。贡献前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 和
+[ARCHITECTURE.md](ARCHITECTURE.md)。
+
+贡献要求：
+
+- 行为变化先补充脱敏契约或 fixture，再实现并增加回归测试；
+- 使用 `uv` 管理 Python 环境和依赖，不使用 `pip`、`pipx` 或直接调用 `python`/`python3`；
+- 遵循 Google Python Style Guide，并保持各模块依赖边界；
+- 运行 `uv run pytest -q`、`uv run ruff check .`、`uv run ruff format --check .`、`uv build` 和
+  `git diff --check`；
+- 不提交 token、Authorization header、真实 QQ/群 ID、真实媒体 URL/路径、文件内容或敏感正文；
+- 使用中文 Conventional Commits。
+
+PR 应说明变更范围、实际执行的命令、测试结果和未解决风险。若行为契约发生变化，请同步
+更新对应的 OpenSpec change；安全问题不要公开粘贴到 issue。
+
+## 维护者、致谢与许可证
+
+维护者：[ByteColtX](https://github.com/ByteColtX)。问题、功能建议和安全联系入口见
+[CONTRIBUTING.md](CONTRIBUTING.md)。
+
+感谢 Hermes Gateway 的 platform adapter contract、Milky v1.3 协议生态，以及提供协议
+fixture、测试和文档改进的贡献者。
+
+本项目使用 MIT License，版权所有 © 2026 ByteColtX。完整条款见 [LICENSE](LICENSE)。

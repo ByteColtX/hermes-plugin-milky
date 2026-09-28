@@ -414,7 +414,7 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 
 ### 未交付规划与建议
 
-未归档 change 中的 idle-session wakeup、relationship system、自动 QQ sticker library 和 group-moderation workflow 均不是当前能力；各 change 已记录目标行为及其安全、所有权和生命周期边界，不能据此描述为已交付。
+未归档 change 中的 idle-session wakeup、relationship system、自动 QQ sticker library 和 group-moderation workflow 均是规划；defer-milky-session-key-fallback-routing 记录了一个明确延期的 Hermes session-key fallback 问题，且不包含修复设计或实现。这些 change 都不能作为当前已交付能力的依据。
 
 基于当前结构的建议：先补 ToolSpec 授权，再考虑多实例；随后补 health/metrics/trace、SQLite 备份和恢复；同时把活动 sender 改为 adapter/session 级依赖注入，减少跨实例共享风险。
 
@@ -429,7 +429,7 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 | 公开入口 | `__init__.py::register(ctx)` |
 | manifest/package version | manifest 2；package 2.0.0 |
 | 维护者 | `ByteColtX`（manifest 和 pyproject author） |
-| 架构复核日期 | 2026-09-26 |
+| 架构复核日期 | 2026-09-28 |
 | 部署目标 | Hermes Gateway；具体 hosting 为 `Not evident from the repository` |
 
 | 术语 | 含义 |
