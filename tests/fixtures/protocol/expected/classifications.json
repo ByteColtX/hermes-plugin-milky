@@ -35,6 +35,7 @@
     {"path": "events/message_receive.friend.json", "classification": "accepted", "assertions": ["friend", "text"]},
     {"path": "events/message_receive.friend.no_message_seq.json", "classification": "accepted", "assertions": ["friend", "no_stable_message_seq"]},
     {"path": "events/message_receive.group.all_segments.json", "classification": "accepted", "assertions": ["group", "14_known_segments", "inline_reply", "forward_id"]},
+    {"path": "events/message_receive.video.optional_missing.json", "classification": "accepted", "assertions": ["video", "nullable_resource_id", "nullable_duration"]},
     {"path": "events/message_receive.temp.json", "classification": "ignored_temp", "assertions": ["no_chat_key", "no_canonical"]},
     {"path": "events/message_receive.group.unknown_extension.json", "classification": "accepted", "tags": ["unknown_extension", "raw_only"]},
     {"path": "events/message_receive.malformed_missing_sender.json", "classification": "malformed", "assertions": ["missing.data.sender_id"]},

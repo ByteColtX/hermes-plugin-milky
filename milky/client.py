@@ -57,6 +57,7 @@ _TOOL_ACTIONS = frozenset(
         "get_group_member_info",
         "set_group_member_mute",
         "set_group_whole_mute",
+        "get_resource_temp_url",
         "get_forwarded_messages",
         "get_group_file_download_url",
         "get_group_files",
@@ -1449,6 +1450,7 @@ def _validate_tool_params(action: str, params: Mapping[str, Any] | None) -> None
             {"group_id", "user_id"},
         ),
         "set_group_whole_mute": ({"group_id", "is_mute"}, {"group_id"}),
+        "get_resource_temp_url": ({"resource_id"}, {"resource_id"}),
         "get_forwarded_messages": ({"forward_id"}, {"forward_id"}),
         "get_private_file_download_url": (
             {"user_id", "file_id", "file_hash", "is_self_send"},
@@ -1528,7 +1530,7 @@ def _validate_tool_params(action: str, params: Mapping[str, Any] | None) -> None
     ):
         if field in values and values[field] is not None and not isinstance(values[field], bool):
             raise ActionError("invalid_input", action, f"{field} is invalid")
-    for field in ("forward_id", "file_id", "file_hash", "initiator_uid"):
+    for field in ("forward_id", "file_id", "file_hash", "initiator_uid", "resource_id"):
         if field in values:
             _validate_nonempty_tool_text(values[field], field, action)
     if "special_title" in values and not isinstance(values["special_title"], str):

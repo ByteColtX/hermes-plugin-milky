@@ -2,6 +2,15 @@
   "schema_version": 1,
   "tools": [
     {
+      "operation_id": "get_resource_temp_url",
+      "required": ["resource_id"],
+      "optional": [],
+      "properties": {
+        "resource_id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    {
       "operation_id": "get_forwarded_messages",
       "required": ["forward_id"],
       "optional": [],

@@ -18,6 +18,7 @@ from outbound.sender import MilkyOutboundSender
 from outbound.tools import TOOL_SPECS, bind_sender, unbind_sender
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "qq_tools"
+RESOURCE_TOOL_NAMES = ("get_resource_temp_url",)
 NEW_TOOL_NAMES = (
     "get_forwarded_messages",
     "get_private_file_download_url",
@@ -83,6 +84,7 @@ class FakeTransport:
                 "url": url,
                 "headers": headers,
                 "body": json.loads(body),
+                "body_bytes": body,
                 "timeout": timeout,
             }
         )
@@ -126,7 +128,9 @@ class FakeToolClient:
         self.calls.append((action, dict(params)))
         if self.error is not None:
             raise self.error
-        if action == "get_forwarded_messages":
+        if action == "get_resource_temp_url":
+            data = {"url": "fixture-resource-url", "future_data": "fixture"}
+        elif action == "get_forwarded_messages":
             data = {"messages": [{"message_seq": 1004}], "future_data": "fixture"}
         elif action == "get_group_file_download_url":
             data = {"download_url": "fixture-group-download-url", "future_data": "fixture"}
@@ -168,7 +172,7 @@ def test_schema_fixture_matches_all_new_tool_specs_and_is_synthetic() -> None:
     actual = {spec["name"]: spec["parameters"] for spec in TOOL_SPECS}
     expected = {entry["operation_id"]: entry for entry in fixture["tools"]}
 
-    all_new_names = NEW_TOOL_NAMES + GROUP_TOOL_NAMES + ADDITIONAL_TOOL_NAMES
+    all_new_names = RESOURCE_TOOL_NAMES + NEW_TOOL_NAMES + GROUP_TOOL_NAMES + ADDITIONAL_TOOL_NAMES
     assert set(expected) == set(all_new_names)
     assert set(actual) >= set(all_new_names)
     for name in all_new_names:
@@ -778,6 +782,10 @@ def test_client_rejects_invalid_group_tool_params_before_network(
 @pytest.mark.parametrize(
     ("action", "params"),
     [
+        ("get_resource_temp_url", {}),
+        ("get_resource_temp_url", {"resource_id": ""}),
+        ("get_resource_temp_url", {"resource_id": 1}),
+        ("get_resource_temp_url", {"resource_id": "fixture-resource-id", "extra": True}),
         ("get_forwarded_messages", {"forward_id": ""}),
         ("get_private_file_download_url", {"user_id": 800000001, "file_id": "x"}),
         ("get_private_file_download_url", {"user_id": True, "file_id": "x", "file_hash": "h"}),
@@ -1038,19 +1046,40 @@ def test_registered_handlers_cover_fixed_specs_and_dispatch_only_explicitly() ->
     context = ToolContext()
     register_tools(context)
     names = [item["name"] for item in context.registered]
-    assert len(names) == 27
-    assert len(set(names)) == 27
-    assert names[9:17] == list(NEW_TOOL_NAMES)
-    assert names[17:23] == list(GROUP_TOOL_NAMES)
-    assert names[23:25] == list(ADDITIONAL_TOOL_NAMES)
-    assert names[25:] == ["sticker_send", "sticker_search"]
+    assert len(names) == 28
+    assert len(set(names)) == 28
+    assert len(TOOL_SPECS) == 28
+    assert sum(spec["name"] not in {"sticker_send", "sticker_search"} for spec in TOOL_SPECS) == 26
+    assert names[9:10] == list(RESOURCE_TOOL_NAMES)
+    assert names[10:18] == list(NEW_TOOL_NAMES)
+    assert names[18:24] == list(GROUP_TOOL_NAMES)
+    assert names[24:26] == list(ADDITIONAL_TOOL_NAMES)
+    assert names[26:] == ["sticker_send", "sticker_search"]
     assert all(item["toolset"] == "milky" for item in context.registered)
     assert all(item["is_async"] is True for item in context.registered)
+    resource_registration = context.registered[9]
+    assert resource_registration["schema"]["name"] == "get_resource_temp_url"
+    assert resource_registration["schema"]["parameters"] == {
+        "type": "object",
+        "properties": {
+            "resource_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Milky 媒体资源 ID",
+            }
+        },
+        "required": ["resource_id"],
+        "additionalProperties": False,
+    }
 
     client = FakeToolClient()
     bind_sender(MilkyOutboundSender(client))
     try:
         handlers = {item["name"]: item["handler"] for item in context.registered}
+        resource_result = json.loads(
+            asyncio.run(handlers["get_resource_temp_url"]({"resource_id": "fixture-resource"}))
+        )
+        assert resource_result["data"]["url"] == "fixture-resource-url"
         results = [
             json.loads(
                 asyncio.run(
@@ -1166,18 +1195,23 @@ def test_registered_handlers_cover_fixed_specs_and_dispatch_only_explicitly() ->
     assert results[15]["data"] == {}
     assert all(result["status"] == "ok" for result in results)
     assert [call[0] for call in client.calls] == list(
-        NEW_TOOL_NAMES + GROUP_TOOL_NAMES + ADDITIONAL_TOOL_NAMES
+        RESOURCE_TOOL_NAMES + NEW_TOOL_NAMES + GROUP_TOOL_NAMES + ADDITIONAL_TOOL_NAMES
     )
-    assert client.calls[1][1]["is_self_send"] is None
-    assert client.calls[5][1] == {}
-    assert client.calls[13][1]["parent_folder_id"] is None
-    assert client.calls[14][1] == {"user_id": 800000001}
-    assert client.calls[15][1]["special_title"] == ""
+    assert client.calls[0][1] == {"resource_id": "fixture-resource"}
+    assert client.calls[2][1]["is_self_send"] is None
+    assert client.calls[6][1] == {}
+    assert client.calls[14][1]["parent_folder_id"] is None
+    assert client.calls[15][1] == {"user_id": 800000001}
+    assert client.calls[16][1]["special_title"] == ""
 
 
 @pytest.mark.parametrize(
     ("tool_name", "args"),
     [
+        ("get_resource_temp_url", {}),
+        ("get_resource_temp_url", {"resource_id": ""}),
+        ("get_resource_temp_url", {"resource_id": 3}),
+        ("get_resource_temp_url", {"resource_id": "fixture-resource", "extra": True}),
         ("get_forwarded_messages", {"forward_id": ""}),
         (
             "get_private_file_download_url",
@@ -1481,12 +1515,99 @@ def test_unbound_sender_returns_unsupported_without_network() -> None:
 
     context = ToolContext()
     register_tools(context)
-    handler = next(item["handler"] for item in context.registered if item["name"] == "quit_group")
+    handlers = {item["name"]: item["handler"] for item in context.registered}
     unbind_sender()
 
-    result = json.loads(asyncio.run(handler({"group_id": 700000001})))
+    result = json.loads(
+        asyncio.run(handlers["get_resource_temp_url"]({"resource_id": "fixture-id"}))
+    )
 
     assert result["classification"] == "unsupported"
+
+
+def test_resource_tool_rejects_client_without_raw_tool_entry() -> None:
+    """资源 Tool 不得把内部查询的解析 envelope 当作 raw body 交付。"""
+
+    class EnvelopeOnlyClient:
+        """只暴露内部解析型查询的 fake client。"""
+
+        def __init__(self) -> None:
+            self.calls: list[object] = []
+
+        async def get_resource_temp_url(self, resource_id: object) -> object:
+            self.calls.append(resource_id)
+            return {"status": "ok", "retcode": 0, "data": {"url": "fixture-url"}}
+
+    client = EnvelopeOnlyClient()
+    context = ToolContext()
+    register_tools(context)
+    handler = next(
+        item["handler"] for item in context.registered if item["name"] == "get_resource_temp_url"
+    )
+    bind_sender(MilkyOutboundSender(client))
+    try:
+        result = json.loads(asyncio.run(handler({"resource_id": "fixture-resource-id"})))
+    finally:
+        unbind_sender()
+
+    assert result["classification"] == "unsupported"
+    assert client.calls == []
+
+
+def test_resource_tool_delivers_raw_response_and_logs_no_url_or_arguments(caplog) -> None:
+    """资源链接工具原样返回已取得的 body，日志不包含 URL 或参数。"""
+
+    raw_body = (
+        b'{"status":"failed","retcode":731,"data":{"url":"fixture-temporary-url"},'
+        b'"extension":{"label":"' + "合成".encode() + b'"}}'
+    )
+    transport = FakeTransport([TransportResponse(418, raw_body, {})])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+    context = ToolContext()
+    register_tools(context)
+    handler = next(
+        item["handler"] for item in context.registered if item["name"] == "get_resource_temp_url"
+    )
+    bind_sender(MilkyOutboundSender(client))
+    try:
+        with caplog.at_level("INFO", logger="hermes_plugins.milky.outbound.tools"):
+            result = asyncio.run(handler({"resource_id": "fixture-resource-sensitive"}))
+    finally:
+        unbind_sender()
+
+    assert result == raw_body.decode("utf-8")
+    assert len(transport.requests) == 1
+    request = transport.requests[0]
+    assert request["method"] == "POST"
+    assert request["url"] == "https://localhost:5500/milky/api/get_resource_temp_url"
+    assert request["body"] == {"resource_id": "fixture-resource-sensitive"}
+    assert request["body_bytes"] == b'{"resource_id":"fixture-resource-sensitive"}'
+    records = [record.getMessage() for record in caplog.records]
+    assert records
+    assert all("fixture-resource-sensitive" not in message for message in records)
+    assert all("fixture-temporary-url" not in message for message in records)
+    assert all(raw_body.decode("utf-8") not in message for message in records)
+
+
+def test_resource_tool_transport_unknown_is_not_retried() -> None:
+    """资源链接查询传输未知时只提交一次请求并安全降级。"""
+
+    transport = FakeTransport([TimeoutError("sensitive transport detail")])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+    context = ToolContext()
+    register_tools(context)
+    handler = next(
+        item["handler"] for item in context.registered if item["name"] == "get_resource_temp_url"
+    )
+    bind_sender(MilkyOutboundSender(client))
+    try:
+        result = json.loads(asyncio.run(handler({"resource_id": "fixture-resource-id"})))
+    finally:
+        unbind_sender()
+
+    assert result["classification"] == "transport_unknown"
+    assert len(transport.requests) == 1
+    assert transport.requests[0]["body"] == {"resource_id": "fixture-resource-id"}
 
 
 @pytest.mark.parametrize(

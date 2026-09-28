@@ -743,6 +743,7 @@ def test_tools_register_explicit_api_specs_and_validate_arguments() -> None:
         "get_group_member_info",
         "set_group_member_mute",
         "set_group_whole_mute",
+        "get_resource_temp_url",
         "get_forwarded_messages",
         "get_private_file_download_url",
         "kick_group_member",

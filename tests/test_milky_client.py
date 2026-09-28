@@ -11,7 +11,7 @@ import pytest
 
 from config import load_config
 from milky.client import ActionError, HttpxTransport, MilkyClient, TransportResponse
-from milky.models import GroupEntity, GroupList, GroupMemberList, LoginInfo
+from milky.models import GroupEntity, GroupList, GroupMemberList, LoginInfo, MilkyEnvelope
 
 DEFAULT_ENV = {
     "MILKY_BASE_URL": "https://localhost:5500/milky/",
@@ -312,6 +312,20 @@ def test_message_resource_and_upload_methods_use_explicit_actions() -> None:
         "file_uri": "https://media.example/file",
         "file_name": "fixture.txt",
     }
+
+
+def test_resource_resolver_client_method_keeps_parsed_envelope_contract() -> None:
+    """内部资源查询仍返回解析后的 envelope，不复用 Agent Tool raw body。"""
+
+    transport = FakeTransport([response(ok({"url": "fixture-temporary-url"}))])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    result = asyncio.run(client.get_resource_temp_url("fixture-resource-id"))
+
+    assert isinstance(result, MilkyEnvelope)
+    assert result.data == {"url": "fixture-temporary-url"}
+    assert transport.requests[0]["url"].endswith("/api/get_resource_temp_url")
+    assert transport.requests[0]["body"] == {"resource_id": "fixture-resource-id"}
 
 
 async def _call_message_resource_uploads(client: MilkyClient) -> tuple[str, str]:

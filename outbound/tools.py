@@ -290,6 +290,23 @@ SET_GROUP_WHOLE_MUTE_SCHEMA = {
     },
 }
 
+GET_RESOURCE_TEMP_URL_SCHEMA = {
+    "name": "get_resource_temp_url",
+    "description": "获取 QQ 媒体资源临时链接",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "resource_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Milky 媒体资源 ID",
+            }
+        },
+        "required": ["resource_id"],
+        "additionalProperties": False,
+    },
+}
+
 GET_FORWARDED_MESSAGES_SCHEMA = {
     "name": "get_forwarded_messages",
     "description": "查询合并转发消息",
@@ -836,6 +853,7 @@ TOOL_SPECS = (
     GET_GROUP_MEMBER_INFO_SCHEMA,
     SET_GROUP_MEMBER_MUTE_SCHEMA,
     SET_GROUP_WHOLE_MUTE_SCHEMA,
+    GET_RESOURCE_TEMP_URL_SCHEMA,
     GET_FORWARDED_MESSAGES_SCHEMA,
     GET_PRIVATE_FILE_DOWNLOAD_URL_SCHEMA,
     KICK_GROUP_MEMBER_SCHEMA,
@@ -892,6 +910,7 @@ def register_tools(ctx: Any) -> None:
         _handle_get_group_member_info,
         _handle_set_group_member_mute,
         _handle_set_group_whole_mute,
+        _handle_get_resource_temp_url,
         _handle_get_forwarded_messages,
         _handle_get_private_file_download_url,
         _handle_kick_group_member,
@@ -1169,6 +1188,25 @@ async def _handle_get_forwarded_messages(args: object, **kwargs: Any) -> str:
         "get_forwarded_messages",
         values,
         lambda: sender.get_forwarded_messages(values["forward_id"]),
+    )
+
+
+async def _handle_get_resource_temp_url(args: object, **kwargs: Any) -> str:
+    """校验并执行显式媒体资源临时链接查询工具。"""
+
+    del kwargs
+    if not _valid_keys(args, {"resource_id"}) or "resource_id" not in args:
+        return _tool_error("invalid_input")
+    values = args
+    if not _tool_string(values["resource_id"]):
+        return _tool_error("invalid_input")
+    sender = _ACTIVE_SENDER
+    if sender is None:
+        return _tool_error("unsupported")
+    return await _execute_action(
+        "get_resource_temp_url",
+        values,
+        lambda: sender.get_resource_temp_url(values["resource_id"]),
     )
 
 
@@ -1954,6 +1992,7 @@ __all__ = [
     "GET_GROUP_MEMBER_INFO_SCHEMA",
     "GET_GROUP_MEMBER_LIST_SCHEMA",
     "GET_PRIVATE_FILE_DOWNLOAD_URL_SCHEMA",
+    "GET_RESOURCE_TEMP_URL_SCHEMA",
     "KICK_GROUP_MEMBER_SCHEMA",
     "QUIT_GROUP_SCHEMA",
     "RECALL_GROUP_MESSAGE_SCHEMA",

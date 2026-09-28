@@ -14,7 +14,7 @@ Hermes 的 Milky QQ 平台适配器
 > [!WARNING]
 > **当前仍有一类权限隔离尚未完成：**
 >
-> - **ToolSpec：** 25 个 QQ 工具没有独立的调用者和目标授权。模型、其他会话或 cron
+> - **ToolSpec：** 26 个 QQ 工具没有独立的调用者和目标授权。模型、其他会话或 cron
 >   可能查询无关群/好友，或执行禁言、踢人、撤回、退群、删好友、接受/拒绝请求等操作。
 >
 > **最低限度的安全配置：**
@@ -59,8 +59,9 @@ change 和已归档 change 的测试证据见 [openspec/](openspec/)。
 
 - **自然参与：** 根据提及、引用、关键词和会话状态，决定回应还是保持沉默；
 - **静默标记兜底提示：** 普通文本出站会精确过滤 Hermes 在拒绝 `[SILENT]` 后生成的固定提示；相似或包含该提示的其他文本，以及媒体和文件发送，不受影响。Gateway 仍可能将过滤结果记为 delivered，但不会产生 QQ 消息。
-- **多媒体消息：** 接收图片等上下文，并发送文本、@、引用、图片、语音、视频和文件；当前语音
-  交给 Hermes core 的 STT 流程，插件不负责 provider 适配或音频格式转换；
+- **多媒体消息：** 接收图片、语音等上下文，并发送文本、@、引用、图片、语音、视频和文件；入站视频只展示
+  Milky 提供的资源引用和时长，不提供视频内容分析；当前语音交给 Hermes core 的 STT 流程，插件不负责
+  provider 适配或音频格式转换；
 - **QQ 信息能力：** 查询群组、成员、文件和好友/入群请求，并提供部分 QQ 操作；
 - **会话安全边界：** 支持 chat 白名单、禁言状态同步、消息去重和有界历史缓冲。
 - **QQ 会话介绍：** 在支持 system prompt section 的 Hermes 宿主中，首次 Milky friend/group
@@ -660,6 +661,12 @@ token 或密码，仅应在受控环境中短时使用。
 - `face` segment 的正文占位符对非 `emoji 表情` pack 优先使用随插件发布的本地 catalog 名称；未命中、冲突或目录不可用时回退原 `face_id`，缺失 ID 时使用 `NOT SUPPORTED`；
 - 同一 chat 按顺序处理，`wait` 消息进入有界历史，`trigger` 时再交给 Hermes。
 
+入站 `video` segment 在正文中显示为
+`[video:resource_id=<resource_id>,duration=<duration>]`；字段缺失时单独使用 `NOT SUPPORTED`，不展示
+Milky `temp_url`。普通 `wait` 和 `trigger` 流程都只保留视频引用，不自动查询链接或交给媒体 materializer。
+Agent 可显式调用 `get_resource_temp_url` 获取临时链接；该工具只返回远端响应，不下载、解码、抽帧、转录或分析视频。
+获得临时链接不表示 Hermes 或当前模型能够理解视频内容。
+
 支持 system prompt section 的 Hermes 宿主会额外注册
 `hermes-plugin-milky.qq-session-context`。合法 friend 介绍只包含 `user_id`、`nickname`、
 `sex`；合法 group 介绍只包含 `group_id`、`group_name`、`member_count`、`description`、
@@ -942,19 +949,22 @@ opaque `sticker_id`，目标来自当前 task-local `HERMES_SESSION_PLATFORM=mil
 
 ### QQ ToolSpec
 
-插件固定提供 25 个与 Milky operationId 对齐的 QQ Action ToolSpec，另提供受限的语义 `sticker_search` 和 `sticker_send`：
+插件固定提供 26 个与 Milky operationId 对齐的 QQ Action ToolSpec，另提供受限的语义 `sticker_search` 和 `sticker_send`：
 
 - 群组和成员查询；
-- 文件、转发消息和私聊文件链接查询；
+- 媒体临时链接、文件、转发消息和私聊文件链接查询；
 - 戳一戳、点赞、撤回、禁言、踢人、退群和删好友；
 - 好友请求、入群请求和群邀请的接受/拒绝。
 
 请求/邀请的接受和拒绝不会由通知、普通正文、关键词或 Will 自动触发，必须由 Agent 显式提供
-完整参数。25 个 Action Tool 只要取得响应体就把 UTF-8 解码后的字符串原样交给 Hermes core：
+完整参数。26 个 Action Tool 只要取得响应体就把 UTF-8 解码后的字符串原样交给 Hermes core：
 不校验 HTTP 状态、`status`/`retcode`、`data` 结构，不重建 envelope，不附加状态码，也不脱敏
 `access_token`、`authorization`、`cookie`、`password`、`token`（任意大小写）字段。无法按 UTF-8
 解码的字节使用替换字符。参数非法、Tool 不支持或未取得响应体时分别返回 `invalid_input`、
 `unsupported` 或 `transport_unknown`；有副作用的调用最多提交一次且不自动重试。
+
+`get_resource_temp_url` 只接受非空 `resource_id`，仅在 Agent 显式调用时请求对应 Action。工具结果只交付给该
+Tool 调用，不自动进入普通入站正文或 `media_urls`；插件不下载、缓存或分析链接对应的视频。
 
 Tool 结果进入 Hermes core 后，宿主可能运行 `transform_tool_result`、截断 JSON `error` 字段，或
 把超长结果落盘并以预览替换上下文内容。这些后置处理由宿主负责，插件不注册、不规避，也不承诺

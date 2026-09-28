@@ -800,6 +800,28 @@ class MilkyOutboundSender:
         except (ActionError, TypeError, ValueError) as error:
             return _failure(_error_classification(error), _safe_reason(error))
 
+    async def get_resource_temp_url(self, resource_id: object) -> object:
+        """显式查询资源临时链接并保留 Tool 原始响应体。"""
+
+        try:
+            value = _strict_text(resource_id, "resource_id")
+            call_tool = getattr(self._client, "call_tool", None)
+            if not callable(call_tool):
+                raise ActionError(
+                    "unsupported",
+                    "get_resource_temp_url",
+                    "raw Tool client entry is unavailable",
+                )
+            return await self._execute_tool_action(
+                "get_resource_temp_url",
+                {"resource_id": value},
+                lambda: call_tool("get_resource_temp_url", {"resource_id": value}),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ActionError, TypeError, ValueError) as error:
+            return _failure(_error_classification(error), _safe_reason(error))
+
     async def get_private_file_download_url(
         self,
         user_id: object,

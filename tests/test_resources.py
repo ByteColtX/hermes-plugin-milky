@@ -239,7 +239,7 @@ def test_trigger_resolves_media_file_and_forward_with_separate_actions() -> None
 
     resolved = asyncio.run(ResourceResolver(client, hermes).resolve(result.value))
 
-    assert "[video:NOT SUPPORTED]" in resolved.body
+    assert "[video:resource_id=fixture-video-resource,duration=2]" in resolved.body
     assert (
         "[file:file_id=fixture-file-id,file_name=fixture.txt,file_hash=NOT SUPPORTED]"
         in resolved.body
@@ -255,7 +255,11 @@ def test_trigger_resolves_media_file_and_forward_with_separate_actions() -> None
     ]
     assert "[img:file_name=img_fixture123456.jpg]" in resolved.body
     assert [name for name, _ in hermes.url_calls] == ["image", "audio"]
-    assert [name for name, _ in client.calls].count("get_resource_temp_url") == 3
+    assert [name for name, _ in client.calls].count("get_resource_temp_url") == 2
+    assert [args for name, args in client.calls if name == "get_resource_temp_url"] == [
+        ("fixture-image-resource",),
+        ("fixture-record-resource",),
+    ]
     assert [name for name, _ in client.calls].count("get_group_file_download_url") == 1
     assert [name for name, _ in client.calls].count("get_forwarded_messages") == 0
     assert [name for name, _ in client.calls].count("get_message") == 0
@@ -510,6 +514,39 @@ def test_inline_temp_url_skips_resource_action() -> None:
 
     assert not any(name == "get_resource_temp_url" for name, _ in client.calls)
     assert hermes.url_calls == [("image", "https://cdn.example.invalid/inline-image")]
+
+
+def test_video_resource_reference_never_resolves_implicitly() -> None:
+    """视频的 ID、内嵌 URL 和缺失引用都不触发资源请求或 materializer。"""
+
+    payloads = []
+    for temp_url in ("", "https://cdn.example.invalid/inline-video"):
+        payload = load_fixture("events/message_receive.group.all_segments.json")
+        payload["data"]["segments"][7]["data"]["temp_url"] = temp_url
+        payloads.append(payload)
+    payloads.append(load_fixture("events/message_receive.video.optional_missing.json"))
+
+    for payload in payloads:
+        result = canonicalize_event(payload)
+        assert result.value is not None
+        client = make_client()
+        hermes = FakeHermesMedia()
+
+        resolved = asyncio.run(ResourceResolver(client, hermes).resolve(result.value))
+
+        resource_calls = [args for name, args in client.calls if name == "get_resource_temp_url"]
+        assert all(kind != "video" for kind, _ in hermes.url_calls)
+        if "fixture-video-resource" in resolved.body:
+            assert resource_calls == [
+                ("fixture-image-resource",),
+                ("fixture-record-resource",),
+            ]
+            assert [kind for kind, _ in hermes.url_calls] == ["image", "audio"]
+            assert "[video:resource_id=fixture-video-resource,duration=2]" in resolved.body
+        else:
+            assert resource_calls == []
+            assert hermes.url_calls == []
+            assert "[video:resource_id=NOT SUPPORTED,duration=NOT SUPPORTED]" in resolved.body
 
 
 def test_image_placeholders_follow_helper_basenames_in_segment_order() -> None:

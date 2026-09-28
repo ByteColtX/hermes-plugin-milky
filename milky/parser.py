@@ -395,7 +395,7 @@ def _parse_segment(value: object) -> SegmentValue:
             temp_url=_optional_text(data, "temp_url"),
             width=_optional_present_non_negative_int(data, "width"),
             height=_optional_present_non_negative_int(data, "height"),
-            duration=_optional_present_non_negative_int(data, "duration"),
+            duration=_optional_present_nullable_non_negative_int(data, "duration"),
         )
     if kind == "file":
         return FileSegment(

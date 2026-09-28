@@ -242,8 +242,8 @@ def extract_segments(
 
         if isinstance(segment, VideoSegment):
             has_supported_content = True
-            body_parts.append("[video:NOT SUPPORTED]")
-            if not (_has_text(segment.resource_id) or _has_text(segment.temp_url)):
+            body_parts.append(_video_marker(segment))
+            if not _has_text(segment.resource_id):
                 _append_once(diagnostics, "incomplete_media_reference")
             media_resource_references.append(
                 MediaResourceReference(
@@ -404,6 +404,20 @@ def _image_marker(segment: ImageSegment) -> str:
 
     summary = segment.summary.strip() if isinstance(segment.summary, str) else ""
     return f"[img:file_name={summary or _placeholder_value(segment.resource_id)}]"
+
+
+def _video_marker(segment: VideoSegment) -> str:
+    """按协议字段生成不含临时 URL 的视频 placeholder。"""
+
+    duration = segment.duration
+    duration_value = (
+        str(duration)
+        if isinstance(duration, int) and not isinstance(duration, bool) and duration >= 0
+        else "NOT SUPPORTED"
+    )
+    return (
+        f"[video:resource_id={_placeholder_value(segment.resource_id)},duration={duration_value}]"
+    )
 
 
 def _file_marker(file_id: object, file_name: object, file_hash: object) -> str:

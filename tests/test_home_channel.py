@@ -221,6 +221,7 @@ def test_register_exposes_fixed_home_metadata_and_cron_hooks_without_network(mon
             "get_group_member_info",
             "set_group_member_mute",
             "set_group_whole_mute",
+            "get_resource_temp_url",
             "get_forwarded_messages",
             "get_private_file_download_url",
             "kick_group_member",

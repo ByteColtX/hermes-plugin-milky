@@ -424,14 +424,15 @@ class ResourceResolver:
                     )
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
-                _add_body_replacement(
-                    replacements,
-                    fallback_replacements,
-                    body_template,
-                    reference,
-                    _available_marker(reference),
-                    _failure_marker(_field(reference, "kind")),
-                )
+                if _field(reference, "kind") != "video":
+                    _add_body_replacement(
+                        replacements,
+                        fallback_replacements,
+                        body_template,
+                        reference,
+                        _available_marker(reference),
+                        _failure_marker(_field(reference, "kind")),
+                    )
 
         for reference in file_references:
             resolved, diagnostic = await self._resolve_file_reference(reference, scene, peer_id)
@@ -494,6 +495,13 @@ class ResourceResolver:
         self, reference: object
     ) -> tuple[HermesAttachmentMaterialization | None, ResourceDiagnostic | None]:
         kind = _field(reference, "kind")
+        if kind == "video":
+            return None, _diagnostic(
+                "unsupported",
+                kind,
+                "video resource lookup requires an explicit tool call",
+                _optional_text(reference, "resource_id"),
+            )
         if kind not in {"image", "record", "video"}:
             return None, _diagnostic("unsupported", kind, "unsupported media kind", None)
         url = _optional_text(reference, "temp_url")

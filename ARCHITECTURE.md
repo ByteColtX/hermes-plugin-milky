@@ -18,7 +18,7 @@
 
 ```text
 hermes-plugin-milky/
-├── plugin.yaml              # Hermes manifest、依赖、环境变量、25 个 Action ToolSpec 和 2 个语义 Tool
+├── plugin.yaml              # Hermes manifest、依赖、环境变量、26 个 Action ToolSpec 和 2 个语义 Tool
 ├── __init__.py              # 唯一入口：注册 platform、command、tools、skills
 ├── adapter.py               # MilkyAdapter；连接、停止和 Hermes 边界
 ├── config/                  # 统一来源解析、启动快照、白名单和 Will policy
@@ -80,7 +80,7 @@ MilkyAdapter -> InboundPipeline -> Hermes Gateway -> Agent session/turn -> Outbo
 
 ### 3.1 注册入口和生命周期
 
-`register(ctx)` 一次性解析 `MilkyConfig`，注册 bundled skills、`/milky`、25 个 Milky Action ToolSpec、`sticker_search`、`sticker_send`，以及 Milky platform 和可选的 home-channel cron 元数据。
+`register(ctx)` 一次性解析 `MilkyConfig`，注册 bundled skills、`/milky`、26 个 Milky Action ToolSpec、`sticker_search`、`sticker_send`，以及 Milky platform 和可选的 home-channel cron 元数据。
 
 它还注册两个无网络的 `after_memory` prompt section：平台使用指导，以及当前 QQ 会话资料快照。注册阶段只组装 service/factory，不创建 HTTP client 请求、SSE、长期 task 或贴纸数据库访问。
 
@@ -155,6 +155,10 @@ receive loop 不等待慢 handler；handler 在停止时统一取消并等待，
 6. `wait` 写入有界 FIFO；`trigger` 原子 drain 当前 chat，并扣一次 `replyCost`。
 7. 只有 trigger 才补全资源、生成 Hermes `MessageEvent` 并调用 `handle_message()`。
 
+入站 `video` 正文只显示协议提供的 `resource_id` 和秒级 `duration`，缺失字段使用 `NOT SUPPORTED`，不显示
+`temp_url`。资源 resolver 将视频作为上下文引用保留，不自动查询临时 URL 或调用媒体 materializer；只有 Agent
+显式调用 `get_resource_temp_url` 才取得临时链接。该工具不下载或分析视频，插件不提供解码、抽帧、转录或内容理解能力。
+
 chat key 只接受 `dm:<十进制 QQ 号>` 和 `group:<十进制群号>`。`temp` 或非法目标不创建 key、dedup、buffer、Will 或 turn。Admission 只保证插件 ingress 顺序，不复制 Hermes 的 busy、follow-up、interrupt 或 Agent queue；不同 chat 可以并行。
 
 `will/routing.py` 根据 direct、mention、mentionAll、quote、poke、allMessage 和关键词选择 `wait`/`trigger`。`will/willingness.py` 使用分数衰减、增益、阈值和 force 规则。两种 engine 互斥，均不授予工具权限。
@@ -180,23 +184,25 @@ chat key 只接受 `dm:<十进制 QQ 号>` 和 `group:<十进制群号>`。`temp
 - `materialization.py` 和 `file_upload.py` 只读一次出站本地资源，并受启动时大小上限约束。
 - 图片、语音、视频和 document 可走 native media/file upload；插件不把本地路径直接交给 Milky。
 - `MILKY_LONG_TEXT_FORWARD_THRESHOLD` 大于 0 时，超长文本可与有序 native media 合成一个 forward。
-- 25 个 Milky Action ToolSpec 在取得响应体后原样交付字符串；Tool 不执行 envelope/DTO 解析、最小
+- 26 个 Milky Action ToolSpec 在取得响应体后原样交付字符串；Tool 不执行 envelope/DTO 解析、最小
   `data` 校验、敏感键过滤、容器冻结、状态码包装或结果重建。非 Tool Action 保持既有校验与错误分类。
 
 Tool 字符串交给 Hermes core 后，core 可能运行 `transform_tool_result`、截断 JSON `error` 字段，
 或将超长结果落盘并以预览替换上下文内容。这些后置处理由宿主所有，不在插件契约内；插件不注册、
 规避或还原它们。
 
-manifest 中固定提供以下 25 个 Milky Action ToolSpec：
+manifest 中固定提供以下 26 个 Milky Action ToolSpec：
 
 ```text
 send_profile_like, send_friend_nudge, send_group_nudge, recall_group_message, get_group_info, get_group_member_list, get_group_member_info,
-set_group_member_mute, set_group_whole_mute, get_forwarded_messages, get_private_file_download_url, kick_group_member, quit_group, delete_friend,
+set_group_member_mute, set_group_whole_mute, get_resource_temp_url, get_forwarded_messages, get_private_file_download_url, kick_group_member, quit_group, delete_friend,
 get_friend_requests, accept_friend_request, reject_friend_request, get_group_file_download_url, accept_group_request, reject_group_request,
 accept_group_invitation, reject_group_invitation, get_group_files, get_friend_info, set_group_member_special_title
 ```
 
 另有语义工具 `sticker_search` 和 `sticker_send`。工具 schema 禁止未知字段并校验 QQ ID、消息序号、枚举和值域；插件不根据正文、关键词、Will 或事件隐式触发状态变更。搜索只返回有界元数据，发送支持查询或持久化 opaque ID。
+
+`get_resource_temp_url` 只接受非空资源 ID，并通过显式 Tool 调用取得 Milky 原始响应体；不会自动下载、缓存或分析视频。
 
 ### 3.6 贴纸子系统
 
@@ -333,7 +339,7 @@ Tool 流程是固定 schema/handler → 参数和 client 状态校验 → 一次
 
 ### 8.2 当前风险和未知项
 
-`MILKY_ALLOWED_CHATS` 只约束入站会话，不等于 ToolSpec、slash command 或出站 sender 的调用者授权。当前 25 个 Action tool 没有插件内独立的操作者/目标授权层；其中包含禁言、踢人、撤回、退群、删好友和请求处理。部署时必须把 Hermes tool 权限和 Milky 目标限制视为外部责任。
+`MILKY_ALLOWED_CHATS` 只约束入站会话，不等于 ToolSpec、slash command 或出站 sender 的调用者授权。当前 26 个 Action tool 没有插件内独立的操作者/目标授权层；其中包含禁言、踢人、撤回、退群、删好友和请求处理。部署时必须把 Hermes tool 权限和 Milky 目标限制视为外部责任。
 
 插件不强制 HTTPS，也没有证据表明实现 OAuth、token rotation、独立 session cookie、静态加密、SQLite 文件权限治理、CORS/CSP 或专用 secrets backend。这些均为 `Not evident from the repository`。
 

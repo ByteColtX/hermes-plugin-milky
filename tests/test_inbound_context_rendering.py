@@ -143,7 +143,8 @@ def test_segment_placeholders_keep_order_and_variable_light_app_meta() -> None:
     assert result.value is not None
     assert result.value.body == (
         "中性文本@合成机器人@全体成员[face:/微笑]"
-        "[img:file_name=[合成图片]][record:NOT SUPPORTED][video:NOT SUPPORTED]"
+        "[img:file_name=[合成图片]][record:NOT SUPPORTED]"
+        "[video:resource_id=fixture-video-resource,duration=2]"
         "[file:file_id=fixture-file-id,file_name=fixture.txt,file_hash=NOT SUPPORTED]"
         "[forward:forward_id=fixture-forward-id][market_face:summary=[合成市场表情]]"
         '[light_app:{"meta":{"contact":{"type":"qq","id":800000004,'
@@ -151,6 +152,15 @@ def test_segment_placeholders_keep_order_and_variable_light_app_meta() -> None:
         "[xml:NOT SUPPORTED]### 中性内容"
     )
     assert all(marker not in result.value.body for marker in LEGACY_PLACEHOLDERS)
+
+    video_with_inline_url = load_fixture("events/message_receive.group.all_segments.json")
+    video_with_inline_url["data"]["segments"][7]["data"]["temp_url"] = (
+        "https://cdn.example.invalid/video"
+    )
+    video_result = normalize_event(video_with_inline_url)
+    assert video_result.value is not None
+    assert "[video:resource_id=fixture-video-resource,duration=2]" in video_result.value.body
+    assert "cdn.example.invalid" not in video_result.value.body
 
     missing_meta = load_fixture("events/message_receive.friend.json")
     missing_meta["data"]["segments"] = [
@@ -161,6 +171,20 @@ def test_segment_placeholders_keep_order_and_variable_light_app_meta() -> None:
     assert missing_result.value is not None
     assert missing_result.value.body == ("[light_app:NOT SUPPORTED][light_app:NOT SUPPORTED]")
     assert "malformed_light_app" in missing_result.value.diagnostics
+
+
+def test_video_placeholder_marks_missing_protocol_fields() -> None:
+    """缺失或为 null 的视频字段使用独立 NOT SUPPORTED 值。"""
+
+    from inbound.normalizer import normalize_event
+
+    payload = load_fixture("events/message_receive.video.optional_missing.json")
+    result = normalize_event(payload)
+
+    assert result.value is not None
+    assert result.value.body == "[video:resource_id=NOT SUPPORTED,duration=NOT SUPPORTED]"
+    assert "incomplete_media_reference" in result.value.diagnostics
+    assert "fixture-video-temp-url" not in result.value.body
 
 
 def test_file_placeholder_preserves_id_and_name_from_segment_data() -> None:
