@@ -8,7 +8,7 @@
 
 ### Requirement: 固定 Action ToolSpec 目录
 
-插件 MUST 注册下列 25 个 Milky Action ToolSpec，名称与 operationId 一致；不得开放任意 Action catalog。
+插件 MUST 注册下列 26 个 Milky Action ToolSpec，名称与 operationId 一致；不得开放任意 Action catalog。
 参数和分组行为由本规范及 [qq-group-action-tools](../qq-group-action-tools/spec.md) 定义；响应交付与日志边界由
 [security-boundaries](../security-boundaries/spec.md) 定义。sticker_search 与 sticker_send 是独立语义工具，
 不计入此 Action 目录，结果遵守各自规范。
@@ -16,6 +16,7 @@
 | 工具组 | operationId |
 |---|---|
 | 消息及群状态 | send_profile_like、send_friend_nudge、send_group_nudge、recall_group_message、get_group_info、get_group_member_list、get_group_member_info、set_group_member_mute、set_group_whole_mute |
+| 消息资源 | get_resource_temp_url |
 | 转发、私聊文件与好友管理 | get_forwarded_messages、get_private_file_download_url、kick_group_member、quit_group、delete_friend、get_friend_requests、accept_friend_request、reject_friend_request |
 | 群文件与请求 | get_group_file_download_url、accept_group_request、reject_group_request、accept_group_invitation、reject_group_invitation、get_group_files |
 | 好友资料与专属头衔 | get_friend_info、set_group_member_special_title |
@@ -23,7 +24,7 @@
 #### Scenario: Manifest 与工具注册保持同一目录
 
 - **WHEN** Hermes 发现插件的 Milky Action 工具
-- **THEN** manifest 与实际注册 SHALL 提供上述 25 个同名 operationId
+- **THEN** manifest 与实际注册 SHALL 提供上述 26 个同名 operationId
 - **AND** SHALL 不把贴纸语义工具计入 Action 数量，也不发现任意未登记 Action
 
 ### Requirement: 工具发现必须使用固定的 Milky operationId 映射

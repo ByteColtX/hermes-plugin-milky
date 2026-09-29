@@ -20,7 +20,7 @@
 
 ### Requirement: 只声明显式设计的 Action 工具
 
-插件 MUST NOT 注册任意 Action catalog、自动处理加群/好友请求审批或 WebHook listener；显式群管政策下的内部 Web 处置案件遵守 group-moderation，不能扩展为任意 Action 或会话内授权申请；Milky Action 工具 SHALL 限定为 qq-action-tools（主规范 `openspec/specs/qq-action-tools/spec.md`） 的固定 25 项目录，具体参数以对应工具规范为准。sticker_search 与 sticker_send 是独立语义工具，遵守各自契约，不计入 Action 目录。`MILKY_HOME_CHANNEL` 只用于 Hermes core 投递受信系统消息，不是 Agent 可调用的 Action，也不是审批或授权来源。每个 ToolSpec MUST 有明确的参数和目标校验；Action 工具的无响应错误与原始响应交付 SHALL 遵守 security-boundaries（主规范 `openspec/specs/security-boundaries/spec.md`）。新增能力前 MUST 先补充对应契约。
+插件 MUST NOT 注册任意 Action catalog、自动处理加群/好友请求审批或 WebHook listener；显式群管政策下的内部 Web 处置案件遵守 group-moderation，不能扩展为任意 Action 或会话内授权申请；Milky Action 工具 SHALL 限定为 qq-action-tools（主规范 `openspec/specs/qq-action-tools/spec.md`） 的固定 26 项目录，具体参数以对应工具规范为准。sticker_search 与 sticker_send 是独立语义工具，遵守各自契约，不计入 Action 目录。`MILKY_HOME_CHANNEL` 只用于 Hermes core 投递受信系统消息，不是 Agent 可调用的 Action，也不是审批或授权来源。每个 ToolSpec MUST 有明确的参数和目标校验；Action 工具的无响应错误与原始响应交付 SHALL 遵守 security-boundaries（主规范 `openspec/specs/security-boundaries/spec.md`）。新增能力前 MUST 先补充对应契约。
 
 #### Scenario: Agent 请求未注册 Action
 

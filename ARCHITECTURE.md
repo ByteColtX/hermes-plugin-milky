@@ -435,7 +435,7 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 | 公开入口 | `__init__.py::register(ctx)` |
 | manifest/package version | manifest 2；package 2.0.1 |
 | 维护者 | `ByteColtX`（manifest 和 pyproject author） |
-| 架构复核日期 | 2026-09-28 |
+| 架构复核日期 | 2026-09-29 |
 | 部署目标 | Hermes Gateway；具体 hosting 为 `Not evident from the repository` |
 
 | 术语 | 含义 |
