@@ -188,3 +188,32 @@ basename 一致。helper 不可用、下载失败或返回无效本地路径时�
 - **WHEN** video segment 的 `resource_id` 或 `duration` 缺失、为 null 或不符合其协议类型
 - **THEN** 对应 placeholder 字段 SHALL 使用 `NOT SUPPORTED`
 - **AND** SHALL 不补造资源 ID 或时长
+
+### Requirement: 资源只生成分类的延迟引用
+
+normalization MUST 不执行网络 I/O、文件系统访问、时钟读取或随机抽样。`image`、`record`、`video` 只保存 `media_resource_references`（`temp_url`、`resource_id`、名称、MIME/大小提示和原始 segment）；`file` 只保存 `file_attachment_references`（`file_id`、`file_name`、`file_size`、可选 `file_hash` 和原始 segment）。`forward_id` 与 reply 目标也只能作为延迟引用保存，供 trigger 阶段使用。trigger 阶段 MAY 为 image 和 record 引用使用可用的 `temp_url`，并使用已确认的 `get_resource_temp_url` 查询缺失链接；video SHALL 保留为 Agent 上下文中的协议引用，自动 resolver MUST NOT 查询 video 临时 URL、下载视频或调用媒体 materializer，临时链接仅能由 Agent 显式调用固定的 `get_resource_temp_url` 工具取得。group file 使用 `get_group_file_download_url(group_id, file_id)`，private file 使用 `get_private_file_download_url(user_id, file_id, file_hash, ...)`，不得把 file 套用到 resource Action。
+
+#### Scenario: wait 阶段遇到图片
+
+- **WHEN** 消息包含图片且 Will 决策为 wait
+- **THEN** 缓冲记录 SHALL 只包含可校验的 `media_resource_references`
+- **AND** SHALL 不调用资源接口或下载文件
+
+#### Scenario: 媒体引用字段不完整
+
+- **WHEN** 媒体缺少可用 URL、file_id 或 file 提示
+- **THEN** 结果 SHALL 保留 raw 并生成可解释的不可用媒体占位
+- **AND** SHALL 不把未知字段转换为普通 Agent 指令
+
+#### Scenario: forward 只保存延迟引用
+
+- **WHEN** 消息包含只有 `forward_id` 和预览信息的 forward segment
+- **THEN** wait 记录 SHALL 保存该引用而不是展开内容
+- **AND** 普通 trigger SHALL NOT 自动调用 `get_forwarded_messages` 或展开详情
+- **AND** 转发详情 SHALL 仅由 Agent 显式调用固定的 `get_forwarded_messages` 工具查询
+
+#### Scenario: 分类引用字段不完整
+
+- **WHEN** 媒体资源缺少可用 URL/resource_id，或 file 缺少可用 file_id/file 提示
+- **THEN** 结果 SHALL 保留 raw 并生成可解释的不可用资源/文件占位
+- **AND** SHALL 不把未知字段转换为普通 Agent 指令

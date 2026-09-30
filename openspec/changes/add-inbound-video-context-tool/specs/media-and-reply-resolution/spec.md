@@ -1,10 +1,70 @@
 # Spec Delta
 
-## ADDED Requirements
+## MODIFIED Requirements
 
-### Requirement: 入站视频保持上下文引用并延迟获取链接
+### Requirement: trigger 阶段才允许查询分类引用
 
-普通消息的 wait 与 trigger 流程 SHALL 保留视频的协议引用供 Agent 上下文展示。自动资源解析 MUST NOT 为视频调用 `get_resource_temp_url`、下载视频或调用媒体 materializer；临时链接仅能由 Agent 显式调用固定的 `get_resource_temp_url` 工具取得。视频引用缺少 `resource_id` 时 SHALL 保留可解释 placeholder，不得从临时 URL 或其他字段推断资源 ID。
+trigger 阶段 MAY 查询 image 和 record `media_resource_references` 的临时 URL，以及缺失的 reply 原消息；
+video 引用 SHALL 保留为 Agent 上下文中的协议引用，自动 resolver MUST NOT 查询 video 临时 URL、下载视频
+或调用媒体 materializer。临时链接仅能由 Agent 显式调用固定的 `get_resource_temp_url` 工具取得；缺少
+`resource_id` 时 SHALL 保留可解释 placeholder，不得从 `temp_url` 或其他字段推断资源 ID。已有完整 reply
+segments 时不得无条件重复查询。`forward` 的 `forward_id` MUST 只作为规范化引用和正文 placeholder 保留，
+资源 resolver MUST NOT 自动调用 `get_forwarded_messages`；已注册的显式 QQ Tool 按
+[qq-action-tools](../../../../specs/qq-action-tools/spec.md) 的参数与调用边界独立查询。
+`file_attachment_references` 不得使用 `get_resource_temp_url`：group file SHALL 使用
+`get_group_file_download_url(group_id, file_id)`，private file SHALL 使用
+`get_private_file_download_url(user_id, file_id, file_hash, ...)`，其中私聊缺少必需 `file_hash` 时必须安全降级。
+两个 file Action 返回的 `download_url` 只能在存在已确认的 Hermes 文件资源入口时继续处理；没有该入口时必须
+返回 `unsupported` 和占位。插件 MUST NOT 自行拼接 Hermes 本地路径或接管缓存和 SSRF 规则。
+
+#### Scenario: trigger 补全回复
+
+- **WHEN** detached batch 或当前消息包含 reply segment 且 trigger 已发生
+- **THEN** 系统 SHALL 尽力查询缺失的原消息正文、作者和分类后的附件引用
+- **AND** 完整 inline reply SHALL 不触发重复的 `get_message`
+
+#### Scenario: 资源查询失败
+
+- **WHEN** Milky 媒体或 reply 查询失败
+- **THEN** 正文 SHALL 保留已有文本和稳定 placeholder
+- **AND** 结果 SHALL 保留安全错误分类
+- **AND** SHALL 不把原始 URL、异常文本或完整响应写入 MessageEvent
+
+#### Scenario: forward 只保留引用 ID
+
+- **WHEN** detached batch 或当前消息包含 `forward` segment
+- **THEN** 正文 SHALL 保留 `[forward:forward_id=<forward_id>]`
+- **AND** 资源 resolver SHALL NOT 自动调用 `get_forwarded_messages`
+- **AND** forward SHALL 不因 trigger 自动展开为嵌套正文，后续详情查询 SHALL 留给独立 QQ Tool
+
+#### Scenario: 文件下载链接仍使用场景专用 Action
+
+- **WHEN** trigger 处理带有 `file_id` 的 group 或 friend 文件引用
+- **THEN** group SHALL 调用 `get_group_file_download_url`，friend 在 hash 可用时 SHALL 调用
+  `get_private_file_download_url`
+- **AND** 没有已确认的 Hermes 文件入口时 SHALL 保留 `[file:file_id=<file_id>,file_name=<file_name>]`
+
+#### Scenario: trigger 获取群文件下载链接
+
+- **WHEN** trigger 处理带有 file_id 的 group 文件引用
+- **THEN** 系统 SHALL 调用 `get_group_file_download_url` 并传入当前 group_id 与 file_id
+- **AND** SHALL 只在存在已确认 Hermes 文件入口时继续处理 download_url
+- **AND** 不存在该入口时 SHALL 保留文件 placeholder，不得把 URL 写入 MessageEvent.media_urls
+
+#### Scenario: private file 缺少哈希
+
+- **WHEN** trigger 处理 private 文件引用且缺少 `file_hash`
+- **THEN** 系统 SHALL 不调用 `get_private_file_download_url`
+- **AND** SHALL 记录 `unsupported` 或 `malformed` 诊断并保留
+  `[file:file_id=<file_id>,file_name=<file_name>]`
+
+#### Scenario: file 没有确认的 Hermes 入口
+
+- **WHEN** Milky file Action 返回 download_url 但当前 Hermes 没有确认文件入口
+- **THEN** 系统 SHALL 保留 file_id、文件名和
+  `[file:file_id=<file_id>,file_name=<file_name>]`
+- **AND** SHALL 记录 `unsupported`
+- **AND** SHALL NOT 把 URL 当成本地路径或执行插件侧下载
 
 #### Scenario: wait 中的视频引用不触网
 

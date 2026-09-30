@@ -25,7 +25,8 @@ SHALL 生成独立的 `file_attachment_references`，保留 `file_id`、`file_na
 除跳过 `emoji 表情` pack 外的名称转换。其他 placeholder SHALL 按原有规则生成：mention_all
 为 `@全体成员`；`image` 为 `[img:file_name=<summary>]`，没有 summary 时回退为
 `[img:file_name=<resource_id>]`；`record` 为 `[record:NOT SUPPORTED]`；`video` 为
-`[video:NOT SUPPORTED]`；`file` 为
+`[video:resource_id=<resource_id>,duration=<duration>]`；视频 placeholder 不得显示 `temp_url`，
+`resource_id` 或秒级 `duration` 缺失、为 `null` 或不可用时，对应字段使用 `NOT SUPPORTED`；`file` 为
 `[file:file_id=<file_id>,file_name=<file_name>,file_hash=<file_hash>]`；`forward` 为
 `[forward:forward_id=<forward_id>]`；`market_face` 为 `[market_face:summary=<summary>]`；
 `xml` 为 `[xml:NOT SUPPORTED]`。缺少对应字段、字段为 `null` 或字段不可用时，字段值 MUST
@@ -91,7 +92,20 @@ basename 一致。helper 不可用、下载失败或返回无效本地路径时�
 - **THEN** 规范化正文 SHALL 按相同顺序包含各自 placeholder
 - **AND** face placeholder 只替换其显示值
 - **AND** file placeholder SHALL 同时包含 `file_id`、`file_name` 和 `file_hash`
-- **AND** SHALL 不把未支持的 record、video、market_face 或 xml 静默变成普通文本
+- **AND** SHALL 不把未支持的 record、market_face 或 xml 静默变成普通文本
+- **AND** video SHALL 保留为 typed 上下文引用，不表示插件支持视频内容处理
+
+#### Scenario: 视频 placeholder 展示资源 ID 和时长
+
+- **WHEN** video segment 提供 `resource_id` 和以秒表示的 `duration`
+- **THEN** 正文 SHALL 使用 `[video:resource_id=<resource_id>,duration=<duration>]`
+- **AND** SHALL 不显示 `temp_url`、宽度、高度或未确认的媒体内容
+
+#### Scenario: 视频 placeholder 字段缺失
+
+- **WHEN** video segment 的 `resource_id` 或 `duration` 缺失、为 `null` 或不符合协议类型
+- **THEN** 对应 placeholder 字段 SHALL 使用 `NOT SUPPORTED`
+- **AND** SHALL 不补造资源 ID 或时长
 
 #### Scenario: 复合消息
 
@@ -253,7 +267,7 @@ segment，没有独立的 `mention_here` segment；对普通 v1.3 输入，norma
 
 ### Requirement: 资源只生成分类的延迟引用
 
-normalization MUST 不执行网络 I/O、文件系统访问、时钟读取或随机抽样。`image`、`record`、`video` 只保存 `media_resource_references`（`temp_url`、`resource_id`、名称、MIME/大小提示和原始 segment）；`file` 只保存 `file_attachment_references`（`file_id`、`file_name`、`file_size`、可选 `file_hash` 和原始 segment）。`forward_id` 与 reply 目标也只能作为延迟引用保存，供 trigger 阶段使用。`media_resource_references` 的协议查询使用已确认的 `get_resource_temp_url`；group file 使用 `get_group_file_download_url(group_id, file_id)`，private file 使用 `get_private_file_download_url(user_id, file_id, file_hash, ...)`，不得把 file 套用到 resource Action。
+normalization MUST 不执行网络 I/O、文件系统访问、时钟读取或随机抽样。`image`、`record`、`video` 只保存 `media_resource_references`（`temp_url`、`resource_id`、名称、MIME/大小提示和原始 segment）；`file` 只保存 `file_attachment_references`（`file_id`、`file_name`、`file_size`、可选 `file_hash` 和原始 segment）。`forward_id` 与 reply 目标也只能作为延迟引用保存，供 trigger 阶段使用。trigger 阶段 MAY 为 image 和 record 引用使用可用的 `temp_url`，并使用已确认的 `get_resource_temp_url` 查询缺失链接；video SHALL 保留为 Agent 上下文中的协议引用，自动 resolver MUST NOT 查询 video 临时 URL、下载视频或调用媒体 materializer，临时链接仅能由 Agent 显式调用固定的 `get_resource_temp_url` 工具取得。group file 使用 `get_group_file_download_url(group_id, file_id)`，private file 使用 `get_private_file_download_url(user_id, file_id, file_hash, ...)`，不得把 file 套用到 resource Action。
 
 #### Scenario: wait 阶段遇到图片
 
@@ -271,7 +285,8 @@ normalization MUST 不执行网络 I/O、文件系统访问、时钟读取或随
 
 - **WHEN** 消息包含只有 `forward_id` 和预览信息的 forward segment
 - **THEN** wait 记录 SHALL 保存该引用而不是展开内容
-- **AND** trigger 才 MAY 调用 `get_forwarded_messages`，且失败时 SHALL 保留可解释占位
+- **AND** 普通 trigger SHALL NOT 自动调用 `get_forwarded_messages` 或展开详情
+- **AND** 转发详情 SHALL 仅由 Agent 显式调用固定的 `get_forwarded_messages` 工具查询
 
 #### Scenario: 分类引用字段不完整
 

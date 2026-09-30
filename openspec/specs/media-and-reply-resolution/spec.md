@@ -2,8 +2,8 @@
 
 ## Purpose
 
-在消息真正触发 Hermes turn 时补全 Milky 的图片、文件、语音、视频和回复引用，
-同时把下载安全、缓存、权限与路径控制留给 Hermes 的公共媒体边界。
+在消息真正触发 Hermes turn 时补全 Milky 的图片、文件、语音和回复引用；视频仅保留可见上下文，
+临时链接查询由 Agent 显式触发。同时把下载安全、缓存、权限与路径控制留给 Hermes 的公共媒体边界。
 
 ## Requirements
 
@@ -28,8 +28,9 @@ Will wait 阶段 MUST 只保存分类后的 Milky 引用：`media_resource_refer
 
 ### Requirement: trigger 阶段才允许查询分类引用
 
-trigger 阶段 MAY 查询 `media_resource_references` 的临时 URL 和缺失的 reply 原消息；已有
-完整 reply segments 时不得无条件重复查询。`forward` 的 `forward_id` MUST 只作为规范化引用
+trigger 阶段 MAY 查询 image 和 record `media_resource_references` 的临时 URL，以及缺失的 reply 原消息；
+video 引用按“入站视频保持上下文引用并延迟获取链接”处理。已有完整 reply segments 时不得无条件重复查询。
+`forward` 的 `forward_id` MUST 只作为规范化引用
 和正文 placeholder 保留，资源 resolver MUST NOT 自动调用 `get_forwarded_messages`；已注册的
 显式 QQ Tool 按 [qq-action-tools](../qq-action-tools/spec.md) 的参数与调用边界独立查询。`file_attachment_references`
 不得使用 `get_resource_temp_url`：group file SHALL 使用
@@ -87,6 +88,31 @@ NOT 自行拼接 Hermes 本地路径或接管缓存和 SSRF 规则。
   `[file:file_id=<file_id>,file_name=<file_name>]`
 - **AND** SHALL 记录 `unsupported`
 - **AND** SHALL NOT 把 URL 当成本地路径或执行插件侧下载
+
+### Requirement: 入站视频保持上下文引用并延迟获取链接
+
+普通消息的 wait 与 trigger 流程 SHALL 保留视频的协议引用供 Agent 上下文展示。自动资源解析 MUST NOT
+为视频调用 `get_resource_temp_url`、下载视频或调用媒体 materializer；临时链接仅能由 Agent 显式调用固定的
+`get_resource_temp_url` 工具取得。视频引用缺少 `resource_id` 时 SHALL 保留可解释 placeholder，不得从临时 URL
+或其他字段推断资源 ID。
+
+#### Scenario: wait 中的视频引用不触网
+
+- **WHEN** 含 video segment 的消息被 Will 判定为 wait
+- **THEN** 缓冲 SHALL 保留视频资源引用供后续上下文使用
+- **AND** SHALL NOT 调用 `get_resource_temp_url`、下载或媒体 materializer
+
+#### Scenario: trigger 中的视频只展示上下文信息
+
+- **WHEN** 含 video segment 的消息进入普通 trigger
+- **THEN** 正文 SHALL 保留协议提供的 `resource_id` 和 `duration` placeholder
+- **AND** resolver SHALL NOT 自动请求临时 URL、下载视频或尝试 materialize
+
+#### Scenario: Agent 显式查询视频资源链接
+
+- **WHEN** Agent 根据入站视频 placeholder 显式调用 `get_resource_temp_url` 并提供其 `resource_id`
+- **THEN** 插件 SHALL 仅为该工具调用请求 Milky 临时资源链接
+- **AND** 工具结果 SHALL 只交付给该 Tool 调用，不得自动插入普通入站正文或 Hermes `media_urls`
 
 ### Requirement: 资源安全限制由 Hermes 所有
 

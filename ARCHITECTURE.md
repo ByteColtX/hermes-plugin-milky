@@ -40,8 +40,10 @@ hermes-plugin-milky/
 └── AGENTS.md                # 仓库开发约束和事实来源规则
 ```
 
-没有 frontend、独立 backend、ORM、消息队列、容器编排或 Infrastructure-as-Code。`dist/`
-和 `hermes_plugin_milky.egg-info/` 是已有构建/开发产物，不是额外运行入口。
+仓库包含宿主 Dashboard 扩展的 `dashboard/src/` 前端源码和 `dashboard/dist/` 预构建资源；它们由
+Hermes Dashboard 加载，不是独立部署的前端或后端服务。仓库没有 ORM、消息队列、容器编排或
+Infrastructure-as-Code。根目录 `dist/` 和 `hermes_plugin_milky.egg-info/` 是已有构建/开发产物，
+不是额外运行入口。
 
 ### 1.2 改动导航
 
@@ -348,7 +350,7 @@ Tool 流程是固定 schema/handler → 参数和 client 状态校验 → 一次
 **可观测性。** logger 命名空间为 `hermes_plugins.milky.*`，主要事件包括 lifecycle、action、sse、inbound、resource、outbound、mute 和 tool。日志使用固定分类、计数、耗时、HTTP status（可确认时）和安全序号；adapter、SSE、pipeline 有界 diagnostics，`scripts/milky_smoke.py` 提供固定元数据摘要。协议 raw 保真不等于日志脱敏：插件不创建独立日志脱敏器，也不把 raw、响应或异常正文复制到日志。Tool 结果、模型上下文和 session 持久化由 Hermes core 的对应出口决定，插件不声称这些出口会统一清洗秘密；真实宿主行为仍待集成验证。
 
 仓库没有 metrics、distributed tracing、error-reporting SDK、health endpoint、audit log 或 alerting 配置证据。
-Web Dashboard 的真实宿主证据与环境限制见活动 change 的 evidence。
+Web Dashboard 的真实宿主证据与环境限制见[已归档 change 的 evidence](openspec/changes/archive/2026-09-24-add-milky-web-dashboard/evidence.md)。
 
 **性能模型。**
 
@@ -435,7 +437,7 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 | 公开入口 | `__init__.py::register(ctx)` |
 | manifest/package version | manifest 2；package 2.0.1 |
 | 维护者 | `ByteColtX`（manifest 和 pyproject author） |
-| 架构复核日期 | 2026-09-29 |
+| 架构复核日期 | 2026-09-30 |
 | 部署目标 | Hermes Gateway；具体 hosting 为 `Not evident from the repository` |
 
 | 术语 | 含义 |
