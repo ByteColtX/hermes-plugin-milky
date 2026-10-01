@@ -5,8 +5,8 @@
 ### Requirement: 固定 Action ToolSpec 目录
 
 插件 MUST 注册下列 26 个 Milky Action ToolSpec，名称与 operationId 一致；不得开放任意 Action catalog。
-参数和分组行为由本规范及 [qq-group-action-tools](../qq-group-action-tools/spec.md) 定义；响应交付与日志边界由
-[security-boundaries](../security-boundaries/spec.md) 定义。sticker_search 与 sticker_send 是独立语义工具，
+参数和分组行为由本规范及 [qq-group-action-tools](../../../../specs/qq-group-action-tools/spec.md) 定义；响应交付与日志边界由
+[security-boundaries](../../../../specs/security-boundaries/spec.md) 定义。sticker_search 与 sticker_send 是独立语义工具，
 不计入此 Action 目录，结果遵守各自规范。
 
 | 工具组 | operationId |
