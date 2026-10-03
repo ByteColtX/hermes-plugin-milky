@@ -29,9 +29,9 @@ Milky Tool 的远端响应目前在 client、sender 和 Tool handler 三层被�
 
 ## Impact
 
-- 主要影响 [`milky/client.py`](../../../milky/client.py) 的 Tool 调用入口、[`outbound/sender.py`](../../../outbound/sender.py) 的 Tool 包装方法和 [`outbound/tools.py`](../../../outbound/tools.py) 的结果序列化与日志分类，以及对应测试 fixture。[`milky/parser.py`](../../../milky/parser.py) 的敏感键过滤和冻结逻辑继续服务于入站事件和非 Tool Action，不在 Tool 路径上调用。
+- 主要影响 [`milky/client.py`](../../../../milky/client.py) 的 Tool 调用入口、[`outbound/sender.py`](../../../../outbound/sender.py) 的 Tool 包装方法和 [`outbound/tools.py`](../../../../outbound/tools.py) 的结果序列化与日志分类，以及对应测试 fixture。[`milky/parser.py`](../../../../milky/parser.py) 的敏感键过滤和冻结逻辑继续服务于入站事件和非 Tool Action，不在 Tool 路径上调用。
 - sender 中 nudge、撤回和群管理 Tool 在远端失败时触发的 MuteTracker 只读刷新随本 change 消失，因为插件不再解读 Tool 响应体；`mute-tracking` 只对消息发送失败授权该刷新，语义不受影响。
-- 需要同步更新 [`ARCHITECTURE.md`](../../../ARCHITECTURE.md) 和 [`README.md`](../../../README.md) 中“所有 Action 均经 envelope 校验并分类”的描述，并记录 Hermes core 的三种后置处理为已知行为。
+- 需要同步更新 [`ARCHITECTURE.md`](../../../../ARCHITECTURE.md) 和 [`README.md`](../../../../README.md) 中“所有 Action 均经 envelope 校验并分类”的描述，并记录 Hermes core 的三种后置处理为已知行为。
 - 入站事件解析、普通消息上下文、日志内容边界、资源下载权限、Tool allowlist 和副作用调用次数不改变。本 change 不修改 Hermes core。
 - 响应体中的凭证或敏感业务字段（包括此前被脱敏剔除的 `access_token`、`authorization`、`cookie`、`password`、`token`）会进入 Tool 结果、Hermes session 转录和 core 的大结果落盘文件；这是本 change 明确接受的契约，由宿主的上下文策略负责。Milky v1.3 公开 schema 中已注册 Tool 的响应没有声明这些键，实际暴露面取决于 Milky 实现的扩展字段。
 - 真实 Hermes host、真实 Milky 响应和可能产生副作用的 Action 仍不自动验证；相关证据使用 fake host、fake transport 和合成 fixture。

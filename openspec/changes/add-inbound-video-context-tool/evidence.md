@@ -2,7 +2,7 @@
 
 ## 实现与测试依据
 
-- `inbound/normalizer.py` 保留协议提供的视频 `resource_id` 和 `duration`，缺失字段使用 `NOT SUPPORTED`；不把 `temp_url` 放入正文。
+- `inbound/extractor.py` 按协议字段生成视频正文 placeholder，缺失的 `resource_id` 或 `duration` 使用 `NOT SUPPORTED` 且不把 `temp_url` 放入正文；`inbound/normalizer.py` 将该结果接入规范化消息。
 - `milky/resources.py` 在视频资源解析分支直接返回 `unsupported`，不会查询临时链接或调用媒体 materializer。
 - `outbound/tools.py` 注册固定 `get_resource_temp_url` ToolSpec，并在 Agent 显式调用时走 Tool 原始响应路径。
 - `tests/test_inbound_context_rendering.py` 覆盖完整字段、缺失字段及正文不泄漏内嵌 URL；`tests/test_resources.py` 覆盖 trigger 中的视频引用不触发资源查询或 materializer；`tests/test_qq_tools.py` 覆盖固定工具注册与参数校验。
