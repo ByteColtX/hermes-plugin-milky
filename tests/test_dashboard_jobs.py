@@ -19,6 +19,60 @@ def test_same_request_returns_original_and_changed_content_conflicts(tmp_path):
     assert len(manager.list()["items"]) == 1
 
 
+def test_duplicate_request_skips_new_input_preparation_after_input_is_consumed(tmp_path):
+    """已绑定任务的重提不依赖仍存在的上传候选。"""
+    manager = JobManager(tmp_path)
+    request = manager.issue("import")["request_id"]
+    payload = {"batch_id": "a" * 48, "file_ids": ["b" * 48]}
+    prepared = []
+
+    first = manager.submit(request, "import", payload, prepare=lambda: prepared.append(True))
+    assert first["task_id"]
+    second = manager.submit(
+        request,
+        "import",
+        payload,
+        prepare=lambda: (_ for _ in ()).throw(AssertionError("must not inspect consumed input")),
+    )
+    assert second == first
+    assert prepared == [True]
+
+
+def test_import_resubmit_returns_original_after_upload_candidate_is_consumed(tmp_path):
+    """真实临时上传批次消费后，任务身份仍可幂等查询。"""
+    import asyncio
+
+    from dashboard.uploads import UploadStore
+    from tests.test_dashboard_uploads import Upload
+    from tests.test_sticker_maintenance import _PNG
+
+    async def receive():
+        return await UploadStore(tmp_path).receive([Upload(_PNG)])
+
+    batch = asyncio.run(receive())
+    manager = JobManager(tmp_path)
+    payload = {"batch_id": batch["batch_id"], "file_ids": batch["file_ids"]}
+    uploads = UploadStore(tmp_path)
+    request_id = manager.issue("import")["request_id"]
+    first = manager.submit(
+        request_id,
+        "import",
+        payload,
+        prepare=lambda: uploads.candidates(payload["batch_id"], payload["file_ids"]),
+    )
+    _, candidates = uploads.candidates(payload["batch_id"], payload["file_ids"])
+    candidates[0][1].unlink()
+    assert (
+        manager.submit(
+            request_id,
+            "import",
+            payload,
+            prepare=lambda: (_ for _ in ()).throw(AssertionError("candidate must not be re-read")),
+        )
+        == first
+    )
+
+
 def test_queue_and_expired_ids_are_bounded(tmp_path):
     now = [1.0]
     manager = JobManager(tmp_path, clock=lambda: now[0])

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import secrets
 import shutil
-import sqlite3
 import time
 from pathlib import Path
 
@@ -226,34 +224,10 @@ class UploadStore:
         return {"removed": removed}
 
     def _active(self, batch_id):
-        """持久排队或运行任务也是活动引用，重启后保持同一归属。"""
-        # 取消或超时可先结束任务，但同步视觉仍可能读取输入；其内核锁随线程结束释放。
-        import fcntl
+        """由任务 module 统一判断排队、运行和视觉读取引用。"""
+        from .jobs import JobManager
 
-        visual_lock = self.root.parent / ".dashboard-visual.lock"
-        try:
-            descriptor = visual_lock.open("rb")
-        except FileNotFoundError:
-            descriptor = None
-        if descriptor is not None:
-            with descriptor:
-                try:
-                    fcntl.flock(descriptor.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    return True
-                finally:
-                    fcntl.flock(descriptor.fileno(), fcntl.LOCK_UN)
-        database = self.root.parent / "dashboard-jobs.db"
-        if not database.exists():
-            return False
-        with contextlib.closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as conn:
-            return (
-                conn.execute(
-                    "SELECT 1 FROM jobs WHERE operation='import' AND status IN ('queued','running') AND json_extract(payload,'$.batch_id')=? LIMIT 1",
-                    (batch_id,),
-                ).fetchone()
-                is not None
-            )
+        return JobManager.batch_active(self.root.parent, batch_id)
 
     async def receive_stream(self, request):
         """直接解析流到受控批次，避免 multipart 在全局临时目录先落盘。"""

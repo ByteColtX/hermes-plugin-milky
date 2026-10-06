@@ -258,17 +258,18 @@ async def submit_job(profile: str, request: Request):
             raise ManagementError("invalid_input")
         with profile_scope(profile) as confirmed:
             manager = manager_for(confirmed)
-            from dashboard.payloads import validate
-            from stickers.coordination import library_guard
-
-            validate(body["operation"], body["payload"])
-            manager.root.mkdir(parents=True, exist_ok=True)
-            with library_guard(manager.root):
-                if body["operation"] == "import":
-                    UploadStore(manager.root).candidates(
-                        body["payload"]["batch_id"], body["payload"]["file_ids"]
-                    )
-                result = manager.submit(body["request_id"], body["operation"], body["payload"])
+            prepare = None
+            if body["operation"] == "import":
+                uploads = UploadStore(manager.root)
+                prepare = lambda: uploads.candidates(
+                    body["payload"]["batch_id"], body["payload"]["file_ids"]
+                )
+            result = manager.submit(
+                body["request_id"],
+                body["operation"],
+                body["payload"],
+                prepare=prepare,
+            )
             manager.start(
                 lambda operation, payload, guard: execute_operation(
                     profile, confirmed, operation, payload, guard

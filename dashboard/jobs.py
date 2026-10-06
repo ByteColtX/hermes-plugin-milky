@@ -89,7 +89,7 @@ class JobManager:
             )
         return {"request_id": request_id, "expires_at": expires}
 
-    def submit(self, request_id, operation, payload):
+    def submit(self, request_id, operation, payload, *, prepare=None):
         """同一标识和内容只接受一次，未知标识不会成为新请求。"""
         if self.closed:
             raise ManagementError("interrupted")
@@ -100,7 +100,11 @@ class JobManager:
         if len(encoded.encode()) > 100_000:
             raise ManagementError("invalid_input")
         fingerprint = hashlib.sha256((operation + encoded).encode()).hexdigest()
-        with self.connect() as conn:
+        # 与上传删除/回收使用同一存储根保护，避免提交记录尚未可见时出现引用空隙。
+        from stickers.coordination import library_guard
+
+        self.root.mkdir(parents=True, exist_ok=True)
+        with library_guard(self.root), self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             self._prune(conn)
             record = conn.execute("SELECT * FROM requests WHERE id=?", (request_id,)).fetchone()
@@ -113,6 +117,9 @@ class JobManager:
             if record["task_id"]:
                 task_id = record["task_id"]
             else:
+                # 只有首次创建任务才解析外部输入；重复提交必须先返回原任务。
+                if prepare is not None:
+                    prepare()
                 if (
                     conn.execute("SELECT count(*) FROM jobs WHERE status='queued'").fetchone()[0]
                     >= 10
@@ -129,6 +136,37 @@ class JobManager:
                     (task_id, fingerprint, request_id),
                 )
         return {"task_id": task_id}
+
+    @staticmethod
+    def batch_active(root, batch_id):
+        """由任务模块统一判断上传批次是否仍被任务或视觉读取。"""
+        import fcntl
+
+        root = Path(root)
+        visual_lock = root / ".dashboard-visual.lock"
+        try:
+            descriptor = visual_lock.open("rb")
+        except FileNotFoundError:
+            descriptor = None
+        if descriptor is not None:
+            with descriptor:
+                try:
+                    fcntl.flock(descriptor.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return True
+                finally:
+                    fcntl.flock(descriptor.fileno(), fcntl.LOCK_UN)
+        database = root / "dashboard-jobs.db"
+        if not database.exists():
+            return False
+        with contextlib.closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as conn:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM jobs WHERE operation='import' AND status IN ('queued','running') AND json_extract(payload,'$.batch_id')=? LIMIT 1",
+                    (batch_id,),
+                ).fetchone()
+                is not None
+            )
 
     def list(self):
         """只读查询不创建数据库；限制响应记录数量。"""
