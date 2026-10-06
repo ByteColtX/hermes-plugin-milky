@@ -111,7 +111,9 @@ SSE 重连不会假设服务端补发断线期间的消息，也不会恢复 wai
 运行代次的单调计时；SSE 组件观察连接中、已连接、重连中和已停止。adapter 已就绪或存在 client/task
 不能替代 SSE 建连证据，内部重连不重置本次运行计时。停止及失败冻结已确认时长，新的运行代次重新开始。
 
-命令服务只在本注册作用域绑定并选取唯一可信状态观察者，读取前后复核实例归属和运行代次。
+命令服务通过实例绑定 registry 统一登记、发布就绪依赖和撤销关联；状态观察在连接初始化阶段开放，
+协议 client 与白名单管理者只在同步完成后发布。命令服务只选取唯一可信实例，读取前后复核 registry 代次；
+撤销一个实例立即使其全部关联失效，不影响其他实例。
 它只读取得同一可信 profile 最新有效白名单，与当前已发布规则集合比较，并复核规则版本；
 规则版本变化或配置读取失败仅降级配置一致性为未知，实例归属或运行代次变化则整条暂不可用。
 规则数是字面集合大小，通配符各计一条；不会枚举规则、泄漏 profile 路径或从环境/最近会话猜选实例。
@@ -417,7 +419,8 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 - 进程内 dedup、buffer、Will、mute 和 snapshot 在重启/多实例中不连续。
 - 远端副作用可能进入 `transport_unknown`，本地不能自动判断是否已完成。
 - SQLite 与文件库不是单一事务，崩溃后需要 cleanup/reindex。
-- 模块级活动 sender binding 和多 adapter 隔离能力需要继续审查；更强保证为 `Not evident from the repository`。
+- 模块级活动 sender binding 和多 adapter 隔离能力需要继续审查；command binding registry 已按 adapter
+  实例隔离 client、管理者与状态观察者，但 sender 仍待后续收敛；更强保证为 `Not evident from the repository`。
 - 真实 Hermes、Milky、QQ 权限和第三方 provider 的集成证据仍有限。
 
 ### 未交付规划与建议

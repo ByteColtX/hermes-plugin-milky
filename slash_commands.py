@@ -7,6 +7,7 @@ import inspect
 import json
 from threading import RLock
 
+from command_bindings import BindingHandle, CommandBindingRegistry
 from command_text import format_usage
 from management.allowlist import HELP, UNAVAILABLE, current_invocation, parse, usage_for
 from milky.client import ActionError
@@ -78,10 +79,8 @@ class SlashCommandService:
     """提供固定的 ``/milky`` 命令并绑定活动 Milky client。"""
 
     def __init__(self, sticker_service: StickerMaintenanceService | None = None) -> None:
-        self._clients: list[object] = []
-        self._managers: list[object] = []
-        self._status_providers: list[object] = []
-        self._status_revision = 0
+        self._bindings = CommandBindingRegistry()
+        self._compat_handles: dict[tuple[str, int], BindingHandle] = {}
         self._lock = RLock()
         self._sticker_service = sticker_service or StickerMaintenanceService()
 
@@ -90,7 +89,30 @@ class SlashCommandService:
         """返回当前由 adapter 生命周期绑定的不同 client 数量。"""
 
         with self._lock:
-            return len(self._clients)
+            return self._bindings.active_client_count()
+
+    def register_instance(
+        self, instance: object, *, status_provider: object | None = None
+    ) -> BindingHandle:
+        """登记 adapter 实例及其本地状态观察者。"""
+
+        return self._bindings.register(instance, status_provider=status_provider)
+
+    def mark_instance_ready(
+        self,
+        handle: BindingHandle,
+        *,
+        client: object | None = None,
+        manager: object | None = None,
+    ) -> bool:
+        """在初始同步完成后发布协议和管理依赖。"""
+
+        return self._bindings.mark_ready(handle, client=client, manager=manager)
+
+    def revoke_instance(self, handle: BindingHandle) -> bool:
+        """撤销 adapter 实例的全部命令关联。"""
+
+        return self._bindings.revoke(handle)
 
     def bind_client(self, client: object) -> None:
         """登记一个已完成连接初始化的 client。"""
@@ -98,48 +120,57 @@ class SlashCommandService:
         if client is None:
             raise TypeError("client is required")
         with self._lock:
-            if not any(candidate is client for candidate in self._clients):
-                self._clients.append(client)
+            key = ("client", id(client))
+            handle = self.register_instance(client)
+            self._compat_handles[key] = handle
+            self.mark_instance_ready(handle, client=client)
 
     def unbind_client(self, client: object) -> None:
         """解除一个 adapter 所拥有的 client，不影响其他活动 client。"""
 
         with self._lock:
-            self._clients = [candidate for candidate in self._clients if candidate is not client]
+            handle = self._compat_handles.pop(("client", id(client)), None)
+            if handle is not None:
+                self.revoke_instance(handle)
 
     def bind_manager(self, manager) -> None:
         """登记当前活动实例，不把客户端数量当作 profile 身份。"""
-        if manager not in self._managers:
-            self._managers.append(manager)
+        key = ("manager", id(manager))
+        handle = self.register_instance(manager)
+        self._compat_handles[key] = handle
+        self.mark_instance_ready(handle, manager=manager)
 
     def unbind_manager(self, manager) -> None:
         """移除已停止实例并立即失效它的调用关联。"""
-        manager.stop()
-        if manager in self._managers:
-            self._managers.remove(manager)
+        stop = getattr(manager, "stop", None)
+        if callable(stop):
+            stop()
+        handle = self._compat_handles.pop(("manager", id(manager)), None)
+        if handle is not None:
+            self.revoke_instance(handle)
 
     def bind_status_provider(self, provider: object) -> None:
         """登记生命周期拥有的本地状态观察者。"""
         with self._lock:
-            if not any(item is provider for item in self._status_providers):
-                self._status_providers.append(provider)
-                self._status_revision += 1
+            key = ("status", id(provider))
+            if key not in self._compat_handles:
+                self._compat_handles[key] = self.register_instance(
+                    provider, status_provider=provider
+                )
 
     def unbind_status_provider(self, provider: object) -> None:
         """解绑状态观察者并使等待中的读取失效。"""
         with self._lock:
-            self._status_providers = [
-                item for item in self._status_providers if item is not provider
-            ]
-            self._status_revision += 1
+            handle = self._compat_handles.pop(("status", id(provider)), None)
+            if handle is not None:
+                self.revoke_instance(handle)
 
     async def _status(self) -> str:
         """只调用唯一观察者，并在等待后复核绑定代次。"""
         with self._lock:
-            if len(self._status_providers) != 1:
+            provider, revision = self._bindings.select_status_provider()
+            if provider is None:
                 return STATUS_UNAVAILABLE
-            provider = self._status_providers[0]
-            revision = self._status_revision
         try:
             result = await provider.status()
         except asyncio.CancelledError:
@@ -147,7 +178,7 @@ class SlashCommandService:
         except Exception:  # noqa: BLE001 - 状态错误不得暴露配置或异常正文
             return STATUS_UNAVAILABLE
         with self._lock:
-            if revision != self._status_revision:
+            if revision != self._bindings.revision:
                 return STATUS_UNAVAILABLE
         return result if isinstance(result, str) and result else STATUS_UNAVAILABLE
 
@@ -171,9 +202,10 @@ class SlashCommandService:
                     return usage_for(stripped)
                 if operation.verb == "help":
                     return HELP
-                if len(self._managers) != 1:
+                manager = self._bindings.select_manager()
+                if manager is None:
                     return UNAVAILABLE
-                return await self._managers[0].handle(operation, current_invocation.get())
+                return await manager.handle(operation, current_invocation.get())
             if stripped.split(maxsplit=1)[0].lower() == "sticker":
                 return await self._sticker_service.handle(raw_args)
             return format_usage("/milky [command] [args...]", "/milky help")
@@ -202,7 +234,7 @@ class SlashCommandService:
 
     def _unique_client(self) -> object | None:
         with self._lock:
-            return self._clients[0] if len(self._clients) == 1 else None
+            return self._bindings.select_client()
 
     @staticmethod
     def _failure(classification: object) -> str:

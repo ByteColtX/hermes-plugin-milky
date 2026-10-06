@@ -204,6 +204,7 @@ class MilkyAdapter(BasePlatformAdapter):
         self._nickname: str | None = None
         self._identity_published = False
         self._diagnostics: deque[str] = deque(maxlen=_MAX_DIAGNOSTICS)
+        self._command_binding = None
 
     @property
     def name(self) -> str:
@@ -293,9 +294,11 @@ class MilkyAdapter(BasePlatformAdapter):
             if self._connected and self._event_task is not None and not self._event_task.done():
                 return True
             self._runtime_status.starting()
-            bind_status = getattr(self._slash_command_service, "bind_status_provider", None)
-            if callable(bind_status):
-                bind_status(self._runtime_status)
+            register_instance = getattr(self._slash_command_service, "register_instance", None)
+            if callable(register_instance) and self._command_binding is None:
+                self._command_binding = register_instance(
+                    self, status_provider=self._runtime_status
+                )
             logger.info(render_event("milky.lifecycle", stage="connect", operation="connecting"))
             try:
                 if not self._initial_sync_complete:
@@ -884,6 +887,14 @@ class MilkyAdapter(BasePlatformAdapter):
         """将已连接的同一 Milky client 交给命令 service。"""
 
         self._allowlist_manager.start()
+        mark_ready = getattr(self._slash_command_service, "mark_instance_ready", None)
+        if callable(mark_ready) and self._command_binding is not None:
+            mark_ready(
+                self._command_binding,
+                client=self._client,
+                manager=self._allowlist_manager,
+            )
+            return
         bind_manager = getattr(self._slash_command_service, "bind_manager", None)
         if callable(bind_manager):
             bind_manager(self._allowlist_manager)
@@ -894,8 +905,12 @@ class MilkyAdapter(BasePlatformAdapter):
     def _unbind_command_service(self) -> None:
         """在连接失败或停止后解除命令 service 的 client 绑定。"""
 
-        self._unbind_status_provider()
         self._allowlist_manager.stop()
+        revoke = getattr(self._slash_command_service, "revoke_instance", None)
+        if callable(revoke) and self._command_binding is not None:
+            revoke(self._command_binding)
+            self._command_binding = None
+            return
         unbind_manager = getattr(self._slash_command_service, "unbind_manager", None)
         if callable(unbind_manager):
             unbind_manager(self._allowlist_manager)
@@ -905,6 +920,12 @@ class MilkyAdapter(BasePlatformAdapter):
 
     def _unbind_status_provider(self) -> None:
         """移除状态观察者，禁止命令借用停止实例。"""
+        if self._command_binding is not None:
+            revoke = getattr(self._slash_command_service, "revoke_instance", None)
+            if callable(revoke):
+                revoke(self._command_binding)
+                self._command_binding = None
+                return
         unbind = getattr(self._slash_command_service, "unbind_status_provider", None)
         if callable(unbind):
             unbind(self._runtime_status)
