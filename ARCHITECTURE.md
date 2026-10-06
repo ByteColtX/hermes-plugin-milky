@@ -75,7 +75,7 @@ MilkyAdapter -> InboundPipeline -> Hermes Gateway -> Agent session/turn -> Outbo
 - Hermes 是宿主边界，提供 platform registry、Agent session、消息队列和资源 helper。
 - Milky 是外部 QQ 协议边界；插件只通过 HTTP Action 和 SSE 与它通信。
 - SSE 不直接创建 Agent turn；普通消息必须经过 `InboundPipeline`。
-- ToolSpec 先经过固定 schema/handler，再调用受限的 client/sender；没有通用 Action catalog。
+- ToolSpec 先经过固定 schema/handler，再调用 `outbound/fixed_actions.py` 的窄执行 interface；该 interface 复用已绑定 client 的固定 Action 目录和 raw 响应交付，不重试、不创建连接，没有通用 Action catalog。
 - 贴纸数据库和文件目录只由显式贴纸维护、`sticker_search` 或 `sticker_send` 使用。
 
 ## 3. 核心组件
@@ -188,7 +188,7 @@ chat key 只接受 `dm:<十进制 QQ 号>` 和 `group:<十进制群号>`。`temp
 - `materialization.py` 和 `file_upload.py` 只读一次出站本地资源，并受启动时大小上限约束。
 - 图片、语音、视频和 document 可走 native media/file upload；插件不把本地路径直接交给 Milky。
 - `MILKY_LONG_TEXT_FORWARD_THRESHOLD` 大于 0 时，超长文本可与有序 native media 合成一个 forward。
-- 26 个 Milky Action ToolSpec 在取得响应体后原样交付字符串；Tool 不执行 envelope/DTO 解析、最小
+- 26 个 Milky Action ToolSpec 通过固定执行 module 在取得响应体后原样交付字符串；Tool 不执行 envelope/DTO 解析、最小
   `data` 校验、敏感键过滤、容器冻结、状态码包装或结果重建。非 Tool Action 保持既有校验与错误分类。
 
 Tool 字符串交给 Hermes core 后，core 可能运行 `transform_tool_result`、截断 JSON `error` 字段，

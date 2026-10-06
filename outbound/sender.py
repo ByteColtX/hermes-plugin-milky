@@ -24,6 +24,7 @@ from session.identity import BotIdentity, CanonicalError, normalize_chat_key
 
 from .chunking import DEFAULT_TEXT_LENGTH, chunk_text
 from .file_upload import FileUploader
+from .fixed_actions import FixedActionExecutor
 from .formatter import (
     OutboundFormatError,
     format_message,
@@ -96,6 +97,7 @@ class MilkyOutboundSender:
         ):
             raise ValueError("long_text_forward_threshold is out of range")
         self._client = client
+        self._fixed_actions = FixedActionExecutor(client)
         self._mute_tracker = mute_tracker
         self._max_text_length = max_text_length
         self._max_local_media_bytes = validate_max_local_media_bytes(max_local_media_bytes)
@@ -416,10 +418,7 @@ class MilkyOutboundSender:
     ) -> object:
         """调用已注册 Tool 的 raw client 入口，并兼容 typed fake client。"""
 
-        call_tool = getattr(self._client, "call_tool", None)
-        if callable(call_tool):
-            return await _maybe_await(call_tool(action, params))
-        return await _maybe_await(fallback())
+        return await self._fixed_actions.call(action, params, fallback)
 
     async def _execute_tool_action(
         self,
@@ -429,14 +428,7 @@ class MilkyOutboundSender:
     ) -> object:
         """执行一次显式 Tool Action，并直接交付 transport 结果。"""
 
-        try:
-            return await self._call_tool(action, params, fallback)
-        except asyncio.CancelledError:
-            raise
-        except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
-        except Exception:  # noqa: BLE001 - 工具边界不回显底层异常
-            return _failure("transport_unknown", "tool action outcome is unknown")
+        return await self._fixed_actions.execute(action, params, fallback)
 
     async def get_group_info(self, group_id: object, *, no_cache: bool | None = False) -> object:
         """查询群信息并保留 Milky 的原始成功 envelope。"""
