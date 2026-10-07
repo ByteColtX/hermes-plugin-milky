@@ -844,3 +844,136 @@ def test_httpx_transport_keeps_concurrent_action_results_separate() -> None:
     assert first.data == {"action": "get_login_info"}
     assert second.data == {"action": "get_group_list"}
     assert sorted(seen) == ["get_group_list", "get_login_info"]
+
+
+def test_httpx_transport_reuses_client_per_loop_and_isolates_other_loops() -> None:
+    """HTTPX client 应在同一 loop 复用，并为其他 loop 创建隔离实例。"""
+
+    httpx = pytest.importorskip("httpx")
+
+    async def handler(request):
+        return httpx.Response(200, json={"status": "ok", "retcode": 0, "data": {}})
+
+    transport = HttpxTransport()
+
+    async def same_loop() -> None:
+        await transport.request("POST", "https://localhost/action", {}, b"{}", 1.0)
+        await transport.request("POST", "https://localhost/action", {}, b"{}", 1.0)
+
+    # 替换 AsyncClient 只让测试 transport 走 MockTransport，仍使用真实 HTTPX client。
+    original_client = httpx.AsyncClient
+    httpx.AsyncClient = lambda: original_client(transport=httpx.MockTransport(handler))
+    try:
+        asyncio.run(same_loop())
+        first_loop_clients = tuple(transport._clients.values())
+        asyncio.run(transport.request("POST", "https://localhost/action", {}, b"{}", 1.0))
+    finally:
+        httpx.AsyncClient = original_client
+
+    assert len(first_loop_clients) == 1
+    assert len(transport._clients) == 2
+    assert first_loop_clients[0] is not tuple(transport._clients.values())[1]
+    asyncio.run(transport.close())
+
+
+def test_httpx_transport_close_after_owner_loop_ended_is_safe_and_blocks_requests() -> None:
+    """owner loop 已结束时关闭应安全放弃资源且阻止后续网络请求。"""
+
+    httpx = pytest.importorskip("httpx")
+    calls = 0
+
+    async def handler(request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"status": "ok", "retcode": 0, "data": {}})
+
+    transport = HttpxTransport()
+    original_client = httpx.AsyncClient
+    httpx.AsyncClient = lambda: original_client(transport=httpx.MockTransport(handler))
+    try:
+        asyncio.run(transport.request("POST", "https://localhost/action", {}, b"{}", 1.0))
+    finally:
+        httpx.AsyncClient = original_client
+
+    asyncio.run(transport.close())
+    asyncio.run(transport.close())
+
+    with pytest.raises(OSError):
+        asyncio.run(transport.request("POST", "https://localhost/action", {}, b"{}", 1.0))
+    assert calls == 1
+
+
+def test_httpx_transport_isolates_clients_by_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """HTTPX 客户端应按事件循环隔离且在同一循环复用。"""
+
+    httpx = pytest.importorskip("httpx")
+    created: list[object] = []
+    closed: list[object] = []
+
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.requests = 0
+            created.append(self)
+
+        async def request(self, method: str, url: str, **kwargs: object) -> object:
+            del method, url, kwargs
+            self.requests += 1
+            return httpx.Response(200, json={"status": "ok", "retcode": 0, "data": {}})
+
+        async def aclose(self) -> None:
+            closed.append(self)
+
+    class FakeHttpx:
+        AsyncClient = RecordingClient
+        Timeout = httpx.Timeout
+        HTTPError = httpx.HTTPError
+
+    monkeypatch.setattr("milky.client._import_httpx", lambda: FakeHttpx)
+    transport = HttpxTransport()
+
+    async def same_loop() -> None:
+        await transport.request("POST", "https://example.test", {}, b"{}", 1)
+        await transport.request("POST", "https://example.test", {}, b"{}", 1)
+
+    asyncio.run(same_loop())
+    asyncio.run(transport.request("POST", "https://example.test", {}, b"{}", 1))
+    assert len(created) == 2
+    assert created[0].requests == 2
+    assert created[1].requests == 1
+
+    asyncio.run(transport.close())
+    asyncio.run(transport.close())
+    # 两个 owner loop 都已结束，关闭路径不得从当前 loop 强行 await。
+    assert closed == []
+
+
+def test_httpx_transport_rejects_requests_after_close_before_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """关闭后的 transport 应在网络访问前拒绝新请求。"""
+
+    httpx = pytest.importorskip("httpx")
+    calls = 0
+
+    class RecordingClient:
+        async def request(self, method: str, url: str, **kwargs: object) -> object:
+            nonlocal calls
+            del method, url, kwargs
+            calls += 1
+            return httpx.Response(200, json={"status": "ok", "retcode": 0, "data": {}})
+
+        async def aclose(self) -> None:
+            return None
+
+    class FakeHttpx:
+        AsyncClient = RecordingClient
+        Timeout = httpx.Timeout
+        HTTPError = httpx.HTTPError
+
+    monkeypatch.setattr("milky.client._import_httpx", lambda: FakeHttpx)
+    transport = HttpxTransport()
+    asyncio.run(transport.close())
+
+    with pytest.raises(OSError):
+        asyncio.run(transport.request("POST", "https://example.test", {}, b"{}", 1))
+    assert calls == 0
