@@ -15,14 +15,14 @@ from session import BotIdentitySnapshot, ChatMetadataSnapshotStore, render_curre
 PLATFORM_HINT = "You are chatting on QQ through Hermes's Milky platform."
 
 PLATFORM_GUIDANCE = """
-* Files can be sent natively with `MEDIA:/absolute/path/to/file`.
-* Images, audio, video, and documents are handled through Milky's native media/file upload. `MEDIA:` is separate from the static QQ ToolSpec.
-* A local filesystem path is emitted as plain text, not media. Do not claim media is unsupported until the native send operation actually fails.
-* Reply with only `[SILENT]` to suppress the response entirely; nothing is sent outbound.
-* Use `[SPLIT]` as a message boundary marker to partition a reply into up to 3 sequential outbound messages, preserving a natural conversational flow; the marker is removed before delivery.
+* To send a local image, audio, video, or document, put `MEDIA:/absolute/path/to/file` in your reply or in the `message` argument of `send_message`.
+* A bare local path is sent as text. Try native sending before declaring media unsupported.
+* If no final reply is needed, return only `[SILENT]` with no extra content.
+* To send a reply as separate chat messages, place `[SPLIT]` between text sections, inline or on its own line. Use at most 2 markers for up to 3 messages; the markers are removed before sending.
 * Mention a user with `[CQ:at,qq=<uid>]`. Literal `@sender_name` is not parsed as a valid mention.
-* Quote a message with `[CQ:reply,id=<msg_seq>]`.
-* Only use valid user IDs and message sequence IDs from the conversation or channel context.
+* Quote a message with `[CQ:reply,id=<msg_seq>]`. Use `id=`, never `id:`.
+* Use real `uid` and `msg_seq` values from the conversation for mentions and quotes; omit the tag if the required ID is unavailable.
+* Incoming message headers are metadata; do not copy them into replies.
 * For CQ syntax details, view skill `hermes-plugin-milky:milky-qq-cq-reference`.
 * For QQ action tools, view skill `hermes-plugin-milky:milky-qq-action-tools`.
 """
