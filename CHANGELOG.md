@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.0.2] - 2026-10-07
+
+### 修复与可靠性
+
+- Milky HTTPX 客户端按事件循环隔离，避免不同事件循环共享异步连接池导致请求失败；各循环的客户端可独立关闭。
+- 修正发送类 Action 的结果归一化，并改进多段消息聚合：只有每段都确认成功才报告成功，同时保留失败分类与已确认的消息序号。
+- 收拢固定 Action 执行、命令实例绑定及 Dashboard 任务/上传协调路径，保持既有接口和行为边界。
+
+### 验证与边界
+
+- 全量测试：`1415 passed, 3 skipped`；跳过项需要 Hermes host 或显式启用真实集成。
+- Ruff、格式检查、锁文件检查、`uv build`、Dashboard build/check/test（3 passed）和 `git diff --check` 均通过；5 个相关 OpenSpec change 定向严格校验通过。
+- 全量 `openspec validate --changes --strict` 仍被其他规划项的问题阻断：群管提案存在 strict 警告，另一个 HTTPX 规划项缺少 delta；不属于本次发布改动。
+- 未在真实 Hermes/Milky 宿主验证跨事件循环运行，也未执行真实 QQ 消息发送。
+
 ## [2.0.1] - 2026-09-28
 
 ### 新增
