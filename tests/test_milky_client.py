@@ -638,6 +638,34 @@ def test_protocol_and_message_shape_errors_are_classified(classification: str) -
     assert len(transport.requests) == 1
 
 
+def test_send_protocol_error_with_remote_sequence_is_confirmed_send() -> None:
+    """发送 envelope 状态异常但包含远端序号时保留已发送证据。"""
+
+    transport = FakeTransport(
+        [response({"status": "failed", "retcode": 1001, "data": {"message_seq": 4242}})]
+    )
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    result = asyncio.run(client.send_group_message(700000001, []))
+
+    assert result.message_seq == "4242"
+    assert result.classification == "confirmed_send"
+
+
+def test_non_send_protocol_error_with_remote_sequence_stays_rejected() -> None:
+    """非发送 Action 不得继承发送专用序号归一化。"""
+
+    transport = FakeTransport(
+        [response({"status": "failed", "retcode": 1001, "data": {"message_seq": 4242}})]
+    )
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(client.call("get_resource_temp_url", {"resource_id": "fixture"}))
+
+    assert error_info.value.classification == "rejected"
+
+
 @pytest.mark.parametrize(
     ("transport_error", "classification"),
     [(TimeoutError(), "transport_unknown"), (OSError("socket failed"), "transport_unknown")],

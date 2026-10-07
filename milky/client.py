@@ -304,6 +304,7 @@ class SendResult:
     """保存 Milky send Action 返回的稳定远端消息序号。"""
 
     message_seq: str
+    classification: str = "accepted"
 
 
 class MilkyClient:
@@ -332,10 +333,22 @@ class MilkyClient:
         envelope, _ = await self._call_raw(action, params)
         return envelope
 
+    async def _call_send(
+        self,
+        action: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> MilkyEnvelope:
+        """调用发送 Action，并保留可验证的异常状态发送证据。"""
+
+        envelope, _ = await self._call_raw(action, params, send_action=True)
+        return envelope
+
     async def _call_raw(
         self,
         action: str,
         params: Mapping[str, Any] | None = None,
+        *,
+        send_action: bool = False,
     ) -> tuple[MilkyEnvelope, bytes]:
         """发送 Action 并保留已校验响应的 UTF-8 字节。"""
 
@@ -395,6 +408,18 @@ class MilkyClient:
             except ParseError:
                 raise ActionError("malformed", action, "response envelope is malformed") from None
             if envelope.status != "ok" or envelope.retcode != 0:
+                if send_action and _has_send_sequence(envelope):
+                    logger.info(
+                        render_event(
+                            "milky.action",
+                            stage="action",
+                            action=action,
+                            classification="confirmed_send",
+                            status_code=status_code,
+                            duration_ms=_duration_ms(started),
+                        )
+                    )
+                    return envelope, _response_body_bytes(response.body, action)
                 raise ActionError("rejected", action, "Milky Action envelope rejected")
             if not isinstance(envelope.data, Mapping):
                 raise ActionError("malformed", action, "response data is malformed")
@@ -681,7 +706,7 @@ class MilkyClient:
             maximum=_MAX_QQ_ID,
         )
         message_value = _validate_segments(message, "send_group_message")
-        envelope = await self.call(
+        envelope = await self._call_send(
             "send_group_message",
             {"group_id": group_value, "message": message_value},
         )
@@ -698,7 +723,7 @@ class MilkyClient:
             maximum=_MAX_QQ_ID,
         )
         message_value = _validate_segments(message, "send_private_message")
-        envelope = await self.call(
+        envelope = await self._call_send(
             "send_private_message",
             {"user_id": user_value, "message": message_value},
         )
@@ -1478,7 +1503,19 @@ def _parse_send_result(envelope: MilkyEnvelope, action: str) -> SendResult:
     sequence = envelope.data.get("message_seq")
     if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 0:
         raise ActionError("malformed", action, "response is missing message_seq")
-    return SendResult(message_seq=str(sequence))
+    classification = (
+        "accepted" if envelope.status == "ok" and envelope.retcode == 0 else "confirmed_send"
+    )
+    return SendResult(message_seq=str(sequence), classification=classification)
+
+
+def _has_send_sequence(envelope: MilkyEnvelope) -> bool:
+    """判断异常发送 envelope 是否包含可验证的远端消息序号。"""
+
+    if not isinstance(envelope.data, Mapping):
+        return False
+    sequence = envelope.data.get("message_seq")
+    return isinstance(sequence, int) and not isinstance(sequence, bool) and sequence >= 0
 
 
 def _parse_upload_result(envelope: MilkyEnvelope, action: str) -> MilkyEnvelope:

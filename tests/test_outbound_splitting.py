@@ -27,6 +27,7 @@ class SplitClient:
     fail_at: int | None = None
     failure: ActionError | None = None
     next_message_seq: int = 2001
+    result_classification: str = "accepted"
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     async def send_group_message(self, group_id: int, message: list[dict[str, Any]]) -> SendResult:
@@ -41,7 +42,7 @@ class SplitClient:
             raise self.failure or ActionError("rejected", action, "fixture failure")
         message_seq = str(self.next_message_seq)
         self.next_message_seq += 1
-        return SendResult(message_seq=message_seq)
+        return SendResult(message_seq=message_seq, classification=self.result_classification)
 
     async def upload_group_file(
         self,
@@ -162,6 +163,22 @@ def test_sender_sends_split_text_in_order_and_removes_markers() -> None:
     ]
     assert result.message_id == "2002"
     assert result.continuation_message_ids == ("2001",)
+
+
+def test_sender_aggregates_confirmed_send_classification_across_split_parts(caplog) -> None:
+    """异常协议状态但每段均有序号时，整体仍成功并保留确认发送日志。"""
+
+    client = SplitClient(result_classification="confirmed_send")
+    sender = MilkyOutboundSender(client)
+
+    with caplog.at_level("INFO", logger="hermes_plugins.milky.outbound.sender"):
+        result = asyncio.run(sender.send("group:700000001", "第一段\n[SPLIT]\n第二段"))
+
+    assert result.success is True
+    assert result.message_id == "2002"
+    assert result.continuation_message_ids == ("2001",)
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("classification=confirmed_send" in message for message in messages)
 
 
 def test_sender_sends_inline_split_text_in_order() -> None:
