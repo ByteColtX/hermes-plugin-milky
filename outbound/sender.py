@@ -65,12 +65,13 @@ class OutboundSendResult:
     retryable: bool = False
     continuation_message_ids: tuple[str, ...] = ()
     error_kind: str | None = None
+    result_classification: str | None = None
 
     @property
     def classification(self) -> str | None:
         """返回机器可读的失败分类。"""
 
-        return self.error_kind
+        return self.error_kind or self.result_classification
 
 
 class MilkyOutboundSender:
@@ -200,6 +201,7 @@ class MilkyOutboundSender:
             )
 
         sent_ids: list[str] = []
+        result_classifications: list[str] = []
         for index, segments in enumerate(parts):
             result = await self._send_segments(target, segments)
             if not result.success:
@@ -226,7 +228,16 @@ class MilkyOutboundSender:
                 )
                 return result
             sent_ids.append(result.message_id)
-        result = _success(sent_ids[-1], continuation_message_ids=tuple(sent_ids[:-1]))
+            if result.result_classification is not None:
+                result_classifications.append(result.result_classification)
+        aggregate_classification = (
+            "confirmed_send" if "confirmed_send" in result_classifications else "accepted"
+        )
+        result = _success(
+            sent_ids[-1],
+            continuation_message_ids=tuple(sent_ids[:-1]),
+            result_classification=aggregate_classification,
+        )
         _log_outbound_result(
             target,
             result,
@@ -1209,7 +1220,10 @@ class MilkyOutboundSender:
             if not isinstance(message_seq, str) or not message_seq:
                 self._schedule_group_failure(target)
                 return _failure("malformed", "send result has no message sequence")
-            return _success(message_seq)
+            return _success(
+                message_seq,
+                result_classification=getattr(raw_result, "classification", None),
+            )
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
@@ -1455,14 +1469,18 @@ def _success(
     message_id: str | None,
     *,
     continuation_message_ids: tuple[str, ...] = (),
+    result_classification: str | None = None,
 ) -> OutboundSendResult:
     """创建成功结果，必要时优先使用 Hermes 公共 SendResult 类型。"""
 
-    return _make_result(
-        success=True,
-        message_id=message_id,
-        continuation_message_ids=continuation_message_ids,
-    )
+    fields: dict[str, Any] = {
+        "success": True,
+        "message_id": message_id,
+        "continuation_message_ids": continuation_message_ids,
+    }
+    if result_classification is not None:
+        fields["result_classification"] = result_classification
+    return _make_result(**fields)
 
 
 def _failure(classification: str, reason: str) -> OutboundSendResult:
@@ -1498,14 +1516,22 @@ def _with_partial(
 def _make_result(**kwargs: Any) -> OutboundSendResult:
     """在 Hermes 可用时生成宿主结果，否则使用兼容 fallback。"""
 
+    result_classification = kwargs.pop("result_classification", None)
+
     try:
         from gateway.platforms.base import SendResult as HermesSendResult
     except ImportError:
-        return OutboundSendResult(**kwargs)
+        return OutboundSendResult(result_classification=result_classification, **kwargs)
     try:
-        return HermesSendResult(**kwargs)
+        result = HermesSendResult(**kwargs)
+        if result_classification is not None:
+            try:
+                result.result_classification = result_classification
+            except (AttributeError, TypeError):
+                result.raw_response = {"classification": result_classification}
+        return result
     except (TypeError, ValueError):
-        return OutboundSendResult(**kwargs)
+        return OutboundSendResult(result_classification=result_classification, **kwargs)
 
 
 def _error_classification(error: BaseException) -> str:
@@ -1562,7 +1588,9 @@ def _log_outbound_result(
         "stage": "send",
         "route": target.scene,
         "peer_id": target.peer_id,
-        "classification": "accepted" if result.success else _log_classification(result.error_kind),
+        "classification": (result.result_classification or "accepted")
+        if result.success
+        else _log_classification(result.error_kind),
         "chunk_count": chunk_count,
         "duration_ms": _duration_ms(started),
     }
