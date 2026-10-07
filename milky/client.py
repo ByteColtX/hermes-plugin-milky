@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import stat
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -114,12 +115,30 @@ def _import_httpx() -> Any:
 
 
 class HttpxTransport:
-    """使用可复用的 HTTPX 异步客户端执行请求。"""
+    """使用按事件循环隔离的 HTTPX 异步客户端执行请求。"""
 
     def __init__(self, client: Any | None = None) -> None:
-        self._client = client
+        self._provided_client = client
+        self._clients: dict[asyncio.AbstractEventLoop, Any] = {}
         self._closed = False
-        self._close_lock = asyncio.Lock()
+        self._state_lock = threading.Lock()
+
+    def _client_for_loop(self, loop: asyncio.AbstractEventLoop, httpx: Any) -> Any:
+        """返回当前事件循环专属的 HTTPX 客户端。"""
+
+        with self._state_lock:
+            if self._closed:
+                raise HttpxTransportError("transport is closed")
+            client = self._clients.get(loop)
+            if client is not None:
+                return client
+            client = self._provided_client
+            if client is not None:
+                self._provided_client = None
+            else:
+                client = httpx.AsyncClient()
+            self._clients[loop] = client
+            return client
 
     async def request(
         self,
@@ -131,11 +150,9 @@ class HttpxTransport:
     ) -> TransportResponse:
         """使用有限的连接、写入、读取和连接池超时执行请求。"""
 
-        if self._closed:
-            raise HttpxTransportError("transport is closed")
         httpx = _import_httpx()
-        if self._client is None:
-            self._client = httpx.AsyncClient()
+        loop = asyncio.get_running_loop()
+        client = self._client_for_loop(loop, httpx)
         request_timeout = httpx.Timeout(
             timeout,
             connect=timeout,
@@ -144,7 +161,7 @@ class HttpxTransport:
             pool=timeout,
         )
         try:
-            response = await self._client.request(
+            response = await client.request(
                 method,
                 url,
                 headers=headers,
@@ -167,18 +184,35 @@ class HttpxTransport:
     async def close(self) -> None:
         """幂等关闭 HTTPX 连接池。"""
 
-        async with self._close_lock:
+        with self._state_lock:
             if self._closed:
                 return
             self._closed = True
-            if self._client is None:
-                return
+            clients = list(self._clients.items())
+            self._clients.clear()
+            if self._provided_client is not None:
+                clients.append((asyncio.get_running_loop(), self._provided_client))
+                self._provided_client = None
+
+        current_loop = asyncio.get_running_loop()
+        close_failed = False
+        for owner_loop, client in clients:
+            if owner_loop.is_closed():
+                continue
             try:
-                await self._client.aclose()
+                if owner_loop is current_loop:
+                    await client.aclose()
+                elif owner_loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(client.aclose(), owner_loop)
+                    await asyncio.wrap_future(future)
+                else:
+                    continue
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - 关闭失败统一归类为 transport 错误
-                raise HttpxTransportError("transport close failed") from None
+                close_failed = True
+        if close_failed:
+            raise HttpxTransportError("transport close failed") from None
 
 
 class ActionError(Exception):
