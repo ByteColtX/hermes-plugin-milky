@@ -63,6 +63,7 @@ class OutboundSendResult:
     error: str | None = None
     raw_response: Any = None
     retryable: bool = False
+    retry_after: float | None = None
     continuation_message_ids: tuple[str, ...] = ()
     error_kind: str | None = None
     result_classification: str | None = None

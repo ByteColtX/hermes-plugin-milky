@@ -2,9 +2,15 @@
 
 ## Context
 
-动机和外部行为见 proposal.md；行为验收见本 change 的 11 份 delta specs。目标代码以用户指定的 Hermes commit `0e37a439bda15ef3c28a4d20593964d7c6a527a6` 为准。
+动机和外部行为见 proposal.md；行为验收见本 change 的 11 份 delta specs。平台插件的公开合同以 Hermes 官方第三方平台文档为准；用户指定的 Hermes commit `0e37a439bda15ef3c28a4d20593964d7c6a527a6` 是兼容性实测基线，不能用该版本与文档不一致的实现覆盖公开合同。
 
-当前实现存在几条直接影响迁移的接缝：根 `register(ctx)` 同时登记 platform 和 tools，但目标 loader 会独立预注册 manifest 声明的 platform client tools；manifest 已声明 `provides_tools`，插件根目录却没有 loader 要求的 `tools.py`。`pyproject.toml` 运行依赖只有 Pillow 与 jieba，实际导入的 httpx 和 Dashboard multipart parser 仍在 dev 依赖，而目标依赖解析会优先使用项目的 `project.dependencies`。当前 `register()` 还把一次读取的配置闭包交给所有 adapter 实例，多 profile 下不能据此假定配置属于创建 adapter 的 profile。
+平台 client tools 的设计遵循 Hermes 官方社区/第三方平台插件指南：manifest 声明 `kind: platform` 与 `provides_tools`，固定工具放在 `tools.py::register_tools(ctx)`，不要求把 Milky 并入 Hermes bundled plugins。指定目标 SHA 的 PluginManager 与 Gateway 实测确认，用户安装来源的平台注册成功，但 `tools.py` 没有进入工具注册表，Agent tool registry 和 `resolve_toolset("milky")` 都为空。
+
+当前 `main` 暂保留旧的根入口调用 `outbound.tools::register_tools(ctx)`，确保目标 user-installed loader 不支持独立入口时仍能登记固定工具；官方独立入口和不重复注册的平台入口保存在 `codex/milky-tools-entry` 分支，待 Hermes core 修复后再合并。这个过渡不改变第三方插件的 manifest 合同，也不修改 Hermes core。
+
+目标 SHA 的 loader 源码解释了差异：`gate_manifest()` 只对 `manifest.source == "bundled"` 的 platform 返回 deferred；user 来源 platform 进入普通 eager `register()` 路径。`_register_deferred_platform_tools()` 只从 deferred bundled loader 调用，因此目标 SHA 没有履行官方文档对第三方 platform `provides_tools` 的承诺。这不是 Milky 应安装成 bundled plugin 的理由，也不是插件目录布局问题；本项目继续保持第三方插件结构，不修改 Hermes core。目标 host 的 Agent toolset 集成仍未通过，见 `evidence.md` 与未完成任务 2.3、11.2。
+
+其余初始接缝包括：manifest 已声明 `provides_tools`，插件根目录没有专用 `tools.py`；`pyproject.toml` 运行依赖只有 Pillow 与 jieba，实际导入的 httpx 和 Dashboard multipart parser 仍在 dev 依赖，而目标依赖解析会优先使用项目的 `project.dependencies`；当前 `register()` 把一次读取的配置闭包交给所有 adapter 实例，多 profile 下不能据此假定配置属于创建 adapter 的 profile。
 
 此外，adapter 仍有目标版本之前的 MessageEvent 导入/测试 fallback，成员事件注入可探测 runner 私有 session resolver 和 session store，canonical TTL map 由插件单独持有；这些都需要依据目标公开 API 与 replacement 行为迁移。项目根 AGENTS.md 和 `openspec/config.yaml` 将根 `register(ctx)` 描述为唯一公开入口、把 pyproject 仅定位为开发工具，也必须与目标加载和依赖事实同步。
 
@@ -30,7 +36,7 @@
 
 ### 平台注册与 client tool 注册分开
 
-保留根 `__init__.py::register(ctx)` 作为 native platform 注册路径，但从该路径移除 `register_tools(ctx)` 调用。新增根 `tools.py::register_tools(ctx)`，仅登记 `outbound.tools` 已定义的固定 ToolSpec；`plugin.yaml::provides_tools` 继续列出它们。根包导入和 `tools.py` 导入都不得创建 client、登录、连接 SSE、读媒体或启动后台任务。平台 adapter 在 Hermes 真正物化 Milky platform 时才导入。
+目标形态保留根 `__init__.py::register(ctx)` 作为第三方 native platform 注册路径，并由根 `tools.py::register_tools(ctx)` 仅登记 `outbound.tools` 已定义的固定 ToolSpec；`plugin.yaml::provides_tools` 继续列出它们。这与 Hermes 官方平台插件指南一致。当前 `main` 暂由根 `register(ctx)` 调用同一固定工具注册函数，独立入口在 `codex/milky-tools-entry` 分支，待 loader 修复后合并。根包导入和工具导入都不得创建 client、登录、连接 SSE、读媒体或启动后台任务。不得为通过目标验证而将第三方插件伪装为 bundled plugin，或修改/monkey patch Hermes core。
 
 用目标 `PluginManager` 和 Gateway 从隔离 Hermes home 加载插件，验证 manifest 声明的固定工具进入 Milky Agent session toolset 且各注册一次，并验证平台 adapter 注册独立完成；仅调用项目 fake context 不足以证明目标 loader 合同。若注册失败，目标验证需识别缺少或未注册的 manifest tool，不把 warning 当作能力已经存在。
 
@@ -62,7 +68,7 @@ Session source 使用目标 `gateway.platforms.event` 与 platform adapter 合�
 
 事件类型从 `gateway.platforms.event` 导入。mapper 根据已确认的 Milky 私聊/群聊身份与 mention/quote 信息设置 `reply_expected` 的 `true`、`false` 或 `None`：普通私聊为 expected；群聊只有能证明指向 Bot 时才 expected，能证明未指向 Bot 时 not expected，其余 unknown。slash command 和非普通消息继续走各自既有路径。
 
-`BasePlatformAdapter.handle_message` 返回 `None`，不能据其正常返回推断 Gateway 接收。目标 SHA 将普通 MessageEvent 的进程内 admission receipt 放在私有字段 `MessageEvent._gateway_accepted`；Milky 仅当该字段严格为 `True` 时记 Gateway accepted，字段为 `False`、缺失、无法读取或 handler 抛错时记 unknown/失败，不重试可能已有副作用的 trigger。此字段是目标 SHA 的内部实现而非稳定插件 API；`requires_hermes` 的版本下限不保证未来 Hermes 继续提供它，若未来版本移除字段则 handoff 只能保持 unknown，并须重新验证该版本。receipt 只表示 Gateway admission/排队，不表示 Agent turn 完成或 QQ delivery。`[SILENT]` 是否静默继续由 Hermes core 根据 reply expectation 决定。
+`BasePlatformAdapter.handle_message` 返回 `None`，不能据其正常返回推断 Gateway 接收。目标 SHA 将普通 MessageEvent 的进程内 admission receipt 放在私有字段 `MessageEvent._gateway_accepted`；Milky 仅当该字段严格为 `True` 时记 Gateway accepted，字段为 `False`、缺失、无法读取或 handler 抛错时记 unknown/失败，不重试可能已有副作用的 trigger。此字段是目标 SHA 的内部实现而非稳定插件 API；`requires_hermes` 的版本下限不保证未来 Hermes 继续提供它，若未来版本移除字段则 handoff 只能保持 unknown，并须重新验证该版本。receipt 只表示 Gateway admission/排队，不表示 Agent turn 完成或 QQ delivery。`[SILENT]` 的处理由 Hermes core 按 reply expectation 决定：false 时保持静默，true/unknown 时生成固定 fallback；Milky 在 QQ 发送前精确过滤该 fallback，因此可能没有 QQ 消息，而 Gateway 仍可能按 `success` 结果记录 delivered。提示文案必须说明这段交付边界，不承诺 fallback 会显示在 QQ。
 
 ### 保持资源和 Dashboard 的宿主所有权
 

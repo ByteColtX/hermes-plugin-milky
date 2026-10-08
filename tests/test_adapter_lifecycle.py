@@ -7,10 +7,11 @@ import importlib.util
 import socket
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
+import adapter as adapter_module
 from adapter import MilkyAdapter
 from config import load_config
 from session.identity import BotIdentity, BotIdentitySnapshot
@@ -99,6 +100,7 @@ class FakeEventStream:
     def __init__(self) -> None:
         self.run_calls = 0
         self.close_calls = 0
+        self.handler = None
         self.started = asyncio.Event()
         self.stopped = asyncio.Event()
 
@@ -107,8 +109,19 @@ class FakeEventStream:
 
         assert callable(handler)
         self.run_calls += 1
+        self.handler = handler
         self.started.set()
         await self.stopped.wait()
+
+    async def emit(self, event: object) -> bool:
+        """只有事件流启动后才向 pipeline 转发事件。"""
+
+        if not callable(self.handler):
+            return False
+        result = self.handler(event)
+        if asyncio.iscoroutine(result):
+            await result
+        return True
 
     async def close(self) -> None:
         """停止模拟事件流。"""
@@ -123,6 +136,7 @@ class FakePipeline:
     def __init__(self) -> None:
         self.start_calls = 0
         self.close_calls = 0
+        self.handle_event_calls = 0
 
     def start(self) -> None:
         """允许接收普通事件。"""
@@ -137,6 +151,7 @@ class FakePipeline:
     async def handle_event(self, event: object) -> object:
         """提供事件流所需的异步 handler。"""
 
+        self.handle_event_calls += 1
         return event
 
 
@@ -174,6 +189,34 @@ def make_config() -> object:
             "MILKY_ACCESS_TOKEN": "test-token",
         }
     )
+
+
+def install_profile_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    """为根入口测试提供显式的合成 profile 配置 API。"""
+
+    hermes_cli = ModuleType("hermes_cli")
+    hermes_cli.__path__ = []  # type: ignore[attr-defined]
+    profiles = ModuleType("hermes_cli.profiles")
+    profiles.get_active_profile_name = lambda: "default"  # type: ignore[attr-defined]
+    core_config = ModuleType("hermes_cli.config")
+    core_config.load_config_readonly = dict  # type: ignore[attr-defined]
+    gateway = ModuleType("gateway")
+    gateway.__path__ = []  # type: ignore[attr-defined]
+    platforms = ModuleType("gateway.platforms")
+    platforms.__path__ = []  # type: ignore[attr-defined]
+    shared = ModuleType("gateway.platforms._shared")
+    shared.get_scoped_secret = (  # type: ignore[attr-defined]
+        lambda key, default=None: {
+            "MILKY_BASE_URL": "https://localhost:5500/milky",
+            "MILKY_ACCESS_TOKEN": "test-token",
+        }.get(key, default)
+    )
+    monkeypatch.setitem(sys.modules, "hermes_cli", hermes_cli)
+    monkeypatch.setitem(sys.modules, "hermes_cli.profiles", profiles)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", core_config)
+    monkeypatch.setitem(sys.modules, "gateway", gateway)
+    monkeypatch.setitem(sys.modules, "gateway.platforms", platforms)
+    monkeypatch.setitem(sys.modules, "gateway.platforms._shared", shared)
 
 
 def make_adapter(
@@ -344,6 +387,79 @@ def test_initial_sync_failure_keeps_message_entry_not_ready() -> None:
     asyncio.run(scenario())
 
 
+def test_pending_initial_sync_keeps_message_and_sse_ingress_closed(monkeypatch) -> None:
+    """登录、群列表或成员状态仍在同步时，普通消息和 SSE 都不得进入 pipeline。"""
+
+    class PendingMuteTracker(FakeMuteTracker):
+        """等待测试明确放行初始状态同步。"""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.release_initial_sync = asyncio.Event()
+
+        async def initialize(self) -> bool:
+            """挂起于初始同步门槛，随后发布合成身份。"""
+
+            self.initialize_calls += 1
+            self.initialize_started.set()
+            await self.release_initial_sync.wait()
+            self.initialized = True
+            self.self_id = 900000001
+            self.nickname = "合成机器人"
+            return True
+
+    from adapter import BasePlatformAdapter
+
+    ordinary_messages: list[object] = []
+
+    async def host_message_handler(_adapter: object, event: object) -> None:
+        ordinary_messages.append(event)
+
+    monkeypatch.setattr(
+        BasePlatformAdapter,
+        "handle_message",
+        host_message_handler,
+        raising=False,
+    )
+
+    async def scenario() -> None:
+        tracker = PendingMuteTracker()
+        adapter, _, stream, pipeline, _, _ = make_adapter(tracker=tracker)
+        ordinary_event = SimpleNamespace(
+            source=SimpleNamespace(chat_id="group:700000001"),
+            metadata={"gateway_session_key": "fixture-session"},
+        )
+        sse_event = SimpleNamespace(event_type="message_receive")
+        connect_task = asyncio.create_task(adapter.connect())
+        await tracker.initialize_started.wait()
+
+        assert adapter.ready is False
+        assert adapter.is_connected is False
+        assert adapter._initial_sync_complete is False
+        assert adapter._event_task is None
+        assert stream.run_calls == 0
+        assert stream.handler is None
+        assert pipeline.start_calls == 0
+
+        await adapter.handle_message(ordinary_event)
+        assert ordinary_messages == []
+        assert await stream.emit(sse_event) is False
+        assert pipeline.handle_event_calls == 0
+
+        tracker.release_initial_sync.set()
+        assert await connect_task is True
+        await stream.started.wait()
+        assert adapter.ready is True
+
+        await adapter.handle_message(ordinary_event)
+        assert ordinary_messages == [ordinary_event]
+        assert await stream.emit(sse_event) is True
+        assert pipeline.handle_event_calls == 1
+        await adapter.disconnect()
+
+    asyncio.run(scenario())
+
+
 def test_connect_cancellation_keeps_adapter_unready_until_client_cleanup() -> None:
     """连接取消时不得启动 SSE 或入口，后续停止仍应关闭 client。"""
 
@@ -416,18 +532,23 @@ def test_disconnect_is_idempotent_and_closes_all_owned_resources() -> None:
     """重复停止不得继续消费、发送或重复释放生命周期资源。"""
 
     async def scenario() -> None:
-        adapter, _, stream, pipeline, sender, client = make_adapter()
+        adapter, tracker, stream, pipeline, sender, client = make_adapter()
         assert await adapter.connect() is True
         await stream.started.wait()
+        event_task = adapter._event_task
+        assert event_task is not None
 
         await adapter.disconnect()
         await adapter.disconnect()
         result = await adapter.send("dm:800000001", "停止后不发送")
 
+        assert event_task.done()
+        assert adapter._event_task is None
         assert stream.close_calls == 1
         assert pipeline.close_calls == 1
         assert client.close_calls == 1
         assert sender.close_calls == 1
+        assert tracker.close_calls == 1
         assert sender.calls == 0
         assert result.success is False
         assert adapter.ready is False
@@ -466,97 +587,93 @@ def test_adapter_returns_unknown_send_outcome_without_host_fallback() -> None:
     asyncio.run(scenario())
 
 
-def test_member_notification_uses_only_confirmed_hermes_session_key() -> None:
-    """adapter 不从 Milky chat key 猜测 session key，成功后才委托宿主。"""
+def test_adapter_maps_plugin_result_to_hermes_send_result(monkeypatch) -> None:
+    """插件兼容结果必须补全目标 SendResult 的发送回执字段。"""
+
+    import adapter as adapter_module
+    from outbound.sender import OutboundSendResult
+
+    class HermesSendResult:
+        """记录目标 SendResult 构造值。"""
+
+        def __init__(self, **kwargs: object) -> None:
+            self.__dict__.update(kwargs)
+
+    monkeypatch.setattr(adapter_module, "_HermesSendResult", HermesSendResult)
+    result = adapter_module._platform_send_result(
+        OutboundSendResult(
+            success=False,
+            error="transport_unknown: request outcome is unknown",
+            retryable=False,
+            error_kind="transport_unknown",
+            continuation_message_ids=("fixture-prior",),
+        )
+    )
+
+    assert isinstance(result, HermesSendResult)
+    assert result.success is False
+    assert result.error_kind == "transport_unknown"
+    assert result.retryable is False
+    assert result.retry_after is None
+    assert result.continuation_message_ids == ("fixture-prior",)
+
+
+def test_member_notification_forwards_profile_scoped_origin() -> None:
+    """adapter 只把已校验 origin 交给公开 PluginContext 注入 API。"""
 
     class InjectionContext:
         """记录已授权会话注入调用。"""
 
         def __init__(self) -> None:
-            self.calls: list[tuple[str, str, str]] = []
+            self.calls: list[tuple[str, str, dict[str, str]]] = []
 
-        def inject_message(self, content: str, role: str, *, session_key: str) -> bool:
+        def inject_message(self, content: str, role: str, *, origin: dict[str, str]) -> bool:
             """记录宿主注入参数并返回接受。"""
 
-            self.calls.append((content, role, session_key))
+            self.calls.append((content, role, dict(origin)))
             return True
 
     adapter, _, _, _, _, _ = make_adapter()
     context = InjectionContext()
     adapter._plugin_context = context
-
-    assert adapter._resolve_confirmed_session_key("group:700000001") is None
+    origin = {
+        "platform": "milky",
+        "chat_id": "group:700000001",
+        "chat_type": "group",
+    }
     assert (
         adapter.inject_message(
             "<event group_member_increase> fixture",
-            session_key="group:700000001",
-        )
-        is False
-    )
-    assert context.calls == []
-
-    source = SimpleNamespace(chat_id="group:700000001")
-    event = SimpleNamespace(
-        source=source,
-        metadata={"gateway_session_key": " confirmed-gateway-session "},
-    )
-    adapter._remember_confirmed_session_key(event)
-
-    assert adapter._resolve_confirmed_session_key("group:700000001") == (
-        "confirmed-gateway-session"
-    )
-    assert (
-        adapter.inject_message(
-            "<event group_member_increase> fixture",
-            session_key="confirmed-gateway-session",
+            origin=origin,
         )
         is True
     )
+    assert adapter.inject_message("incomplete", origin=None) is False
     assert context.calls == [
         (
             "<event group_member_increase> fixture",
             "user",
-            "confirmed-gateway-session",
+            origin,
         )
     ]
 
 
-def test_adapter_restores_persisted_milky_session_keys_before_event_stream() -> None:
-    """adapter 连接时应恢复 Hermes 已持久化的同平台会话路由。"""
+def test_adapter_does_not_probe_private_gateway_session_store() -> None:
+    """成员事件的 origin 路由不读取 runner 私有 session store。"""
 
-    class SessionStore:
-        def list_sessions(self) -> list[object]:
-            """返回脱敏的 Hermes session route。"""
+    class PrivateSessionStoreProbe:
+        """在 runner 的私有 store 被读取时令测试失败。"""
 
-            return [
-                SimpleNamespace(
-                    session_key="restored-gateway-session",
-                    origin=SimpleNamespace(
-                        platform=SimpleNamespace(value="milky"),
-                        chat_id="group:700000001",
-                    ),
-                ),
-                SimpleNamespace(
-                    session_key="other-platform-session",
-                    origin=SimpleNamespace(
-                        platform=SimpleNamespace(value="telegram"),
-                        chat_id="group:700000001",
-                    ),
-                ),
-            ]
+        @property
+        def async_session_store(self) -> object:
+            raise AssertionError("private Gateway session store was accessed")
 
     async def scenario() -> None:
         adapter, _, stream, _, _, _ = make_adapter()
-        adapter.gateway_runner = SimpleNamespace(async_session_store=SessionStore())
+        adapter.gateway_runner = PrivateSessionStoreProbe()
 
         assert await adapter.connect() is True
         await stream.started.wait()
-
-        assert adapter._resolve_confirmed_session_key("group:700000001") == (
-            "restored-gateway-session"
-        )
-        assert adapter._resolve_confirmed_session_key("dm:700000001") is None
-
         await adapter.disconnect()
 
     asyncio.run(scenario())
@@ -728,6 +845,7 @@ def test_root_register_assembles_platform_without_network_or_background_task(
 
     monkeypatch.setenv("MILKY_BASE_URL", "https://localhost:5500/milky")
     monkeypatch.setenv("MILKY_ACCESS_TOKEN", "test-token")
+    install_profile_api(monkeypatch)
 
     def fail_network(*args: object, **kwargs: object) -> None:
         del args, kwargs
@@ -748,36 +866,7 @@ def test_root_register_assembles_platform_without_network_or_background_task(
         registration = context.platforms[0]
         assert registration["name"] == "milky"
         assert registration["adapter_factory"]
-        assert [tool["name"] for tool in context.tools] == [
-            "send_profile_like",
-            "send_friend_nudge",
-            "send_group_nudge",
-            "recall_group_message",
-            "get_group_info",
-            "get_group_member_list",
-            "get_group_member_info",
-            "set_group_member_mute",
-            "set_group_whole_mute",
-            "get_resource_temp_url",
-            "get_forwarded_messages",
-            "get_private_file_download_url",
-            "kick_group_member",
-            "quit_group",
-            "delete_friend",
-            "get_friend_requests",
-            "accept_friend_request",
-            "reject_friend_request",
-            "get_group_file_download_url",
-            "accept_group_request",
-            "reject_group_request",
-            "accept_group_invitation",
-            "reject_group_invitation",
-            "get_group_files",
-            "get_friend_info",
-            "set_group_member_special_title",
-            "sticker_send",
-            "sticker_search",
-        ]
+        assert context.tools == []
         adapter = registration["adapter_factory"](SimpleNamespace())
         assert adapter.__class__.__name__ == "MilkyAdapter"
     finally:
@@ -793,6 +882,7 @@ def test_root_section_renders_identity_published_by_ready_adapter(
 
     monkeypatch.setenv("MILKY_BASE_URL", "https://localhost:5500/milky")
     monkeypatch.setenv("MILKY_ACCESS_TOKEN", "test-token")
+    install_profile_api(monkeypatch)
     entry = _load_root_entry()
     context = FakePluginContext()
     try:
@@ -807,7 +897,9 @@ def test_root_section_renders_identity_published_by_ready_adapter(
         async def scenario() -> None:
             assert await adapter.connect() is True
             await stream.started.wait()
-            rendered = callback({"self_id": 101, "nickname": "untrusted"})
+            rendered = callback(
+                {"profile_name": "default", "self_id": 101, "nickname": "untrusted"}
+            )
             assert rendered.startswith(
                 "- Your QQ uid is 900000001, and your nickname is 合成机器人.\n"
             )
@@ -826,6 +918,7 @@ def test_full_reconnect_reads_latest_allowlist_without_reloading_other_config():
     async def scenario():
         adapter, tracker, _stream, _pipeline, _sender, _client = make_adapter()
         values = {"rules": {"group:123"}, "reads": 0}
+        deduplicator = adapter._deduplicator
 
         def read():
             values["reads"] += 1
@@ -843,10 +936,45 @@ def test_full_reconnect_reads_latest_allowlist_without_reloading_other_config():
         assert not adapter._chat_policy.rules
         assert values["reads"] == 2 and tracker.initialize_calls == 2
         assert adapter._config is initial_config
+        assert adapter._deduplicator is deduplicator
         await adapter.disconnect()
         await adapter.disconnect()
 
     asyncio.run(scenario())
+
+
+def test_hermes_canonical_dedup_survives_adapter_replacement_and_keeps_limits(
+    monkeypatch: pytest.MonkeyPatch,
+    target_hermes_helpers,
+) -> None:
+    """目标 Gateway 替换 helper 继承 canonical key，并保持容量和 TTL。"""
+
+    helpers = target_hermes_helpers
+    monkeypatch.setattr(adapter_module, "_HermesMessageDeduplicator", helpers.MessageDeduplicator)
+    monkeypatch.setattr(adapter_module, "_HERMES_PLATFORM_AVAILABLE", True)
+    from adapter import _new_canonical_deduplicator
+
+    now = [1_000.0]
+    monkeypatch.setattr(helpers.time, "time", lambda: now[0])
+    previous = SimpleNamespace(_deduplicator=_new_canonical_deduplicator())
+    replacement = SimpleNamespace(_deduplicator=_new_canonical_deduplicator())
+    key = "milky:900000001:group:700000001:1001"
+    assert previous._deduplicator.is_duplicate(key) is False
+    assert previous._deduplicator._max_size == 10_000
+    assert previous._deduplicator._ttl == 300
+
+    helpers.carry_inbound_dedup(previous, replacement)
+
+    assert replacement._deduplicator.is_duplicate(key) is True
+    assert replacement._deduplicator.is_duplicate("milky:900000001:group:700000001:1002") is False
+    now[0] += 300
+    assert replacement._deduplicator.is_duplicate(key) is False
+
+    bounded = _new_canonical_deduplicator()
+    for index in range(10_001):
+        assert bounded.is_duplicate(f"capacity:{index}") is False
+    assert bounded.contains("capacity:0") is False
+    assert bounded.contains("capacity:1") is True
 
 
 def test_allowlist_read_failure_never_starts_sync_or_sse():

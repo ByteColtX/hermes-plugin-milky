@@ -6,7 +6,7 @@ import asyncio
 import inspect
 import logging
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -38,7 +38,6 @@ from .hermes_mapper import build_source, map_command_event, map_message_event
 from .system_events import parse_context_event
 
 Observer = Callable[[Event], Awaitable[object] | object]
-SessionKeyResolver = Callable[[str], str | None]
 
 logger = logging.getLogger("hermes_plugins.milky.inbound.pipeline")
 
@@ -74,7 +73,6 @@ class InboundPipeline:
         system_context_buffer: SystemContextBuffer | None = None,
         session_context_store: ChatMetadataSnapshotStore | None = None,
         member_event_notifications: bool = False,
-        session_key_resolver: SessionKeyResolver | None = None,
         chat_policy=None,
         allowlist_manager=None,
     ) -> None:
@@ -99,8 +97,8 @@ class InboundPipeline:
         self._system_context = system_context_buffer or SystemContextBuffer(wait_buffer.max_size)
         self._session_context_store = session_context_store or ChatMetadataSnapshotStore()
         self._member_event_notifications = member_event_notifications
-        self._session_key_resolver = session_key_resolver
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._batch_locks: dict[str, asyncio.Lock] = {}
         self._diagnostics: deque[str] = deque(maxlen=128)
         self._reply_costs = 0
         self._accepting = True
@@ -208,7 +206,7 @@ class InboundPipeline:
                 reason=canonical_result.reason,
             )
         canonical = canonical_result.value
-        if self._deduplicator.check_and_mark(canonical.dedup_key):
+        if _check_canonical_duplicate(self._deduplicator, canonical.dedup_key):
             self._record("duplicate")
             logger.debug(
                 render_event(
@@ -388,9 +386,19 @@ class InboundPipeline:
             await asyncio.gather(*tuple(self._background_tasks))
 
     async def _process_batch(self, batch: object, generation=None) -> None:
+        chat_key = getattr(batch, "chat_key", None)
+        if not isinstance(chat_key, str):
+            self._record("malformed:missing_batch_chat_key")
+            return
+        lock = self._batch_locks.setdefault(chat_key, asyncio.Lock())
+        async with lock:
+            await self._process_batch_locked(batch, generation)
+
+    async def _process_batch_locked(self, batch: object, generation=None) -> None:
         current = getattr(batch, "current", None)
         chat_key = getattr(batch, "chat_key", None)
         ingress_sequence = getattr(batch, "trigger_ingress_sequence", None)
+        handoff_started = False
         try:
             resolved_batch = await self._resolver.resolve_batch(batch)
             source_builder = getattr(self._hermes, "build_source", None)
@@ -418,9 +426,27 @@ class InboundPipeline:
             ):
                 self._record("authorization_revoked")
                 return
+            handoff_started = True
             result = handle_message(event)
             if inspect.isawaitable(result):
                 await result
+            classification = _gateway_receipt_classification(event)
+            if classification != "accepted":
+                self._buffer.record_handoff_failure(batch, recoverable=False)
+                self._record(f"trigger_{classification}")
+                logger.warning(
+                    render_event(
+                        "milky.inbound",
+                        {
+                            "stage": "handoff",
+                            "classification": classification,
+                            "reason": "admission_not_confirmed",
+                            "operation": "handoff",
+                            **_batch_log_fields(chat_key, ingress_sequence, current),
+                        },
+                    )
+                )
+                return
             logger.info(
                 render_event(
                     "milky.inbound",
@@ -444,7 +470,9 @@ class InboundPipeline:
                     {
                         "stage": "handoff",
                         **failure_fields,
-                        "classification": _error_classification(error),
+                        "classification": "unknown"
+                        if handoff_started
+                        else _error_classification(error),
                         "reason": "handoff_failed",
                     },
                 )
@@ -639,7 +667,7 @@ class InboundPipeline:
                 )
             )
             if result.accepted and self._should_notify_member_event(event):
-                await self._notify_member_event(event.chat_key)
+                await self._notify_member_event(event)
 
     def _should_notify_member_event(self, event: ContextOnlyEvent) -> bool:
         """返回是否需要对成员事件尝试一次即时注入。"""
@@ -649,19 +677,18 @@ class InboundPipeline:
             "group_member_decrease",
         }
 
-    async def _notify_member_event(self, chat_key: str) -> None:
-        """通过已确认的 Hermes session 注入系统上下文并成功后 drain。"""
+    async def _notify_member_event(self, event: ContextOnlyEvent) -> None:
+        """通过公开的 profile-scoped origin 注入成员事件上下文。"""
 
-        if self._session_key_resolver is None:
-            self._record("member_event_notification:unsupported_session_key")
-            return
-        try:
-            session_key = self._session_key_resolver(chat_key)
-        except Exception:  # noqa: BLE001 - 宿主边界失败必须保留上下文
-            self._record("member_event_notification:failed_session_key")
-            return
-        if not isinstance(session_key, str) or not session_key.strip():
-            self._record("member_event_notification:unsupported_session_key")
+        chat_key = event.chat_key
+        origin = event.origin
+        if (
+            not isinstance(origin, Mapping)
+            or origin.get("platform") != "milky"
+            or origin.get("chat_id") != chat_key
+            or origin.get("chat_type") != "group"
+        ):
+            self._record("member_event_notification:unsupported_origin")
             return
 
         pending = self._system_context.snapshot(chat_key)
@@ -677,13 +704,16 @@ class InboundPipeline:
             self._record("member_event_notification:unsupported_injection")
             return
         try:
-            accepted = inject_message(content, role="user", session_key=session_key.strip())
-            if inspect.isawaitable(accepted):
-                accepted = await accepted
+            scheduled = inject_message(content, role="user", origin=dict(origin))
+            if inspect.isawaitable(scheduled):
+                close = getattr(scheduled, "close", None)
+                if callable(close):
+                    close()
+                scheduled = None
         except Exception:  # noqa: BLE001 - injection refusal must retain context
             self._record("member_event_notification:failed_injection")
             return
-        if accepted is not True:
+        if scheduled is not True:
             self._record("member_event_notification:failed_injection")
             return
         drained = self._system_context.drain(chat_key)
@@ -694,7 +724,7 @@ class InboundPipeline:
                 operation="member_event_injection",
                 chat_key=chat_key,
                 event_count=len(drained),
-                classification="accepted",
+                classification="scheduled",
                 reason="context_drained",
             )
         )
@@ -721,10 +751,11 @@ class InboundPipeline:
             "system_context_buffer": self._system_context,
             "session_context_store": self._session_context_store,
             "member_event_notifications": self._member_event_notifications,
-            "session_key_resolver": self._session_key_resolver,
         }
         values.update(overrides)
-        return type(self)(**values)
+        copied = type(self)(**values)
+        copied._batch_locks = self._batch_locks
+        return copied
 
 
 def _render_resolved_history(batch: object, resolved_batch: ResolvedTriggerBatch) -> str | None:
@@ -791,6 +822,34 @@ class _HistoryRecord:
 
 def _error_category(error: Exception) -> str:
     return type(error).__name__.lower().replace("error", "")[:64] or "failure"
+
+
+def _gateway_receipt_classification(event: object) -> str:
+    """只将 Hermes 私有 admission receipt 的严格布尔值映射为 handoff 状态。"""
+
+    try:
+        receipt = event._gateway_accepted
+    except Exception:  # noqa: BLE001 - 私有 receipt 不可读时保持 unknown
+        return "unknown"
+    if receipt is True:
+        return "accepted"
+    if receipt is False:
+        return "not_accepted"
+    return "unknown"
+
+
+def _check_canonical_duplicate(deduplicator: object, key: str | None) -> bool:
+    """适配插件测试缓存和 Hermes 可继承的 message deduplicator。"""
+
+    if key is None:
+        return False
+    check_and_mark = getattr(deduplicator, "check_and_mark", None)
+    if callable(check_and_mark):
+        return check_and_mark(key)
+    is_duplicate = getattr(deduplicator, "is_duplicate", None)
+    if callable(is_duplicate):
+        return is_duplicate(key)
+    raise TypeError("canonical message deduplicator is unavailable")
 
 
 def _safe_classification(value: object) -> str:

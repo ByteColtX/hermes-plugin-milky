@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -54,6 +56,7 @@ class FakeContext:
 
     platforms: list[dict[str, object]] = field(default_factory=list)
     tools: list[dict[str, object]] = field(default_factory=list)
+    system_prompt_sections: list[dict[str, object]] = field(default_factory=list)
 
     def register_platform(self, **kwargs: object) -> None:
         """记录 platform entry。"""
@@ -64,6 +67,11 @@ class FakeContext:
         """记录显式工具。"""
 
         self.tools.append(kwargs)
+
+    def register_system_prompt_section(self, **kwargs: object) -> None:
+        """记录 prompt section 注册。"""
+
+        self.system_prompt_sections.append(kwargs)
 
 
 @dataclass
@@ -195,12 +203,29 @@ def test_home_fixtures_are_synthetic_and_redacted() -> None:
         assert forbidden not in rendered
 
 
-def test_register_exposes_fixed_home_metadata_and_cron_hooks_without_network(monkeypatch) -> None:
-    """注册应固定启动时目标并暴露 Hermes 所需 hook。"""
+def test_register_exposes_profile_home_metadata_and_cron_hooks_without_network(monkeypatch) -> None:
+    """注册提供 profile 作用域内 home-channel 回调且不建立连接。"""
 
     monkeypatch.setenv("MILKY_BASE_URL", "https://localhost:5500/milky")
     monkeypatch.setenv("MILKY_ACCESS_TOKEN", "registry-test-token")
     monkeypatch.setenv("MILKY_HOME_CHANNEL", "group:700000001")
+    gateway = ModuleType("gateway")
+    gateway.__path__ = []  # type: ignore[attr-defined]
+    platforms = ModuleType("gateway.platforms")
+    platforms.__path__ = []  # type: ignore[attr-defined]
+    shared = ModuleType("gateway.platforms._shared")
+    shared.get_scoped_secret = (  # type: ignore[attr-defined]
+        lambda name, default=None: os.environ.get(name, default)
+    )
+    hermes_cli = ModuleType("hermes_cli")
+    hermes_cli.__path__ = []  # type: ignore[attr-defined]
+    core_config = ModuleType("hermes_cli.config")
+    core_config.load_config_readonly = dict  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "gateway", gateway)
+    monkeypatch.setitem(sys.modules, "gateway.platforms", platforms)
+    monkeypatch.setitem(sys.modules, "gateway.platforms._shared", shared)
+    monkeypatch.setitem(sys.modules, "hermes_cli", hermes_cli)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", core_config)
     entry, module_name = load_plugin_entry()
     context = FakeContext()
     try:
@@ -211,45 +236,14 @@ def test_register_exposes_fixed_home_metadata_and_cron_hooks_without_network(mon
         assert registration["cron_deliver_env_var"] == "MILKY_HOME_CHANNEL"
         assert callable(registration["env_enablement_fn"])
         assert callable(registration["standalone_sender_fn"])
-        assert [tool["name"] for tool in context.tools] == [
-            "send_profile_like",
-            "send_friend_nudge",
-            "send_group_nudge",
-            "recall_group_message",
-            "get_group_info",
-            "get_group_member_list",
-            "get_group_member_info",
-            "set_group_member_mute",
-            "set_group_whole_mute",
-            "get_resource_temp_url",
-            "get_forwarded_messages",
-            "get_private_file_download_url",
-            "kick_group_member",
-            "quit_group",
-            "delete_friend",
-            "get_friend_requests",
-            "accept_friend_request",
-            "reject_friend_request",
-            "get_group_file_download_url",
-            "accept_group_request",
-            "reject_group_request",
-            "accept_group_invitation",
-            "reject_group_invitation",
-            "get_group_files",
-            "get_friend_info",
-            "set_group_member_special_title",
-            "sticker_send",
-            "sticker_search",
-        ]
+        assert context.tools == []
         enablement = registration["env_enablement_fn"]
         assert enablement() == {
             "home_channel": {"chat_id": "group:700000001", "name": "Milky Home"}
         }
 
         monkeypatch.setenv("MILKY_HOME_CHANNEL", "dm:800000002")
-        assert enablement() == {
-            "home_channel": {"chat_id": "group:700000001", "name": "Milky Home"}
-        }
+        assert enablement() == {"home_channel": {"chat_id": "dm:800000002", "name": "Milky Home"}}
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):

@@ -201,15 +201,38 @@ def credential(action: str, value: object = ""):
         return {"status": "unchanged", "has_access_token": bool(_inputs()[-1])}
     if action == "replace" and (not value.strip() or "\n" in value or "\r" in value):
         raise ManagementError("invalid_input")
+    write_action = "remove" if action == "clear" else "set"
     try:
+        from hermes_cli.config import env_write_refusal
+
+        # refusal detail may contain a managed-file path; only its presence is observable here.
+        if env_write_refusal("MILKY_ACCESS_TOKEN", write_action) is not None:
+            return {"status": "blocked", "restart_required": True, "runtime_status": "unknown"}
         if action == "clear":
             remove_provider_env_credential("MILKY_ACCESS_TOKEN")
         else:
             save_provider_env_credential("MILKY_ACCESS_TOKEN", value)
+    except ValueError:
+        # Hermes currently reports require_env_writable refusals as ValueError. Recheck the
+        # explicit host policy; unrelated write/parse failures remain unknown.
+        try:
+            from hermes_cli.config import env_write_refusal
+
+            blocked = env_write_refusal("MILKY_ACCESS_TOKEN", write_action) is not None
+        except Exception:  # noqa: BLE001 - capability failure cannot confirm a refusal
+            blocked = False
+        return {
+            "status": "blocked" if blocked else "unknown",
+            "restart_required": True,
+            "runtime_status": "unknown",
+        }
+    except Exception:  # noqa: BLE001 - credentials never enter an exception response
+        return {"status": "unknown", "restart_required": True, "runtime_status": "unknown"}
+    try:
         actual = load_env().get("MILKY_ACCESS_TOKEN")
         verified = not actual if action == "clear" else actual == value
         return {
-            "status": "saved" if verified else "blocked",
+            "status": "saved" if verified else "unknown",
             "has_access_token": bool(actual),
             "restart_required": True,
             "runtime_status": "unknown",

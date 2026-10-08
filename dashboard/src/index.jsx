@@ -1,4 +1,9 @@
-import { changedKeys, parseField, selectedTargets } from "./model.mjs";
+import {
+  changedKeys,
+  credentialStatusMessage,
+  parseField,
+  selectedTargets,
+} from "./model.mjs";
 const sdk = window.__HERMES_PLUGIN_SDK__;
 if (sdk && window.__HERMES_PLUGINS__) {
   const React = sdk.React;
@@ -456,7 +461,7 @@ if (sdk && window.__HERMES_PLUGINS__) {
         });
         if (active()) {
           setToken("");
-          setNotice("凭证状态：" + result.status);
+          setNotice(credentialStatusMessage(result.status));
           await loadConfig();
         }
       });

@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 
-from __init__ import register_tools
 from config import MIN_LOCAL_MEDIA_BYTES
 from milky.client import ActionError
 from milky.client import SendResult as MilkySendResult
@@ -39,7 +38,7 @@ from outbound.formatter import (
     video_segment,
 )
 from outbound.sender import MilkyOutboundSender
-from outbound.tools import bind_sender, unbind_sender
+from outbound.tools import bind_sender, register_tools, unbind_sender
 
 
 @dataclass

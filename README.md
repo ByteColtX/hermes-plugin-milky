@@ -62,7 +62,7 @@ change 和已归档 change 的测试证据见 [openspec/](openspec/)。
 - **多媒体消息：** 接收图片、语音等上下文，并发送文本、@、引用、图片、语音、视频和文件；入站视频只展示
   Milky 提供的资源引用和时长，不提供视频内容分析；当前语音交给 Hermes core 的 STT 流程，插件不负责
   provider 适配或音频格式转换；
-- **QQ 信息能力：** 查询群组、成员、文件和好友/入群请求，并提供部分 QQ 操作；
+- **QQ 信息能力：** 代码和 manifest 声明群组、成员、文件和好友/入群请求等固定工具；这些工具是否进入 Agent toolset 取决于 Hermes 的加载支持，当前目标宿主尚未加载，见下方迁移阻塞说明；
 - **会话安全边界：** 支持 chat 白名单、禁言状态同步、消息去重和有界历史缓冲。
 - **QQ 会话介绍：** 在支持 system prompt section 的 Hermes 宿主中，首次 Milky friend/group
   session prompt 可看到当前会话的最小资料；介绍来自入站消息快照，不实时查询 Milky。
@@ -71,9 +71,10 @@ change 和已归档 change 的测试证据见 [openspec/](openspec/)。
 - **Agent 贴纸能力：** 插件运行时依赖 `jieba` 且库中存在可用条目时，`sticker_search` 可严格搜索、显式放宽意图或浏览有界候选，
   `sticker_send` 可按同样的查询或已知贴纸 ID 向当前 Milky 会话发送一张贴纸；目标、路径和 URL 仍由工具边界管理。
 
-运行环境：Python 3.13+、Hermes Gateway、Milky v1.3 服务以及插件声明的 `httpx`、Pillow、`jieba`。
-Hermes 负责 Agent
-队列及入站资源的下载、缓存和权限边界；本插件负责 Milky 适配和已声明的 QQ 能力。
+运行环境：Python 3.13+、Hermes Gateway 0.21.4 或更新版本、Milky v1.3 服务，以及插件声明的
+`httpx`、`python-multipart`、Pillow 和 `jieba`。`requires_hermes: ">=0.21.4"` 是 Hermes 版本下限，
+不是特定 commit 的锁定；部署时应使用已验证的 Hermes 版本。Hermes 负责 Agent 队列及入站资源的
+下载、缓存和权限边界；本插件负责 Milky 适配和已声明的 QQ 能力。
 
 ## 安装
 
@@ -83,7 +84,10 @@ Hermes 负责 Agent
 hermes plugins install ByteColtX/hermes-plugin-milky --enable
 ```
 
-`--enable` 会在安装成功后直接启用插件并跳过确认提示。首次安装完成后，可以用下面的命令确认
+Hermes PluginManager 会读取插件 `pyproject.toml` 中的运行依赖，在启用前准备依赖环境并请求所需的
+依赖授权。若拒绝授权或依赖准备失败，新插件会保持 disabled；更新失败会保留当前代码和已发布环境。
+不要通过手动安装依赖或在插件导入时安装依赖来绕过该流程。`--enable` 会在安装及依赖准备成功后
+直接启用插件并跳过启用确认提示。首次安装完成后，可以用下面的命令确认
 插件状态：
 
 ```bash
@@ -110,7 +114,41 @@ hermes plugins update hermes-plugin-milky
 hermes gateway restart
 ```
 
-更新插件代码或配置后都需要重启 Gateway，运行中的进程不会自动加载新的插件代码。
+更新会按当前 `pyproject.toml` 重新准备运行依赖；准备或发布失败时会保留现有插件版本。更新插件代码
+或配置后都需要重启 Gateway，运行中的进程不会自动加载新的插件代码。
+
+本版本包含 Hermes 迁移的其余改动；为保证当前 user-installed Hermes 仍能加载 QQ 工具，`main` 暂由根
+`register(ctx)` 调用 `outbound.tools::register_tools(ctx)`。按官方 [第三方平台插件指南](https://hermes-agent.nousresearch.com/docs/developer-guide/adding-platform-adapters)
+拆出的独立 `tools.py::register_tools(ctx)` 已提交到 `codex/milky-tools-entry`，待 Hermes core 修复
+user-installed platform loader 后再合并到 `main`。社区平台仍以第三方插件分发，不需要改动或并入 Hermes core。
+
+指定 Hermes `0e37a439bda15ef3c28a4d20593964d7c6a527a6`（`v0.21.5+8508.g0e37a43`）的实际验证发现，用户安装的 Milky platform 走 eager `register()` 路径，不会调用独立 `tools.py::register_tools(ctx)`。因此新版分支不能依赖该 loader；当前 `main` 保留根入口调用作为过渡。该 SHA 的源码只对 bundled platform 使用 deferred loader，因此没有履行官方指南中第三方 platform `provides_tools` 的注册路径。这是该目标宿主与公开插件合同的差异，不表示 Milky 应作为内置插件安装。`requires_hermes: ">=0.21.4"` 只是版本下限，不能代替新版分支的目标 Gateway toolset 实测。详见 [platform contract evidence](openspec/changes/migrate-hermes-main-platform-contract/evidence.md)。
+
+官方发布版 Hermes `v0.21.5`（`v2026.9.24`）的源码静态核对也显示相同的 loader 分支：独立 `tools.py` 的预注册只发生在 bundled deferred platform 路径。该源码检查不是一次新的 Milky Gateway 运行验证；新版入口分支保留官方 `provides_tools`/`tools.py` 结构，当前 `main` 继续使用根入口兼容路径。
+
+社区跟踪显示这是 Hermes 平台 loader 的已知问题族：[#78050](https://github.com/NousResearch/hermes-agent/issues/78050) / [#81163](https://github.com/NousResearch/hermes-agent/issues/81163) 及已合并的 [#86660](https://github.com/NousResearch/hermes-agent/pull/86660) 修复了 bundled deferred platform 的 client-tool 预注册；开放的 [#111643](https://github.com/NousResearch/hermes-agent/issues/111643) / [#111669](https://github.com/NousResearch/hermes-agent/pull/111669) 继续跟踪第三方 platform 的 discovery 生命周期。后续确认 user-installed loader 修复后，再把 `codex/milky-tools-entry` 合并回 `main`。
+
+### 平台隔离要求
+
+Milky 是 `kind: platform` 插件，需要 Hermes Gateway 提供原生平台注册能力和 Gateway 事件循环。请在
+当前 profile 的 `~/.hermes/config.yaml` 中显式设置：
+
+```yaml
+plugins:
+  isolation: in_process
+```
+
+`in_process` 表示 Hermes 在自身进程中加载并运行 Milky platform adapter。`host` 会把普通第三方插件代码
+放到独立的 plugin-host 进程；该进程不持有平台注册所需的 live Gateway 对象，因此 Hermes 会将 Milky
+平台报告为 unsupported，不注册也不连接 adapter。
+
+Dashboard plugin API 的 host proxy 是另一条路径：它可将 Dashboard HTTP API 请求转交给 plugin-host 中的
+插件处理，并按请求指定且由宿主确认的 profile 路由；proxy 会缓冲 HTTP 响应，不支持 streaming 或
+websocket API。它不创建 Gateway platform adapter，也不改变 Milky 必须使用 `in_process` 的要求。
+目标 Hermes `0e37a439bda15ef3c28a4d20593964d7c6a527a6` 的 Dashboard scanner 当前只扫描根级
+`plugins/<name>/dashboard/manifest.json`，不会发现官方第三方 platform 安装位置
+`plugins/platforms/<name>/dashboard/manifest.json`；因此 Milky 的原生 host proxy 能力在该目标上保持
+`unknown`，临时 flat alias 的诊断通过不作为部署路径。
 
 ### 从源码设置开发环境
 
@@ -129,25 +167,41 @@ hermes gateway restart
 ```
 
 > [!IMPORTANT]
-> 启动前先完成下方的 Milky 配置，并确保启动 Hermes 的进程会加载 `~/.hermes/.env`。
-> 配置只在启动时读取；修改后需要重启 Gateway。
+> 启动前先完成下方的 Milky 配置，并将凭证保存到对应 Hermes profile 的 `.env` 或宿主凭证源。
+> Gateway 会在该 profile 的作用域读取配置；修改后需要重启 Gateway。
 
 ## 配置
+
+### Profile 配置与数据归属
+
+每个 adapter 创建时都从所属 Hermes profile 读取普通设置、兼容配置和凭证。必需的服务地址或 token
+缺失时 adapter 不会启动；其他 profile 的进程环境值不会补入当前 profile。`MILKY_ACCESS_TOKEN`
+由 Hermes 的 profile-scoped secret helper 提供，不写入 YAML 示例。当前 profile 未配置的可选设置使用本插件
+表格列出的默认值；`allowed_chats` 默认为空并阻止普通入站消息，`session_buffer_size` 默认为 `20`，
+群成员即时通知默认为关闭。
+
+贴纸数据库和图片库、Dashboard 维护任务、上传批次都保存在所属 profile 的
+`plugin-data/hermes-plugin-milky/` 下。切换 Dashboard profile 会切换对应设置、凭证、图库、任务和暂存目录；
+profile A 与 profile B 不共享这些文件。
 
 ### Dashboard 管理
 
 当前工作区包含 `dashboard/manifest.json`、API 和 `dashboard/dist/` 预构建资源。
 已在固定版本的真实 Hermes 与 Debian 环境验证配置、视觉导入和浏览器维护流程；版本、证据类型及环境限制见
 [Dashboard evidence](openspec/changes/archive/2026-09-24-add-milky-web-dashboard/evidence.md)。
-已验证的宿主 core 为 `b3a1900e72a16da450ff637aaa37cc23f68992a6`，Web SDK 为 1.1.0；
-尚未确认最低 Hermes 发行版本。将完整 directory plugin 安装到宿主启用的用户插件位置，
+该历史 Dashboard 证据使用的宿主 core 为 `b3a1900e72a16da450ff637aaa37cc23f68992a6`，Web SDK 为 1.1.0，
+不代表本次目标 Gateway 集成已经通过。当前 manifest 声明的 Hermes 最低版本为 `0.21.4`；这是版本下限，
+不是 commit 锁定，也不代替目标 PluginManager/Gateway 集成验证。本次目标 SHA、fake host 测试、宿主执行状态和
+仍 unknown 的边界见 [platform contract evidence](openspec/changes/migrate-hermes-main-platform-contract/evidence.md)。
+将完整 directory plugin 安装到宿主启用的用户插件位置，
 重启 Hermes Dashboard 后打开 Milky QQ；项目本地安装不足以挂载插件 Python API。
 Gateway 与 Dashboard 分别拥有连接和任务生命周期，缺少 QQ 地址或凭证也可以访问配置页。
 
 普通配置逐个顶层键按 `plugins.entries.hermes-plugin-milky.settings` → 旧 `config` →
 当前 profile 的 `MILKY_*` 环境 → 默认值解析。settings 使用原生类型，Will 使用完整对象选源；
 非法高优先级值会报错。地址可放在 YAML，access token 仍由宿主凭证机制管理。
-例如在现有 `plugins` 配置中合并：
+此配置示例只作用于当前 profile；在其他 profile 中单独设置所需值。例如在当前 profile 的现有 `plugins`
+配置中合并：
 
 ```yaml
 plugins:
@@ -161,9 +215,15 @@ plugins:
         group_member_event_notifications: false
 ```
 
-页面明确选择 profile；保存普通设置与保持/替换/清除凭证是独立操作。
+页面明确选择 profile；页面所选 profile 的设置与凭证仅写入该 profile，保存普通设置与保持/替换/清除凭证是独立操作。
 保存前检查版本、逐字段核验保存结果，但 core 没有跨入口条件事务，不能保证检测全部竞争。
 保存成功只表示持久化；Gateway 重启后使用新快照，页面运行态保持 `unknown`。
+
+托管策略明确拒绝凭证修改时显示 `blocked`；无法核验写入结果时显示 `unknown`。两种结果都不回显拒绝正文、
+凭证或宿主路径，也不表示运行配置已经应用。
+
+fake host 与 fixture 测试只证明插件边界和本地行为，不等价于目标 Hermes Gateway/host proxy 实测；真实 Milky
+服务或 QQ 投递也需要单独的外部 smoke 证据。本次各层结果和阻塞原因记录在上述 evidence 文件中。
 
 图库浏览为只读，预览通过宿主认证按可见 ID 获取。Web 上传与命令 inbox 分开：单图 10 MiB，
 每批最多 50 张及 100 MiB，每 profile 暂存配额 500 MiB；无活动引用的上传 7 天后可显式回收。
@@ -180,7 +240,7 @@ plugins:
 
 ### Milky 最小配置
 
-建议将环境变量集中保存到 `~/.hermes/.env`：
+建议将环境变量集中保存到当前 Hermes profile 的 `.env`：
 
 ```dotenv
 MILKY_BASE_URL=http://127.0.0.1:3000
@@ -198,14 +258,14 @@ MILKY_HOME_CHANNEL=group:123456789
 | 变量 | 必需 | 作用 |
 | --- | --- | --- |
 | `MILKY_BASE_URL` | 有效地址必需，环境可选 | Milky 服务基址，也可来自 YAML settings/config；Action 使用 `<base>/api/{action}`，事件流使用 `<base>/event`。远程部署请使用 HTTPS。 |
-| `MILKY_ACCESS_TOKEN` | 是 | Milky access token，只用于 Bearer 认证。 |
+| `MILKY_ACCESS_TOKEN` | 是 | 当前 profile 的 Milky access token，只用于 Bearer 认证；通过 Hermes profile-scoped secret source 提供，不写入 YAML。 |
 | `MILKY_ALLOWED_CHATS` | 否 | 入站 chat key 白名单，支持具体 `group:<群号>`/`dm:<QQ号>` 以及 `group:*`/`dm:*`；通配符只匹配对应命名空间，可混用；留空、未配置或原生空列表表示阻止全部普通入站；全部放行需显式填写 group:* 和 dm:*。 |
 | `MILKY_WILL_POLICY` | 否 | 决定消息等待（`wait`）或触发（`trigger`）的嵌套 JSON 配置。 |
 | `MILKY_SESSION_BUFFER_SIZE` | 否 | `wait` 历史消息上限，默认 `20`；设为 `0` 可关闭历史缓冲。 |
 | `MILKY_HOME_CHANNEL` | 否 | 系统消息和 cron 的默认目标；不参与入站白名单。 |
 | `MILKY_MAX_LOCAL_MEDIA_BYTES` | 否 | 出站本地资源原始字节数上限，默认 `33554432`（`32 MiB`），合法范围 `8388608`（`8 MiB`）至 `33554432`（`32 MiB`）。 |
 | `MILKY_LONG_TEXT_FORWARD_THRESHOLD` | 否 | 超长文本合并转发阈值，默认 `0`（关闭）；只接受 `0..4096` 的十进制整数，只有可见规范化文本长度严格大于正值时才选择一个 `forward`。 |
-| `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` | 否 | 群成员入退群即时通知，默认 `false`；只接受大小写不敏感的 `true`/`false`，只在启动时读取。开启后追加固定英文 Tip，并在 Hermes 已确认或持久化恢复的 session key 且接受注入时立即触发 Agent turn。 |
+| `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` | 否 | 群成员入退群即时通知，默认 `false`；只接受大小写不敏感的 `true`/`false`，只在启动时读取，非法值会阻止启动。开启后追加固定英文 Tip，并通过 Hermes profile-scoped `inject_message(origin=...)` 提交群来源请求。同步返回 `true` 只表示已排队；上下文 drain 一次，但不代表 Gateway 已 admission 或 Agent turn 已完成，排队后的异步拒绝也无法由插件恢复。 |
 
 消息 chat key 只接受 `group:<十进制群号>` 或 `dm:<十进制 QQ 号>`；白名单另支持完整的
 `group:*` 和 `dm:*` 规则，`temp` 会话不会回退到其他目标。
@@ -216,8 +276,8 @@ MILKY_HOME_CHANNEL=group:123456789
 `~/.hermes/config.yaml`，保留已有的其他配置：
 
 启用 `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS=true` 时，还必须保留下面的
-`plugins.entries.hermes-plugin-milky.allow_gateway_injection: true`；这是允许成员事件通过
-已有 Gateway session 触发 Agent turn 的插件级授权。
+`plugins.entries.hermes-plugin-milky.allow_gateway_injection: true`；这是允许成员事件请求
+profile-scoped Gateway injection 的插件级授权。Gateway 仍会按来源 profile、群路由和当前授权同步检查。
 
 ```yaml
 # 群友共享同一个 group:<群号> 会话
@@ -286,7 +346,7 @@ platforms:
         - "context"
         - "agents"
 
-# 成员入退群即时通知需要允许插件向已有 Gateway session 注入消息
+# 成员入退群即时通知需要允许插件按已验证群 origin 请求 Gateway 注入
 plugins:
   entries:
     hermes-plugin-milky:
@@ -698,9 +758,12 @@ Agent 可显式调用 `get_resource_temp_url` 获取临时链接；该工具只�
 缺失或为 null 的 `operator_id`/`invitor_id` 会从 `Details` 省略；display text、URL、timestamp、raw
 扩展和撤回正文不会进入 body。默认 `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS=false` 时，成员事件不
 带 Tip、不即时触发 Agent，保留在 system context 等下一次普通消息。设置为大小写不敏感的 `true`
-后，成员 body 末尾追加固定英文 Tip，并只通过 Hermes 已有的 `inject_message` 交接；没有已确认或持久化恢复的
-session key、没有注入授权、宿主不可用或注入被拒绝时，带 Tip 的上下文保留，不猜测 session key，
-也不直接调用 Milky Action。配置值在启动后不热切换，修改后需要重启 Gateway。
+后，成员 body 末尾追加固定英文 Tip，并只通过 Hermes 公开的 `inject_message(origin=...)` 交接；origin
+只含事件已确认的平台、群 chat key 和群类型，不拼造 Gateway session key。profile 注入权限、Gateway
+运行状态、来源授权及当前 adapter 路由由宿主同步检查。同步拒绝、缺少来源或宿主不可用时，带 Tip 的上下文保留；
+同步排队成功后上下文 drain 一次并记为 `scheduled`，不代表 Gateway ingress admission 或 Agent turn 成功，
+异步拒绝不会回传给插件，也不保证已 drain 的上下文可恢复。此路径不经过普通消息 Gate/Will，不扣 reply cost，
+不直接调用 Milky Action。配置值在启动后不热切换，修改后需要重启 Gateway。
 
 Agent 发送本地媒体时，在回复中写入：
 
@@ -711,8 +774,10 @@ MEDIA:<local_path>
 例如 `MEDIA:~/path/to/clip.mp4`。显式调用 Hermes `send_message` 时，把同一指令放在
 `message` 参数中。图片、语音和视频使用 Milky native segment，文档使用独立 file upload。
 
-如果无需回复，只返回 `[SILENT]`，不附加其他内容；该标记由 Hermes core 抑制消息投递，Milky
-plugin 不单独解析它。
+如果无需回复，只返回 `[SILENT]`，不附加其他内容；该标记由 Hermes core 按当前三态
+`reply_expected` 处理。确定不需要回复时 core 保持静默；预期回复或状态 unknown 时 core 会生成固定
+可见兜底，但 Milky 会在 QQ 发送前精确过滤这段文案。因此 QQ 可能没有消息，即使 Hermes 仍将发送结果
+记为成功。插件不单独解析 `[SILENT]`。
 
 需要模拟自然聊天节奏时，可把区分大小写且未转义的 `[SPLIT]` 单独放在一行，或直接放在普通
 正文行中。独立行标记及其分隔边界会被删除，行中标记只删除自身；空段不发送，文本按原顺序
@@ -949,14 +1014,14 @@ opaque `sticker_id`，目标来自当前 task-local `HERMES_SESSION_PLATFORM=mil
 
 ### QQ ToolSpec
 
-插件固定提供 26 个与 Milky operationId 对齐的 QQ Action ToolSpec，另提供受限的语义 `sticker_search` 和 `sticker_send`：
+manifest 和 `outbound.tools` 固定声明 26 个与 Milky operationId 对齐的 QQ Action ToolSpec，另有受限的语义 `sticker_search` 和 `sticker_send`：
 
 - 群组和成员查询；
 - 媒体临时链接、文件、转发消息和私聊文件链接查询；
 - 戳一戳、点赞、撤回、禁言、踢人、退群和删好友；
 - 好友请求、入群请求和群邀请的接受/拒绝。
 
-请求/邀请的接受和拒绝不会由通知、普通正文、关键词或 Will 自动触发，必须由 Agent 显式提供
+上述工具需要由 Hermes 宿主加载当前根入口或新版独立 `tools.py`；当前新版独立 loader 仍受目标宿主问题阻塞。工具可用时，请求/邀请的接受和拒绝不会由通知、普通正文、关键词或 Will 自动触发，必须由 Agent 显式提供
 完整参数。26 个 Action Tool 只要取得响应体就把 UTF-8 解码后的字符串原样交给 Hermes core：
 不校验 HTTP 状态、`status`/`retcode`、`data` 结构，不重建 envelope，不附加状态码，也不脱敏
 `access_token`、`authorization`、`cookie`、`password`、`token`（任意大小写）字段。无法按 UTF-8
@@ -1048,13 +1113,15 @@ list 保留 settings、legacy、environment、default 来源名称；一致时�
 
 ## API 与开发
 
-插件不是以 Python package entry point 发布；Hermes 从根目录加载 `plugin.yaml`，再调用唯一
-公开入口 `__init__.py::register(ctx)`。
+插件不是以 Python package entry point 发布；Hermes 从根目录加载 `plugin.yaml`，再发现平台注册入口
+`__init__.py::register(ctx)` 和 Dashboard 管理入口 `dashboard/plugin_api.py`。新版 manifest client tools
+入口 `tools.py::register_tools(ctx)` 目前位于 `codex/milky-tools-entry` 分支。
 
 | 对象 | 作用 |
 | --- | --- |
-| `__init__.py::register(ctx)` | 解析启动配置，注册 platform、`/milky`、ToolSpec、standalone sender、QQ 指引 section 和 QQ 会话介绍 section。 |
-| `__init__.py::register_tools(ctx)` | 委托 `outbound.tools` 注册固定 ToolSpec；注册阶段不联网。 |
+| `__init__.py::register(ctx)` | 当前 `main` 注册 platform、`/milky`、skills、standalone sender、QQ 指引 section、QQ 会话介绍 section，并调用 `outbound.tools::register_tools(ctx)` 登记固定 Agent tools。 |
+| `tools.py::register_tools(ctx)` | 新版分支中的官方独立入口；委托 `outbound.tools` 注册 manifest 声明的固定 ToolSpec，注册阶段不联网。 |
+| `dashboard/plugin_api.py` | 由宿主 Dashboard 扩展加载的管理 API；请求按宿主确认的 profile 处理。 |
 | `MilkyAdapter` | 管理连接、停止、入站交接和出站委托。 |
 | `MilkyOutboundSender` | 校验 `group:/dm:` 目标，格式化消息并调用 Milky Action/upload。 |
 | `SlashCommandService` | 管理活动 Milky client，处理 `/milky` 和显式贴纸维护命令。 |
@@ -1062,11 +1129,12 @@ list 保留 settings、legacy、environment、default 来源名称；一致时�
 
 支持 `register_system_prompt_section` 的 Hermes 宿主会在 `after_memory` 登记
 `hermes-plugin-milky.qq-platform-guidance`，并在连接完成后使用已确认的 QQ UID 和昵称渲染
-媒体、CQ-compatible、无回复和 bundled skill 指引。旧宿主仍可完成平台注册，但只获得首句提示。
+媒体、CQ-compatible、无回复和 bundled skill 指引。Milky 要求 `register_platform` 和
+`register_system_prompt_section` 均可用；缺少任一 API 时会报告 unsupported 并停止注册。
 
 同一宿主还会登记 `hermes-plugin-milky.qq-session-context`；其 callback 只读取当前
-`HERMES_SESSION_CHAT_ID` 对应的本地安全快照，不发起网络或文件 I/O。旧宿主、没有当前 chat
-context、资料缺失或快照已淘汰时不注入会话介绍。
+`HERMES_SESSION_CHAT_ID` 对应的本地安全快照，不发起网络或文件 I/O。没有当前 chat context、资料缺失
+或快照已淘汰时不注入会话介绍。
 
 详细的稳定模块边界见 [ARCHITECTURE.md](ARCHITECTURE.md)；可观察行为和测试要求见
 [openspec/](openspec/)。新建的未归档 change 会放在 [openspec/changes/](openspec/changes/)。

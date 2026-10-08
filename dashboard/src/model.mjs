@@ -24,3 +24,14 @@ export function selectedTargets(items, selected) {
     .filter((item) => selected.includes(item.sticker_id))
     .map(({ sticker_id, version }) => ({ sticker_id, version }));
 }
+
+export function credentialStatusMessage(status) {
+  return (
+    {
+      saved: "凭证已保存；运行状态需要重启后核验。",
+      blocked: "宿主管理策略拒绝了凭证修改。",
+      unchanged: "凭证未更改。",
+      unknown: "无法确认凭证写入结果，请刷新核验。",
+    }[status] || "无法确认凭证写入结果，请刷新核验。"
+  );
+}

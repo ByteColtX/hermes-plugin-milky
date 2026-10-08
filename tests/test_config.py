@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -133,6 +135,74 @@ def test_load_config_reports_missing_required_name_without_secret(missing: str) 
         load_config(environment)
 
     assert "test-token-that-must-not-leak" not in str(error.value)
+
+
+def test_load_config_uses_profile_scoped_secrets_without_process_fallback(
+    monkeypatch, caplog
+) -> None:
+    """多 profile 使用各自 secret scope，缺失值不回退进程环境且错误不含凭证。"""
+
+    from contextvars import ContextVar
+
+    active_profile = ContextVar("synthetic_profile", default="a")
+    profiles = {
+        "a": {
+            "settings": {"base_url": "https://profile-a.invalid", "session_buffer_size": 11},
+            "environment": {"MILKY_ACCESS_TOKEN": "synthetic-token-a"},
+        },
+        "b": {
+            "settings": {"base_url": "https://profile-b.invalid", "session_buffer_size": 22},
+            "environment": {"MILKY_ACCESS_TOKEN": "synthetic-token-b"},
+        },
+        "c": {
+            "settings": {"base_url": "https://profile-c.invalid"},
+            "environment": {},
+        },
+    }
+    hermes_cli = ModuleType("hermes_cli")
+    hermes_cli.__path__ = []  # type: ignore[attr-defined]
+    core = ModuleType("hermes_cli.config")
+    core.load_config_readonly = lambda: {  # type: ignore[attr-defined]
+        "plugins": {"entries": {"hermes-plugin-milky": profiles[active_profile.get()]}}
+    }
+    gateway = ModuleType("gateway")
+    gateway.__path__ = []  # type: ignore[attr-defined]
+    platforms = ModuleType("gateway.platforms")
+    platforms.__path__ = []  # type: ignore[attr-defined]
+    shared = ModuleType("gateway.platforms._shared")
+    shared.get_scoped_secret = (  # type: ignore[attr-defined]
+        lambda name, default=None: profiles[active_profile.get()]["environment"].get(name, default)
+    )
+    monkeypatch.setitem(sys.modules, "hermes_cli", hermes_cli)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", core)
+    monkeypatch.setitem(sys.modules, "gateway", gateway)
+    monkeypatch.setitem(sys.modules, "gateway.platforms", platforms)
+    monkeypatch.setitem(sys.modules, "gateway.platforms._shared", shared)
+    process_token = "process-level-token-must-not-leak"
+    monkeypatch.setenv("MILKY_ACCESS_TOKEN", process_token)
+
+    config_a = load_config()
+    assert config_a.access_token == "synthetic-token-a"
+    assert config_a.base_url == "https://profile-a.invalid"
+    assert config_a.session_buffer_size == 11
+
+    token = active_profile.set("b")
+    try:
+        config_b = load_config()
+    finally:
+        active_profile.reset(token)
+    assert config_b.access_token == "synthetic-token-b"
+    assert config_b.base_url == "https://profile-b.invalid"
+    assert config_b.session_buffer_size == 22
+
+    token = active_profile.set("c")
+    try:
+        with pytest.raises(ConfigError) as error:
+            load_config()
+    finally:
+        active_profile.reset(token)
+    assert process_token not in str(error.value)
+    assert process_token not in caplog.text
 
 
 @pytest.mark.parametrize(

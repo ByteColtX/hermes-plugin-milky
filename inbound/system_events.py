@@ -57,6 +57,7 @@ def parse_context_event(
         sender_id: int | None = None
         receiver_id: int | None = None
         is_self_poke = False
+        origin = None
         if event.event_type == "group_nudge":
             group_id = _required_id(event.data, "group_id")
             sender_id = _required_id(event.data, "sender_id")
@@ -78,6 +79,7 @@ def parse_context_event(
             user_id = _required_id(event.data, "user_id")
             details = _details(event.data, ("group_id", "user_id", "operator_id", "invitor_id"))
             chat_key = normalize_chat_key("group", group_id)
+            origin = _member_event_origin(chat_key)
             body = f"uid {user_id} joined the group. Details: {_dump_details(details)}"
             if member_event_notifications:
                 body += _GROUP_MEMBER_INCREASE_TIP
@@ -86,6 +88,7 @@ def parse_context_event(
             user_id = _required_id(event.data, "user_id")
             details = _details(event.data, ("group_id", "user_id", "operator_id"))
             chat_key = normalize_chat_key("group", group_id)
+            origin = _member_event_origin(chat_key)
             body = f"uid {user_id} left the group. Details: {_dump_details(details)}"
             if member_event_notifications:
                 body += _GROUP_MEMBER_DECREASE_TIP
@@ -118,8 +121,19 @@ def parse_context_event(
             sender_id=sender_id,
             receiver_id=receiver_id,
             is_self_poke=is_self_poke,
+            origin=origin,
         ),
     )
+
+
+def _member_event_origin(chat_key: str) -> dict[str, str]:
+    """从已校验的成员事件身份构造公开 Gateway origin。"""
+
+    return {
+        "platform": "milky",
+        "chat_id": chat_key,
+        "chat_type": "group",
+    }
 
 
 def is_context_event(event_type: object) -> bool:

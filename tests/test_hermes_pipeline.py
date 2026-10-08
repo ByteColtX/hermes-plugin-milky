@@ -5,12 +5,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
+import sys
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 from gates import GateRegistry
+from inbound.canonical import canonicalize_event
+from inbound.hermes_mapper import _resolve_hermes_types, build_source, map_message_event
 from inbound.pipeline import InboundPipeline, PipelineResult
 from milky.resources import (
     HermesAttachmentMaterialization,
@@ -19,7 +23,13 @@ from milky.resources import (
     ResolvedTriggerBatch,
     ResourceResolver,
 )
-from session import ChatAdmissionCoordinator, ChatMetadataSnapshotStore, TtlDeduplicator, WaitBuffer
+from session import (
+    ChatAdmissionCoordinator,
+    ChatMetadataSnapshotStore,
+    ContextOnlyEvent,
+    TtlDeduplicator,
+    WaitBuffer,
+)
 from will import (
     RoutingConfig,
     RoutingWillEngine,
@@ -28,6 +38,40 @@ from will import (
 )
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "protocol"
+_MISSING_RECEIPT = object()
+
+
+def test_message_event_types_come_from_public_event_module(monkeypatch) -> None:
+    """mapper 使用 Hermes 公开 event 模块，不依赖旧 base 导出。"""
+    gateway = ModuleType("gateway")
+    gateway.__path__ = []  # type: ignore[attr-defined]
+    platforms = ModuleType("gateway.platforms")
+    platforms.__path__ = []  # type: ignore[attr-defined]
+    event_module = ModuleType("gateway.platforms.event")
+    base_module = ModuleType("gateway.platforms.base")
+
+    class PublicMessageEvent:
+        pass
+
+    class PublicMessageType:
+        pass
+
+    class LegacyMessageEvent:
+        pass
+
+    class LegacyMessageType:
+        pass
+
+    event_module.MessageEvent = PublicMessageEvent  # type: ignore[attr-defined]
+    event_module.MessageType = PublicMessageType  # type: ignore[attr-defined]
+    base_module.MessageEvent = LegacyMessageEvent  # type: ignore[attr-defined]
+    base_module.MessageType = LegacyMessageType  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "gateway", gateway)
+    monkeypatch.setitem(sys.modules, "gateway.platforms", platforms)
+    monkeypatch.setitem(sys.modules, "gateway.platforms.event", event_module)
+    monkeypatch.setitem(sys.modules, "gateway.platforms.base", base_module)
+
+    assert _resolve_hermes_types(None, None) == (PublicMessageEvent, PublicMessageType)
 
 
 def load_fixture(relative_path: str) -> object:
@@ -69,6 +113,7 @@ class FakeMessageEvent:
     metadata: dict[str, object] = field(default_factory=dict)
     timestamp: object | None = None
     allow_gateway_control: bool = True
+    reply_expected: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -89,14 +134,18 @@ class FakeHermes:
 
     def __init__(self) -> None:
         self.events: list[FakeMessageEvent] = []
-        self.inject_calls: list[tuple[str, str, str]] = []
+        self.source_build_calls: list[dict[str, object]] = []
+        self.inject_calls: list[tuple[str, str, dict[str, str]]] = []
         self.inject_result: object = True
+        self.receipt_value: object = True
+        self.handler_return_value: object = None
         self.agent_finished = asyncio.Event()
         self.handle_returned = asyncio.Event()
 
     def build_source(self, **values: object) -> FakeSource:
         """构造带 Milky 平台和 namespaced chat key 的 source。"""
 
+        self.source_build_calls.append(dict(values))
         return FakeSource(
             platform="milky",
             chat_id=values["chat_id"],  # type: ignore[arg-type]
@@ -107,23 +156,26 @@ class FakeHermes:
             message_id=values["message_id"],  # type: ignore[arg-type]
         )
 
-    async def handle_message(self, event: FakeMessageEvent) -> None:
+    async def handle_message(self, event: FakeMessageEvent) -> object:
         """模拟快速提交后由 Hermes 自己继续执行 Agent。"""
 
         self.events.append(event)
+        if self.receipt_value is not _MISSING_RECEIPT:
+            event._gateway_accepted = self.receipt_value
         self.handle_returned.set()
         asyncio.create_task(self.agent_finished.wait())
+        return self.handler_return_value
 
     def inject_message(
         self,
         content: str,
         role: str = "user",
         *,
-        session_key: str,
+        origin: dict[str, str],
     ) -> object:
         """记录宿主会话注入，不执行真实 Agent。"""
 
-        self.inject_calls.append((content, role, session_key))
+        self.inject_calls.append((content, role, dict(origin)))
         return self.inject_result
 
 
@@ -169,6 +221,25 @@ class FailingResolver(FakeResolver):
 
         self.started.set()
         raise RuntimeError("fake resource resolution failed")
+
+
+class BlockingResolver(FakeResolver):
+    """挂起资源补全，供停止时验证 detached 任务回收。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancelled = asyncio.Event()
+
+    async def resolve_batch(self, _batch: object) -> ResolvedTriggerBatch:
+        """等待 pipeline 取消当前资源补全任务。"""
+
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        raise AssertionError("资源补全应在 pipeline 关闭时取消")
 
 
 class ContextImageResolver(FakeResolver):
@@ -276,7 +347,7 @@ def make_pipeline(
     buffer_size: int = 20,
     session_context_store: ChatMetadataSnapshotStore | None = None,
     member_event_notifications: bool = False,
-    session_key_resolver=None,
+    message_event_cls: type = FakeMessageEvent,
 ) -> InboundPipeline:
     """创建只包含本地 fake 依赖的入站 pipeline。"""
 
@@ -289,12 +360,11 @@ def make_pipeline(
         wait_buffer=WaitBuffer(buffer_size),
         admission=ChatAdmissionCoordinator(),
         deduplicator=TtlDeduplicator(),
-        message_event_cls=FakeMessageEvent,
+        message_event_cls=message_event_cls,
         message_type_cls=FakeMessageType,
         mute_tracker=FakeMuteTracker(),
         session_context_store=session_context_store,
         member_event_notifications=member_event_notifications,
-        session_key_resolver=session_key_resolver,
     )
 
 
@@ -326,6 +396,151 @@ def test_group_and_friend_triggers_map_to_hermes_with_stable_source() -> None:
         assert "Current QQ Conversation Information" not in event.text
         assert "Current QQ Conversation Information" not in (event.channel_context or "")
         assert "Current QQ Conversation Information" not in repr(event.metadata)
+
+
+def test_missing_message_seq_keeps_hermes_source_and_message_ids_empty() -> None:
+    """无序号消息保留已确认的 DM 来源，但不生成稳定消息身份。"""
+
+    async def scenario() -> tuple[FakeHermes, FakeResolver, PipelineResult]:
+        hermes = FakeHermes()
+        resolver = FakeResolver()
+        pipeline = make_pipeline(hermes, resolver)
+        result = await pipeline.handle_event(
+            load_fixture("events/message_receive.friend.no_message_seq.json")
+        )
+        await pipeline.wait_idle()
+        return hermes, resolver, result
+
+    hermes, resolver, result = asyncio.run(scenario())
+
+    assert result.classification == "trigger"
+    assert result.canonical is not None
+    assert result.canonical.message_seq is None
+    assert result.canonical.dedup_key is None
+    assert "no_stable_message_seq" in result.canonical.diagnostics
+    assert resolver.calls == [("dm:800000001", "none")]
+    assert len(hermes.source_build_calls) == 1
+    assert hermes.source_build_calls[0]["chat_id"] == "dm:800000001"
+    assert hermes.source_build_calls[0]["chat_type"] == "dm"
+    assert hermes.source_build_calls[0]["message_id"] is None
+    assert len(hermes.events) == 1
+    assert hermes.events[0].source.chat_id == "dm:800000001"
+    assert hermes.events[0].source.message_id is None
+    assert hermes.events[0].message_id is None
+
+
+def test_build_source_rejects_chat_key_that_disagrees_with_scene_identity() -> None:
+    """canonical 来源字段不一致时不得交给 Hermes 创建错误会话。"""
+
+    canonical = canonicalize_event(load_fixture("events/message_receive.friend.json")).value
+    assert canonical is not None
+    mismatched = replace(canonical, chat_key="group:700000001")
+    source_calls: list[dict[str, object]] = []
+
+    with pytest.raises(ValueError, match="canonical scene identity"):
+        build_source(mismatched, lambda **values: source_calls.append(values))
+
+    assert source_calls == []
+
+
+def test_illegal_message_source_never_builds_a_fallback_hermes_target() -> None:
+    """未知场景及 temp 来源必须在 source builder 前被拒绝或忽略。"""
+
+    async def scenario() -> tuple[FakeHermes, FakeResolver, tuple[str, str]]:
+        hermes = FakeHermes()
+        resolver = FakeResolver()
+        pipeline = make_pipeline(hermes, resolver)
+        invalid = load_fixture("events/message_receive.friend.json")
+        invalid["data"]["message_scene"] = "channel"
+        invalid_result = await pipeline.handle_event(invalid)
+        temp_result = await pipeline.handle_event(load_fixture("events/message_receive.temp.json"))
+        await pipeline.wait_idle()
+        return hermes, resolver, (invalid_result.classification, temp_result.classification)
+
+    hermes, resolver, classifications = asyncio.run(scenario())
+
+    assert classifications == ("malformed", "ignored_temp")
+    assert resolver.calls == []
+    assert hermes.source_build_calls == []
+    assert hermes.events == []
+
+
+def test_reply_expected_uses_only_confirmed_scene_mention_and_quote_evidence() -> None:
+    """mapper 保留三态回复预期，unknown evidence 不会被压成未提及。"""
+
+    def map_event(payload: object) -> FakeMessageEvent:
+        result = canonicalize_event(payload, expected_self_id=900000001)
+        assert result.classification == "accepted"
+        assert result.value is not None
+        hermes = FakeHermes()
+        source = build_source(result.value, hermes.build_source)
+        return map_message_event(
+            result.value,
+            ResolvedMessage(body=result.value.body),
+            source=source,
+            message_event_cls=FakeMessageEvent,
+            message_type_cls=FakeMessageType,
+        )
+
+    friend = map_event(load_fixture("events/message_receive.friend.json"))
+
+    group_mentioned_payload = load_fixture("events/message_receive.group.all_segments.json")
+    group_mentioned_payload["data"]["segments"] = [
+        {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+        {"type": "text", "data": {"text": "明确提及"}},
+    ]
+    group_mentioned = map_event(group_mentioned_payload)
+
+    group_plain_payload = load_fixture("events/message_receive.group.all_segments.json")
+    group_plain_payload["data"]["segments"] = [
+        {"type": "text", "data": {"text": "没有 mention 或 reply"}}
+    ]
+    group_plain = map_event(group_plain_payload)
+
+    group_quoted_payload = load_fixture("events/message_receive.group.all_segments.json")
+    group_quoted_payload["data"]["segments"] = [
+        {
+            "type": "reply",
+            "data": {
+                "message_seq": 1000,
+                "sender_id": 900000001,
+                "sender_name": "合成机器人",
+                "time": 1700000005,
+                "segments": [{"type": "text", "data": {"text": "原文"}}],
+            },
+        },
+        {"type": "text", "data": {"text": "回复机器人"}},
+    ]
+    group_quoted = map_event(group_quoted_payload)
+
+    group_unknown = map_event(load_fixture("events/message_receive.group.unknown_extension.json"))
+
+    assert friend.reply_expected is True
+    assert group_mentioned.reply_expected is True
+    assert group_quoted.reply_expected is True
+    assert group_plain.reply_expected is False
+    assert group_unknown.reply_expected is None
+
+
+def test_pipeline_close_cancels_and_awaits_active_detached_handoff() -> None:
+    """停止 pipeline 时必须取消并等待仍在资源补全中的 detached handoff。"""
+
+    async def scenario() -> tuple[BlockingResolver, InboundPipeline]:
+        resolver = BlockingResolver()
+        pipeline = make_pipeline(FakeHermes(), resolver)
+        result = await pipeline.handle_event(load_fixture("events/message_receive.friend.json"))
+        assert result.classification == "trigger"
+        await resolver.started.wait()
+
+        tasks = tuple(pipeline._background_tasks)
+        assert len(tasks) == 1 and not tasks[0].done()
+        await pipeline.close()
+        assert resolver.cancelled.is_set()
+        assert not pipeline._background_tasks
+        assert all(task.done() for task in tasks)
+        return resolver, pipeline
+
+    asyncio.run(scenario())
 
 
 def test_record_events_use_voice_only_for_pure_materialized_records() -> None:
@@ -448,8 +663,8 @@ def test_historical_record_stays_in_channel_context_without_stt_media() -> None:
     assert "[record:NOT SUPPORTED]" not in event.text
 
 
-def test_member_event_notification_injects_with_confirmed_key_and_drains() -> None:
-    """启用通知时只在注入接受后消费成员事件上下文。"""
+def test_member_event_notification_uses_confirmed_origin_and_drains_when_scheduled(caplog) -> None:
+    """成员事件通过已校验群 origin 排队，且不构造 session key。"""
 
     async def scenario() -> tuple[FakeHermes, InboundPipeline]:
         hermes = FakeHermes()
@@ -457,9 +672,6 @@ def test_member_event_notification_injects_with_confirmed_key_and_drains() -> No
             hermes,
             FakeResolver(),
             member_event_notifications=True,
-            session_key_resolver=lambda chat_key: (
-                "gateway-session-key" if chat_key == "group:700000001" else None
-            ),
         )
         for fixture_name in (
             "events/system.group_member_increase.json",
@@ -469,13 +681,21 @@ def test_member_event_notification_injects_with_confirmed_key_and_drains() -> No
             assert result.classification == "observe_only"
         return hermes, pipeline
 
-    hermes, pipeline = asyncio.run(scenario())
+    with caplog.at_level(logging.DEBUG, logger="hermes_plugins.milky.inbound.pipeline"):
+        hermes, pipeline = asyncio.run(scenario())
 
     assert len(hermes.inject_calls) == 2
-    contents = [content for content, role, session_key in hermes.inject_calls]
-    assert all(role == "user" for _content, role, _session_key in hermes.inject_calls)
+    contents = [content for content, _role, _origin in hermes.inject_calls]
+    origins = [origin for _content, _role, origin in hermes.inject_calls]
+    assert all(role == "user" for _content, role, _origin in hermes.inject_calls)
     assert all(
-        session_key == "gateway-session-key" for _content, _role, session_key in hermes.inject_calls
+        origin
+        == {
+            "platform": "milky",
+            "chat_id": "group:700000001",
+            "chat_type": "group",
+        }
+        for origin in origins
     )
     assert contents[0].startswith("<event group_member_increase> uid 800000004 joined the group.")
     assert contents[1].startswith("<event group_member_decrease> uid 800000004 left the group.")
@@ -483,6 +703,14 @@ def test_member_event_notification_injects_with_confirmed_key_and_drains() -> No
     assert pipeline._system_context.size("group:700000001") == 0
     assert hermes.events == []
     assert pipeline.reply_costs == 0
+    handoff_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "operation=member_event_injection" in record.getMessage()
+    ]
+    assert len(handoff_logs) == 2
+    assert all("classification=scheduled" in entry for entry in handoff_logs)
+    assert all("accepted" not in entry for entry in handoff_logs)
 
 
 def test_member_event_notification_disabled_keeps_context_without_injection() -> None:
@@ -494,7 +722,6 @@ def test_member_event_notification_disabled_keeps_context_without_injection() ->
             hermes,
             FakeResolver(),
             member_event_notifications=False,
-            session_key_resolver=lambda _chat_key: "must-not-be-used",
         )
         result = await pipeline.handle_event(
             load_fixture("events/system.group_member_increase.json")
@@ -512,7 +739,7 @@ def test_member_event_notification_disabled_keeps_context_without_injection() ->
 
 
 def test_rejected_member_event_injection_retains_context_without_retry() -> None:
-    """注入被拒绝时保留带 Tip 的上下文且不重复提交。"""
+    """宿主同步拒绝注入时保留带 Tip 的上下文且不重复提交。"""
 
     async def scenario() -> tuple[FakeHermes, InboundPipeline]:
         hermes = FakeHermes()
@@ -521,7 +748,6 @@ def test_rejected_member_event_injection_retains_context_without_retry() -> None
             hermes,
             FakeResolver(),
             member_event_notifications=True,
-            session_key_resolver=lambda _chat_key: "gateway-session-key",
         )
         result = await pipeline.handle_event(
             load_fixture("events/system.group_member_decrease.json")
@@ -539,6 +765,77 @@ def test_rejected_member_event_injection_retains_context_without_retry() -> None
     assert "member_event_notification:failed_injection" in pipeline.diagnostics
 
 
+def test_incomplete_member_origin_is_not_submitted_and_context_is_retained() -> None:
+    """缺少完整群 origin 时不请求 Gateway，也不丢弃已保存上下文。"""
+
+    async def scenario() -> tuple[FakeHermes, InboundPipeline]:
+        hermes = FakeHermes()
+        pipeline = make_pipeline(hermes, FakeResolver(), member_event_notifications=True)
+        context = ContextOnlyEvent(
+            chat_key="group:700000001",
+            event_type="group_member_increase",
+            body="member event",
+            origin=None,
+        )
+        pipeline._system_context.append(context)
+        await pipeline._notify_member_event(context)
+        return hermes, pipeline
+
+    hermes, pipeline = asyncio.run(scenario())
+
+    assert hermes.inject_calls == []
+    assert pipeline._system_context.size("group:700000001") == 1
+    assert "member_event_notification:unsupported_origin" in pipeline.diagnostics
+
+
+def test_scheduled_member_injection_does_not_claim_async_admission(caplog) -> None:
+    """排队后 Gateway 异步拒绝不可见，插件只记录 scheduled 且不重试。"""
+
+    async def scenario() -> tuple[FakeHermes, InboundPipeline, list[bool]]:
+        hermes = FakeHermes()
+        pipeline = make_pipeline(hermes, FakeResolver(), member_event_notifications=True)
+        dispatch_results: list[bool] = []
+        rejected = asyncio.Event()
+
+        async def reject_after_scheduling() -> None:
+            await asyncio.sleep(0)
+            dispatch_results.append(False)
+            rejected.set()
+
+        normal_inject = hermes.inject_message
+
+        def schedule_then_reject(
+            content: str,
+            role: str = "user",
+            *,
+            origin: dict[str, str],
+        ) -> object:
+            result = normal_inject(content, role=role, origin=origin)
+            asyncio.create_task(reject_after_scheduling())
+            return result
+
+        hermes.inject_message = schedule_then_reject  # type: ignore[method-assign]
+        await pipeline.handle_event(load_fixture("events/system.group_member_increase.json"))
+        await rejected.wait()
+        return hermes, pipeline, dispatch_results
+
+    with caplog.at_level(logging.DEBUG, logger="hermes_plugins.milky.inbound.pipeline"):
+        hermes, pipeline, dispatch_results = asyncio.run(scenario())
+
+    handoff_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "operation=member_event_injection" in record.getMessage()
+    ]
+    assert dispatch_results == [False]
+    assert len(hermes.inject_calls) == 1
+    assert len(handoff_logs) == 1
+    assert "classification=scheduled" in handoff_logs[0]
+    assert "accepted" not in handoff_logs[0]
+    assert pipeline._system_context.size("group:700000001") == 0
+    assert not any("failed_injection" in item for item in pipeline.diagnostics)
+
+
 def test_member_toggle_does_not_inject_nudge_or_recall_events() -> None:
     """成员通知开关不改变 nudge 和 recall 的 context-only 行为。"""
 
@@ -548,7 +845,6 @@ def test_member_toggle_does_not_inject_nudge_or_recall_events() -> None:
             hermes,
             FakeResolver(),
             member_event_notifications=True,
-            session_key_resolver=lambda _chat_key: "gateway-session-key",
         )
         for fixture_name in (
             "events/system.group_nudge.json",
@@ -842,6 +1138,113 @@ def test_pipeline_logs_wait_trigger_gate_and_handoff(caplog) -> None:
     assert all("合成历史" not in message and "合成触发" not in message for message in messages)
 
 
+@pytest.mark.parametrize(
+    ("receipt", "handler_return", "expected"),
+    [
+        (True, False, "accepted"),
+        (False, True, "not_accepted"),
+        ("true", True, "unknown"),
+        (None, False, "unknown"),
+        (_MISSING_RECEIPT, True, "unknown"),
+    ],
+)
+def test_handoff_classification_uses_only_gateway_receipt(
+    caplog,
+    receipt: object,
+    handler_return: object,
+    expected: str,
+) -> None:
+    """普通 handler 返回值不替代严格的 Gateway admission receipt。"""
+
+    async def scenario() -> tuple[FakeHermes, InboundPipeline]:
+        hermes = FakeHermes()
+        hermes.receipt_value = receipt
+        hermes.handler_return_value = handler_return
+        pipeline = make_pipeline(hermes, FakeResolver())
+        await pipeline.handle_event(load_fixture("events/message_receive.friend.json"))
+        await pipeline.wait_idle()
+        return hermes, pipeline
+
+    with caplog.at_level(logging.DEBUG, logger="hermes_plugins.milky.inbound.pipeline"):
+        hermes, pipeline = asyncio.run(scenario())
+
+    assert len(hermes.events) == 1
+    handoff = [
+        record.getMessage()
+        for record in caplog.records
+        if "event=milky.inbound" in record.getMessage() and "stage=handoff" in record.getMessage()
+    ]
+    assert len(handoff) == 1
+    assert f"classification={expected}" in handoff[0]
+    assert ("classification=accepted" in handoff[0]) is (expected == "accepted")
+    if expected != "accepted":
+        assert pipeline._buffer.diagnostics[-1].reason == "detached_handoff_failed"
+
+
+def test_unreadable_gateway_receipt_is_unknown_without_retry(caplog) -> None:
+    """私有 receipt 读取异常只能产生 unknown handoff，不能再次提交。"""
+
+    class UnreadableReceiptEvent(FakeMessageEvent):
+        """模拟目标字段存在但无法读取。"""
+
+        @property
+        def _gateway_accepted(self) -> bool:
+            raise RuntimeError("receipt access failed")
+
+    async def scenario() -> tuple[FakeHermes, InboundPipeline]:
+        hermes = FakeHermes()
+        hermes.receipt_value = _MISSING_RECEIPT
+        pipeline = make_pipeline(hermes, FakeResolver(), message_event_cls=UnreadableReceiptEvent)
+        await pipeline.handle_event(load_fixture("events/message_receive.friend.json"))
+        await pipeline.wait_idle()
+        return hermes, pipeline
+
+    with caplog.at_level(logging.DEBUG, logger="hermes_plugins.milky.inbound.pipeline"):
+        hermes, pipeline = asyncio.run(scenario())
+
+    assert len(hermes.events) == 1
+    assert any("classification=unknown" in record.getMessage() for record in caplog.records)
+    assert all("receipt access failed" not in record.getMessage() for record in caplog.records)
+    assert pipeline._buffer.diagnostics[-1].reason == "detached_handoff_failed"
+
+
+def test_handler_exception_is_unknown_and_never_retried(caplog) -> None:
+    """handler 异常不形成 accepted，也不会重提可能已产生副作用的消息。"""
+
+    class RaisingHermes(FakeHermes):
+        """计数后抛出异常的宿主 fake。"""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        async def handle_message(self, _event: FakeMessageEvent) -> object:
+            self.calls += 1
+            raise RuntimeError("sensitive handler detail")
+
+    async def scenario() -> tuple[RaisingHermes, InboundPipeline]:
+        hermes = RaisingHermes()
+        pipeline = make_pipeline(hermes, FakeResolver())
+        await pipeline.handle_event(load_fixture("events/message_receive.friend.json"))
+        await pipeline.wait_idle()
+        return hermes, pipeline
+
+    with caplog.at_level(logging.DEBUG, logger="hermes_plugins.milky.inbound.pipeline"):
+        hermes, pipeline = asyncio.run(scenario())
+
+    assert hermes.calls == 1
+    handoff = [
+        record.getMessage()
+        for record in caplog.records
+        if "event=milky.inbound" in record.getMessage() and "stage=handoff" in record.getMessage()
+    ]
+    assert len(handoff) == 1
+    assert "classification=unknown" in handoff[0]
+    assert "accepted" not in handoff[0]
+    assert all("sensitive handler detail" not in record.getMessage() for record in caplog.records)
+    assert pipeline._buffer.diagnostics[-1].reason == "detached_handoff_failed"
+
+
 def test_context_images_precede_current_images_and_deduplicate_media_paths() -> None:
     """历史图片应先于当前附件进入 media_urls，并按路径去重。"""
 
@@ -1004,6 +1407,9 @@ def test_duplicate_gate_deny_temp_and_system_event_stop_before_resolver_or_herme
         assert (
             await pipeline.handle_event(load_fixture("events/system.message_recall.json"))
         ).classification == "observe_only"
+        assert (
+            await pipeline.handle_event(load_fixture("events/unknown.event_extension.json"))
+        ).classification == "observe_only"
         await pipeline.wait_idle()
         return [call[1] for call in resolver.calls], hermes.events, observed
 
@@ -1012,13 +1418,39 @@ def test_duplicate_gate_deny_temp_and_system_event_stop_before_resolver_or_herme
 
     assert calls == ["1001"]
     assert [event.message_id for event in events] == ["1001"]
-    assert observed == ["message_recall"]
+    assert observed == ["message_recall", "future_event_extension"]
     assert any(
         "event=milky.inbound" in record.getMessage()
         and "stage=gate" in record.getMessage()
         and "reason=self_message" in record.getMessage()
         for record in caplog.records
     )
+
+
+def test_pipeline_uses_gateway_message_deduplicator_for_canonical_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    target_hermes_helpers,
+) -> None:
+    """目标 Gateway cache 仍在资源补全、Will 和 handoff 前拦截 canonical 重复。"""
+
+    helpers = target_hermes_helpers
+
+    async def scenario() -> tuple[FakeHermes, FakeResolver, tuple[str, str]]:
+        hermes = FakeHermes()
+        resolver = FakeResolver()
+        pipeline = make_pipeline(hermes, resolver)
+        pipeline._deduplicator = helpers.MessageDeduplicator(max_size=10_000, ttl_seconds=300)
+        event = load_fixture("events/message_receive.friend.json")
+        first = await pipeline.handle_event(event)
+        repeated = await pipeline.handle_event(event)
+        await pipeline.wait_idle()
+        return hermes, resolver, (first.classification, repeated.classification)
+
+    hermes, resolver, classifications = asyncio.run(scenario())
+
+    assert classifications == ("trigger", "duplicate")
+    assert resolver.calls == [("dm:800000001", "1001")]
+    assert len(hermes.events) == 1
 
 
 def test_message_recall_stays_observe_only_without_normal_pipeline_side_effects() -> None:
@@ -1420,6 +1852,56 @@ def test_same_chat_triggers_do_not_wait_for_the_previous_hermes_agent() -> None:
     assert message_ids == ["3001", "3002"]
     assert agent_finished is False
     assert resolve_count == 2
+
+
+def test_same_chat_detached_batches_keep_ingress_order_when_resolution_times_vary() -> None:
+    """同 chat 的资源解析与 Hermes handoff 按 ingress 顺序串行。"""
+
+    async def scenario() -> tuple[list[str], bool]:
+        class DelayedFirstResolver(FakeResolver):
+            """让第一条资源解析等待，暴露 detached task 的乱序风险。"""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.first_started = asyncio.Event()
+                self.release_first = asyncio.Event()
+                self.second_started = asyncio.Event()
+
+            async def resolve_batch(self, batch: object) -> ResolvedTriggerBatch:
+                message_seq = batch.current.message_seq
+                if message_seq == "3301":
+                    self.first_started.set()
+                    await self.release_first.wait()
+                else:
+                    self.second_started.set()
+                self.calls.append((batch.chat_key, message_seq or "none"))
+                current = ResolvedMessage(body=batch.current.body)
+                return ResolvedTriggerBatch(batch.chat_key, (), current)
+
+        hermes = FakeHermes()
+        resolver = DelayedFirstResolver()
+        pipeline = make_pipeline(
+            hermes,
+            resolver,
+            routing=RoutingConfig(direct="trigger", mention="trigger", all_message="wait"),
+        )
+        first = load_fixture("events/message_receive.friend.json")
+        first["data"]["message_seq"] = 3301
+        second = load_fixture("events/message_receive.friend.json")
+        second["data"]["message_seq"] = 3302
+        assert (await pipeline.handle_event(first)).classification == "trigger"
+        assert (await pipeline.handle_event(second)).classification == "trigger"
+        await resolver.first_started.wait()
+        await asyncio.sleep(0)
+        second_started_before_release = resolver.second_started.is_set()
+        resolver.release_first.set()
+        await pipeline.wait_idle()
+        return [event.message_id or "" for event in hermes.events], second_started_before_release
+
+    message_ids, second_started_before_release = asyncio.run(scenario())
+
+    assert second_started_before_release is False
+    assert message_ids == ["3301", "3302"]
 
 
 @pytest.mark.parametrize("engine_name", ["routing", "willingness"])

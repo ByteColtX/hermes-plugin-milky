@@ -17,7 +17,7 @@ from stickers.maintenance import (
     parse_visual_response,
 )
 from stickers.storage import SCHEMA_VERSION, StickerStore
-from stickers.validation import validate_image_file
+from stickers.validation import MAX_IMAGE_BYTES, validate_image_file
 
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -292,6 +292,29 @@ def test_image_validation_rejects_text(tmp_path: Path) -> None:
         pass
     else:
         raise AssertionError("text must be rejected")
+
+
+def test_oversized_inbox_file_never_reaches_vision_or_library(tmp_path: Path) -> None:
+    """超限候选在视觉调用前拒绝，不产生成功条目。"""
+
+    inbox = tmp_path / "stickers" / "inbox"
+    inbox.mkdir(parents=True)
+    source = inbox / "oversized.png"
+    with source.open("wb") as handle:
+        handle.truncate(MAX_IMAGE_BYTES + 1)
+    calls: list[object] = []
+    service = StickerMaintenanceService(
+        data_dir=tmp_path,
+        vision_analyzer=lambda *args, **kwargs: calls.append((args, kwargs)) or _vision(),
+    )
+
+    result = asyncio.run(service.add())
+
+    assert result["rejected"] == 1
+    assert result["created"] == 0
+    assert calls == []
+    assert source.is_file()
+    assert not list((tmp_path / "stickers" / "library").rglob("*"))
 
 
 def test_slash_service_routes_explicit_sticker_without_milky_client(tmp_path: Path) -> None:

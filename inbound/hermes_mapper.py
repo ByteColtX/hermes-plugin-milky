@@ -27,6 +27,7 @@ from milky.resources import (
     ResourceDiagnostic,
 )
 from session.buffer import render_message_record
+from session.identity import make_dedup_key, normalize_chat_key
 
 from .commands import recognize_slash_command
 
@@ -126,6 +127,7 @@ def map_message_event(
         metadata=metadata,
         timestamp=datetime.fromtimestamp(_required_int(message, "timestamp"), tz=UTC),
         allow_gateway_control=False,
+        reply_expected=_reply_expected(message),
     )
 
 
@@ -169,6 +171,7 @@ def map_command_event(
         },
         timestamp=datetime.fromtimestamp(_required_int(message, "timestamp"), tz=UTC),
         allow_gateway_control=True,
+        reply_expected=True,
     )
 
 
@@ -181,6 +184,14 @@ def build_source(
     scene = _required_text(message, "scene")
     if scene not in {"friend", "group"}:
         raise ValueError("message scene is unsupported")
+    peer_id = _required_int(message, "peer_id")
+    chat_key = _required_text(message, "chat_key")
+    expected_chat_key = normalize_chat_key(scene, peer_id)
+    if chat_key != expected_chat_key:
+        raise ValueError("message chat key disagrees with canonical scene identity")
+    message_seq = _optional_text(message, "message_seq")
+    if message_seq is not None:
+        make_dedup_key(_required_int(message, "self_id"), chat_key, message_seq)
     group = getattr(message, "group", None)
     friend = getattr(message, "friend", None)
     chat_name = None
@@ -189,12 +200,12 @@ def build_source(
     elif scene == "friend" and friend is not None:
         chat_name = _optional_text(friend, "nickname")
     return source_builder(
-        chat_id=_required_text(message, "chat_key"),
+        chat_id=chat_key,
         chat_name=chat_name,
         chat_type="group" if scene == "group" else "dm",
         user_id=str(_required_int(message, "sender_id")),
         user_name=_required_text(message, "sender_name"),
-        message_id=_optional_text(message, "message_seq"),
+        message_id=message_seq,
     )
 
 
@@ -204,12 +215,8 @@ def _resolve_hermes_types(
 ) -> tuple[type, type]:
     if message_event_cls is not None and message_type_cls is not None:
         return message_event_cls, message_type_cls
-    try:
-        from gateway.platforms.base import MessageEvent, MessageType
-    except ImportError as error:
-        raise RuntimeError(
-            "Hermes MessageEvent types are unavailable; inject them at the host boundary"
-        ) from error
+    from gateway.platforms.event import MessageEvent, MessageType
+
     return message_event_cls or MessageEvent, message_type_cls or MessageType
 
 
@@ -256,6 +263,59 @@ def _message_type(message: object, materializations: tuple[object, ...], type_cl
     if kinds == {"document"}:
         return type_cls.DOCUMENT
     return type_cls.TEXT
+
+
+def _reply_expected(message: object) -> bool | None:
+    """只依据已确认的场景身份和结构化 mention/reply 证据判断回复预期。"""
+
+    scene = getattr(message, "scene", None)
+    try:
+        self_id = _required_int(message, "self_id")
+        peer_id = _required_int(message, "peer_id")
+        sender_id = _required_int(message, "sender_id")
+        chat_key = _required_text(message, "chat_key")
+        if normalize_chat_key(scene, peer_id) != chat_key:
+            return None
+    except ValueError:
+        return None
+
+    if scene == "friend":
+        if sender_id != peer_id or sender_id == self_id:
+            return None
+        return True
+    if scene != "group":
+        return None
+
+    mention_kinds = getattr(message, "mention_kinds", None)
+    if not isinstance(mention_kinds, tuple) or not mention_kinds:
+        return None
+    if any(kind not in {"self", "all", "here", "none"} for kind in mention_kinds):
+        return None
+    if "self" in mention_kinds:
+        return True
+
+    has_quote = getattr(message, "has_quote", None)
+    quote_target_is_self = getattr(message, "quote_target_is_self", None)
+    if not isinstance(has_quote, bool) or not isinstance(quote_target_is_self, bool):
+        return None
+    if has_quote:
+        references = getattr(message, "reply_references", None)
+        if (
+            not isinstance(references, tuple)
+            or not references
+            or any(getattr(reference, "complete", False) is not True for reference in references)
+        ):
+            return None
+        if quote_target_is_self:
+            return True
+
+    diagnostics = getattr(message, "diagnostics", None)
+    if not isinstance(diagnostics, tuple) or any(
+        item in {"unknown_segment", "unsupported_segment", "malformed_reply"}
+        for item in diagnostics
+    ):
+        return None
+    return False
 
 
 def _remove_materialized_record_placeholders(

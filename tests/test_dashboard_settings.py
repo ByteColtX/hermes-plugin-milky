@@ -125,13 +125,56 @@ def test_credential_rejected_write_is_not_reported_saved(inputs, monkeypatch):
     lifecycle.remove_provider_env_credential = lambda *_: None
     core = ModuleType("hermes_cli.config")
     core.load_env = lambda: {"MILKY_ACCESS_TOKEN": "synthetic-original"}
+    core.env_write_refusal = lambda *_: None
     monkeypatch.setitem(sys.modules, "hermes_cli.credential_lifecycle", lifecycle)
     monkeypatch.setitem(sys.modules, "hermes_cli.config", core)
     replacement = settings.credential("replace", "synthetic-new")
     cleared = settings.credential("clear")
-    assert replacement["status"] == cleared["status"] == "blocked"
+    assert replacement["status"] == cleared["status"] == "unknown"
     assert "synthetic-original" not in repr(replacement)
     assert "synthetic-new" not in repr(replacement)
+
+
+@pytest.mark.parametrize("action", ["replace", "clear"])
+def test_explicit_managed_credential_refusal_is_blocked_and_sanitized(inputs, monkeypatch, action):
+    lifecycle = ModuleType("hermes_cli.credential_lifecycle")
+    writes = []
+    lifecycle.save_provider_env_credential = lambda *args: writes.append(("save", args))
+    lifecycle.remove_provider_env_credential = lambda *args: writes.append(("remove", args))
+    core = ModuleType("hermes_cli.config")
+    refusal = "managed scope path with private details"
+    core.env_write_refusal = lambda _key, _action: refusal
+    core.load_env = lambda: {"MILKY_ACCESS_TOKEN": "synthetic-original"}
+    monkeypatch.setitem(sys.modules, "hermes_cli.credential_lifecycle", lifecycle)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", core)
+
+    result = settings.credential(action, "synthetic-new")
+
+    assert result["status"] == "blocked"
+    assert result["restart_required"] is True
+    assert writes == []
+    assert refusal not in repr(result)
+    assert "synthetic-original" not in repr(result)
+    assert "synthetic-new" not in repr(result)
+
+
+def test_unrelated_credential_value_error_is_unknown_and_sanitized(inputs, monkeypatch):
+    lifecycle = ModuleType("hermes_cli.credential_lifecycle")
+    lifecycle.save_provider_env_credential = lambda *_: (_ for _ in ()).throw(
+        ValueError("private write failure path")
+    )
+    lifecycle.remove_provider_env_credential = lambda *_: None
+    core = ModuleType("hermes_cli.config")
+    core.env_write_refusal = lambda *_: None
+    core.load_env = lambda: {"MILKY_ACCESS_TOKEN": "synthetic-original"}
+    monkeypatch.setitem(sys.modules, "hermes_cli.credential_lifecycle", lifecycle)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", core)
+
+    result = settings.credential("replace", "synthetic-new")
+
+    assert result["status"] == "unknown"
+    assert "private write failure path" not in repr(result)
+    assert "synthetic-new" not in repr(result)
 
 
 def test_malformed_host_config_is_sanitized(monkeypatch):

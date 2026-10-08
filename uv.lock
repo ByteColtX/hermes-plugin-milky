@@ -46,29 +46,29 @@ name = "hermes-plugin-milky"
 version = "2.0.2"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx" },
     { name = "jieba" },
     { name = "pillow" },
+    { name = "python-multipart" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
-    { name = "python-multipart" },
     { name = "ruff" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.27,<1" },
     { name = "jieba", specifier = ">=0.42.1" },
     { name = "pillow", specifier = ">=12.3.0" },
+    { name = "python-multipart", specifier = ">=0.0.32" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.27,<1" },
     { name = "pytest", specifier = ">=8.0" },
-    { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "ruff", specifier = ">=0.15" },
 ]
 

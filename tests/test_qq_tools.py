@@ -10,12 +10,11 @@ from typing import Any
 
 import pytest
 
-from __init__ import register_tools
 from config import load_config
 from milky.client import ActionError, MilkyClient, TransportResponse
 from milky.parser import parse_event
 from outbound.sender import MilkyOutboundSender
-from outbound.tools import TOOL_SPECS, bind_sender, unbind_sender
+from outbound.tools import TOOL_SPECS, bind_sender, register_tools, unbind_sender
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "qq_tools"
 RESOURCE_TOOL_NAMES = ("get_resource_temp_url",)
@@ -1038,6 +1037,19 @@ def test_client_delivers_http_non_json_and_classifies_unknown_transport_without_
         assert error_info.value.classification == "transport_unknown"
         assert "transport detail" not in str(error_info.value)
     assert len(transport.requests) == 1
+
+
+def test_unregistered_action_is_rejected_before_network() -> None:
+    """任意 Action 不在固定 operationId 集合中，网络前即被拒绝。"""
+
+    transport = FakeTransport([])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+
+    with pytest.raises(ActionError) as error_info:
+        asyncio.run(client.call_tool("arbitrary_admin_action", {}))
+
+    assert error_info.value.classification == "unsupported"
+    assert transport.requests == []
 
 
 def test_registered_handlers_cover_fixed_specs_and_dispatch_only_explicitly() -> None:

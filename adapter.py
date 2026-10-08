@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import logging
 from collections import deque
+from collections.abc import Mapping
 
 from config import DEFAULT_MAX_LOCAL_MEDIA_BYTES, MilkyConfig, load_config
 from gates import GateRegistry
@@ -29,13 +30,13 @@ from session import (
     ChatMetadataSnapshotStore,
     TtlDeduplicator,
     WaitBuffer,
-    validate_chat_key,
 )
 from state import MuteTracker
 from state.chat_policy import ChatPolicy
 from state.runtime_status import RuntimeStatus
 from will import build_engine
 
+_HERMES_PLATFORM_AVAILABLE = False
 try:
     from gateway.config import Platform
     from gateway.platforms.base import BasePlatformAdapter
@@ -66,11 +67,43 @@ except ImportError:  # pragma: no cover - Hermes 未安装时的测试兼容分�
             self._running = False
 
     Platform = _FallbackPlatform
+else:
+    _HERMES_PLATFORM_AVAILABLE = True
+
+try:
+    from gateway.platforms.helpers import MessageDeduplicator as _HermesMessageDeduplicator
+except ImportError:  # pragma: no cover - Hermes 未安装时使用本地单元测试实现
+    _HermesMessageDeduplicator = None
+
+try:
+    from gateway.platforms.base import SendResult as _HermesSendResult
+except ImportError:  # pragma: no cover - 独立单元测试使用本地兼容结果
+    _HermesSendResult = None
 
 
 logger = logging.getLogger("hermes_plugins.milky.adapter")
 
 _MAX_DIAGNOSTICS = 128
+_CANONICAL_DEDUP_CAPACITY = 10_000
+_CANONICAL_DEDUP_TTL_SECONDS = 300
+
+
+def _new_canonical_deduplicator():
+    """创建可由目标 Gateway adapter replacement 继承的 canonical 去重缓存。"""
+
+    if _HermesMessageDeduplicator is not None:
+        return _HermesMessageDeduplicator(
+            max_size=_CANONICAL_DEDUP_CAPACITY,
+            ttl_seconds=_CANONICAL_DEDUP_TTL_SECONDS,
+        )
+    if _HERMES_PLATFORM_AVAILABLE:
+        raise RuntimeError(
+            "Milky platform unsupported: Gateway message deduplicator is unavailable"
+        )
+    return TtlDeduplicator(
+        ttl_seconds=_CANONICAL_DEDUP_TTL_SECONDS,
+        max_entries=_CANONICAL_DEDUP_CAPACITY,
+    )
 
 
 class _HermesMediaHelperBridge:
@@ -157,7 +190,7 @@ class MilkyAdapter(BasePlatformAdapter):
         self._gate_registry = GateRegistry(self._chat_policy)
         self._wait_buffer = WaitBuffer(self._config.session_buffer_size)
         self._admission = ChatAdmissionCoordinator()
-        self._deduplicator = TtlDeduplicator()
+        self._deduplicator = _new_canonical_deduplicator()
         self._outbound = (
             outbound_sender
             if outbound_sender is not None
@@ -191,7 +224,6 @@ class MilkyAdapter(BasePlatformAdapter):
             else ChatMetadataSnapshotStore()
         )
         self._plugin_context = plugin_context
-        self._confirmed_session_keys: dict[str, str] = {}
         self._pipeline = pipeline
         self._self_id: int | None = None
         self._event_task: asyncio.Task[None] | None = None
@@ -308,7 +340,6 @@ class MilkyAdapter(BasePlatformAdapter):
                             rules = await rules
                         self._chat_policy.publish(rules)
                     await self._initialize_state()
-                await self._restore_confirmed_session_keys()
                 if self._pipeline is None:
                     self._pipeline = self._build_pipeline()
                 if not self._pipeline_started:
@@ -414,20 +445,23 @@ class MilkyAdapter(BasePlatformAdapter):
 
         del reply_to
         if not self._connected or self._closed:
-            return OutboundSendResult(
-                success=False,
-                error="unsupported: adapter is disconnected",
-                error_kind="unsupported",
+            return _platform_send_result(
+                OutboundSendResult(
+                    success=False,
+                    error="unsupported: adapter is disconnected",
+                    error_kind="unsupported",
+                )
             )
         if should_intercept_text(content):
             # Gateway 只按 success 终结 obligation，因此此过滤仍可能记为 delivered。
-            return OutboundSendResult(success=True)
-        return await self._outbound.send(chat_id, content, None, metadata)
+            return _platform_send_result(OutboundSendResult(success=True))
+        return _platform_send_result(await self._outbound.send(chat_id, content, None, metadata))
 
     async def handle_message(self, event: object) -> None:
-        """记录宿主确认的 session key 后交给 Hermes 普通消息入口。"""
+        """只在已同步 ready 后交给 Hermes 普通消息入口。"""
 
-        self._remember_confirmed_session_key(event)
+        if not self.ready:
+            return
         result = super().handle_message(event)
         if inspect.isawaitable(result):
             await result
@@ -437,48 +471,17 @@ class MilkyAdapter(BasePlatformAdapter):
         content: str,
         role: str = "user",
         *,
-        session_key: str | None = None,
+        origin: Mapping[str, str] | None = None,
     ) -> bool:
-        """调用 Hermes plugin context 的已授权会话注入接口。"""
+        """调用 Hermes plugin context 的 profile-scoped origin 注入接口。"""
 
         injector = getattr(self._plugin_context, "inject_message", None)
-        if (
-            not callable(injector)
-            or not isinstance(session_key, str)
-            or not session_key.strip()
-            or session_key.strip() not in self._confirmed_session_keys.values()
-        ):
+        if not callable(injector) or not isinstance(origin, Mapping):
             return False
         try:
-            return injector(content, role=role, session_key=session_key.strip()) is True
+            return injector(content, role=role, origin=dict(origin)) is True
         except Exception:  # noqa: BLE001 - 注入失败必须由 pipeline 保留上下文
             return False
-
-    def _remember_confirmed_session_key(self, event: object) -> None:
-        """只保存 Hermes 提供或其官方 runner 解析出的 session key。"""
-
-        source = getattr(event, "source", None)
-        chat_key = getattr(source, "chat_id", None)
-        if not isinstance(chat_key, str) or not chat_key:
-            return
-        metadata = getattr(event, "metadata", None)
-        session_key = metadata.get("gateway_session_key") if isinstance(metadata, dict) else None
-        if not isinstance(session_key, str) or not session_key.strip():
-            runner = getattr(self, "gateway_runner", None)
-            resolver = getattr(runner, "_session_key_for_source", None)
-            if not callable(resolver):
-                return
-            try:
-                session_key = resolver(source)
-            except Exception:  # noqa: BLE001 - 未确认 key 不得推断
-                return
-        if isinstance(session_key, str) and session_key.strip():
-            self._confirmed_session_keys[chat_key] = session_key.strip()
-
-    def _resolve_confirmed_session_key(self, chat_key: str) -> str | None:
-        """返回已经从 Hermes 入站交接确认的 session key。"""
-
-        return self._confirmed_session_keys.get(chat_key)
 
     async def send_image(
         self,
@@ -636,22 +639,26 @@ class MilkyAdapter(BasePlatformAdapter):
         """在不触发宿主 fallback 的前提下调用 sender 方法。"""
 
         if not self._connected or self._closed:
-            return OutboundSendResult(
-                success=False,
-                error="unsupported: adapter is disconnected",
-                error_kind="unsupported",
+            return _platform_send_result(
+                OutboundSendResult(
+                    success=False,
+                    error="unsupported: adapter is disconnected",
+                    error_kind="unsupported",
+                )
             )
         method = getattr(self._outbound, method_name, None)
         if not callable(method):
-            return OutboundSendResult(
-                success=False,
-                error="unsupported: outbound capability is unavailable",
-                error_kind="unsupported",
+            return _platform_send_result(
+                OutboundSendResult(
+                    success=False,
+                    error="unsupported: outbound capability is unavailable",
+                    error_kind="unsupported",
+                )
             )
         result = method(*args, **kwargs)
         if inspect.isawaitable(result):
-            return await result
-        return result
+            result = await result
+        return _platform_send_result(result)
 
     async def _prepare_outbound_attachment(
         self,
@@ -759,7 +766,6 @@ class MilkyAdapter(BasePlatformAdapter):
         self._will_engine = injected["will_engine"] or build_engine(self._config.will_policy)
         self._wait_buffer = WaitBuffer(self._config.session_buffer_size)
         self._admission = ChatAdmissionCoordinator()
-        self._deduplicator = TtlDeduplicator()
         self._outbound = injected["outbound_sender"] or MilkyOutboundSender(
             self._client,
             mute_tracker=self._mute_tracker,
@@ -790,58 +796,6 @@ class MilkyAdapter(BasePlatformAdapter):
             mute_tracker=self._mute_tracker,
             session_context_store=self._session_context_store,
             member_event_notifications=self._config.group_member_event_notifications,
-            session_key_resolver=self._resolve_confirmed_session_key,
-        )
-
-    async def _restore_confirmed_session_keys(self) -> None:
-        """从 Hermes 已持久化的 session route 恢复可注入会话。"""
-
-        runner = getattr(self, "gateway_runner", None)
-        session_store = getattr(runner, "async_session_store", None)
-        list_sessions = getattr(session_store, "list_sessions", None)
-        if not callable(list_sessions):
-            return
-        try:
-            entries = list_sessions()
-            if inspect.isawaitable(entries):
-                entries = await entries
-        except Exception:  # noqa: BLE001 - 恢复失败不应阻断 Milky 连接
-            self._record("session_key_restore_failed")
-            return
-        if not isinstance(entries, (list, tuple)):
-            self._record("session_key_restore_malformed")
-            return
-
-        restored = 0
-        for entry in entries:
-            session_key = getattr(entry, "session_key", None)
-            origin = getattr(entry, "origin", None)
-            platform_value = getattr(origin, "platform", None)
-            platform = getattr(platform_value, "value", platform_value)
-            raw_chat_key = getattr(origin, "chat_id", None)
-            if (
-                platform != self.PLATFORM_NAME
-                or not isinstance(session_key, str)
-                or not session_key.strip()
-                or not isinstance(raw_chat_key, str)
-            ):
-                continue
-            try:
-                chat_key = validate_chat_key(raw_chat_key)
-            except ValueError:
-                continue
-            if chat_key in self._confirmed_session_keys:
-                continue
-            self._confirmed_session_keys[chat_key] = session_key.strip()
-            restored += 1
-        logger.info(
-            render_event(
-                "milky.lifecycle",
-                stage="session",
-                operation="restored",
-                classification="accepted",
-                session_count=restored,
-            )
         )
 
     async def _run_event_stream(self) -> None:
@@ -1069,7 +1023,40 @@ def _materialization_failure(
                 duration_ms=0,
             )
         )
-    return result
+    return _platform_send_result(result)
+
+
+def _platform_send_result(result: object) -> object:
+    """把插件边界产生的兼容结果映射到目标 Hermes `SendResult`。"""
+
+    result_type = _HermesSendResult
+    if result_type is None or isinstance(result, result_type):
+        return result
+    if not isinstance(result, OutboundSendResult):
+        return result_type(
+            success=False,
+            error="unknown: outbound result is malformed",
+            retryable=False,
+            error_kind="unknown",
+        )
+    if not isinstance(result.success, bool):
+        return result_type(
+            success=False,
+            error="unknown: outbound result is malformed",
+            retryable=False,
+            error_kind="unknown",
+        )
+    classification = result.error_kind or result.result_classification
+    return result_type(
+        success=result.success,
+        message_id=result.message_id,
+        error=result.error,
+        raw_response=result.raw_response,
+        retryable=result.retryable is True,
+        retry_after=result.retry_after,
+        continuation_message_ids=result.continuation_message_ids,
+        error_kind=classification,
+    )
 
 
 __all__ = ["MilkyAdapter"]

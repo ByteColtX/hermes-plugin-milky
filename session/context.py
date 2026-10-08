@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 from threading import RLock
 
@@ -22,6 +23,7 @@ class ContextOnlyEvent:
     sender_id: int | None = None
     receiver_id: int | None = None
     is_self_poke: bool = False
+    origin: Mapping[str, str] | None = None
 
     @property
     def sequence(self) -> int | None:
@@ -103,6 +105,7 @@ class SystemContextBuffer:
         sender_id: int | None = None
         receiver_id: int | None = None
         is_self_poke = False
+        origin: Mapping[str, str] | None = None
         if isinstance(event_or_chat_key, ContextOnlyEvent):
             if event_type is not None or body is not None:
                 raise TypeError("event fields must be omitted for ContextOnlyEvent")
@@ -113,6 +116,7 @@ class SystemContextBuffer:
             sender_id = event.sender_id
             receiver_id = event.receiver_id
             is_self_poke = event.is_self_poke
+            origin = event.origin
             if ingress_sequence is None:
                 ingress_sequence = event.ingress_sequence
         else:
@@ -139,6 +143,7 @@ class SystemContextBuffer:
                 sender_id=sender_id,
                 receiver_id=receiver_id,
                 is_self_poke=is_self_poke,
+                origin=origin,
             )
             buffer = self._buffers.setdefault(normalized_key, deque())
             evicted = buffer.popleft() if len(buffer) >= self._max_size else None

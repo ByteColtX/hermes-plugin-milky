@@ -1,7 +1,10 @@
 schema: spec-driven
 
 context: |
-  这是 Hermes 的 Milky QQ directory plugin；根目录 `__init__.py::register(ctx)` 是唯一公开入口。
+  这是 Hermes 的 Milky QQ directory plugin；根目录 `__init__.py::register(ctx)` 是平台注册入口，当前
+  main 也从该入口调用 `outbound.tools::register_tools(ctx)` 登记 manifest 声明的 client tools。官方独立
+  `tools.py::register_tools(ctx)` 入口保存在 `codex/milky-tools-entry` 分支，Dashboard API 由宿主扩展加载。
+  `pyproject.toml` 声明运行依赖，也配置 uv 开发、检查和构建。
   `ARCHITECTURE.md` 维护稳定模块边界、生命周期和所有权；`README.md` 维护安装、配置和当前能力；
   源码、测试与 evidence 才能证明实现状态。未归档 change 只是规划，不得将目标或未验证能力写成已交付。
   OpenSpec artifacts 使用中文并描述可观察行为，不写具体类名、函数名、库选择或逐行实现方案。

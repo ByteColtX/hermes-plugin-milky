@@ -1,7 +1,12 @@
 # hermes-plugin-milky agent guide
 
-这是 Hermes 的 Milky QQ directory plugin。Hermes 从根目录的 `plugin.yaml` 和
-`__init__.py::register(ctx)` 加载它；`pyproject.toml` 只用于 uv 开发环境、质量检查和构建。
+这是 Hermes 的 Milky QQ directory plugin。当前 `main` 从根目录的 `plugin.yaml` 和
+`__init__.py::register(ctx)` 加载平台 adapter，并沿用根入口调用
+`outbound.tools::register_tools(ctx)` 登记 manifest 声明的固定 client tools。按官方合同拆出的
+`tools.py::register_tools(ctx)` 已保存在 `codex/milky-tools-entry` 分支，待 Hermes core 修复
+user-installed platform loader 后再并回。目标 Hermes `0e37a439bda15ef3c28a4d20593964d7c6a527a6`
+的实际加载验证未发现独立入口；当前 main 的根入口调用是兼容性过渡。不得把本地注册测试或
+manifest 声明当作独立 loader 已被宿主加载。`pyproject.toml` 同时声明运行依赖并配置 uv 开发、质量检查和构建。
 
 本文件按 [OpenAI GPT-5.6 官方提示词指南](https://developers.openai.com/api/docs/guides/prompt-guidance-gpt-5p6)
 保持精简。稳定协议和行为细节不在此重复。
@@ -16,7 +21,7 @@
 
 - 安全的本地读取、检查、编辑和测试可以直接执行。外部写入、破坏性操作、发布、合并或超出当前范围的动作，先完成可审阅结果，再请求确认。
 - 回答、审查、诊断和报告任务不默认修改仓库；明确的实现任务完成后继续验证并报告结果。
-- 根目录 `__init__.py::register(ctx)` 是唯一公开入口。import/register 阶段不得联网、建立 SSE 或创建长期任务；不得修改、替换或 monkey patch Hermes core。
+- 根目录 `__init__.py::register(ctx)` 是唯一的平台注册入口；当前 main 也从该入口调用固定工具注册函数。新版独立 `tools.py::register_tools(ctx)` 只在 `codex/milky-tools-entry` 分支保留，目标 Hermes loader 集成尚未通过，需单独核对 Agent toolset。import/register 阶段不得联网、建立 SSE 或创建长期任务；不得修改、替换或 monkey patch Hermes core。
 - 不记录或提交 token、Authorization、完整响应、异常正文、媒体 URL、路径、文件内容或敏感正文；未确认能力保持 `unknown`、`malformed`、`blocked` 或 `unsupported`，不报告假成功。
 
 ## 实现时必须保留的边界

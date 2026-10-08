@@ -33,14 +33,15 @@ _SAFE_CLASSIFICATIONS = frozenset(
 
 
 def make_standalone_sender(
-    config: MilkyConfig,
+    config: MilkyConfig | None = None,
     *,
     client_factory: ClientFactory = MilkyClient,
 ) -> Callable[..., Awaitable[dict[str, object]]]:
-    """创建绑定启动配置的独立 cron sender。"""
+    """创建按调用时 profile 读取配置的独立 cron sender。"""
 
-    if not callable(getattr(config, "action_url", None)) or not isinstance(
-        getattr(config, "auth_headers", None), dict
+    if config is not None and (
+        not callable(getattr(config, "action_url", None))
+        or not isinstance(getattr(config, "auth_headers", None), dict)
     ):
         raise TypeError("config must provide Milky HTTP configuration")
 

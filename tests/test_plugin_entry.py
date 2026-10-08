@@ -45,6 +45,28 @@ def set_valid_environment(monkeypatch) -> None:
 
     monkeypatch.setenv("MILKY_BASE_URL", "https://localhost:5500/milky")
     monkeypatch.setenv("MILKY_ACCESS_TOKEN", "test-token")
+    gateway = ModuleType("gateway")
+    gateway.__path__ = []  # type: ignore[attr-defined]
+    platforms = ModuleType("gateway.platforms")
+    platforms.__path__ = []  # type: ignore[attr-defined]
+    shared = ModuleType("gateway.platforms._shared")
+    shared.get_scoped_secret = (  # type: ignore[attr-defined]
+        lambda name, default=None: os.environ.get(name, default)
+    )
+    hermes_cli = ModuleType("hermes_cli")
+    hermes_cli.__path__ = []  # type: ignore[attr-defined]
+    core_config = ModuleType("hermes_cli.config")
+    core_config.load_config_readonly = dict  # type: ignore[attr-defined]
+    profiles = ModuleType("hermes_cli.profiles")
+    profiles.get_active_profile_name = (  # type: ignore[attr-defined]
+        lambda: os.environ.get("MILKY_TEST_PROFILE", "default")
+    )
+    monkeypatch.setitem(sys.modules, "gateway", gateway)
+    monkeypatch.setitem(sys.modules, "gateway.platforms", platforms)
+    monkeypatch.setitem(sys.modules, "gateway.platforms._shared", shared)
+    monkeypatch.setitem(sys.modules, "hermes_cli", hermes_cli)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", core_config)
+    monkeypatch.setitem(sys.modules, "hermes_cli.profiles", profiles)
 
 
 def test_root_entry_exposes_only_hermes_register(monkeypatch) -> None:
@@ -54,22 +76,9 @@ def test_root_entry_exposes_only_hermes_register(monkeypatch) -> None:
     entry, module_name = load_plugin_entry()
     try:
         assert entry.__all__ == ["register"]
-        entry.register(object())
-    finally:
-        for name in list(sys.modules):
-            if name == module_name or name.startswith(f"{module_name}."):
-                sys.modules.pop(name, None)
-
-
-def test_root_entry_contains_tool_discovery_boundary(monkeypatch) -> None:
-    """根入口内建工具发现边界，且注册阶段不产生外部副作用。"""
-
-    set_valid_environment(monkeypatch)
-    entry, module_name = load_plugin_entry()
-    try:
-        entry.register(object())
         assert callable(entry.register_tools)
-        assert entry.__all__ == ["register"]
+        with pytest.raises(RuntimeError, match="platform unsupported"):
+            entry.register(object())
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
@@ -93,7 +102,8 @@ def test_import_and_register_do_not_start_network_or_background_work(monkeypatch
 
     entry, module_name = load_plugin_entry()
     try:
-        assert entry.register(object()) is None
+        with pytest.raises(RuntimeError, match="platform unsupported"):
+            entry.register(object())
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
@@ -101,12 +111,13 @@ def test_import_and_register_do_not_start_network_or_background_work(monkeypatch
 
 
 class SkillAndPlatformContext:
-    """捕获 bundled skill 和 platform 注册，不执行外部动作。"""
+    """捕获 bundled skill、platform 和旧工具入口注册，不执行外部动作。"""
 
     def __init__(self) -> None:
         self.skills: list[tuple[str, Path]] = []
         self.platforms: list[dict[str, Any]] = []
         self.system_prompt_sections: list[dict[str, Any]] = []
+        self.tools: list[dict[str, Any]] = []
 
     def register_skill(self, name: str, path: Path) -> None:
         self.skills.append((name, path))
@@ -118,6 +129,11 @@ class SkillAndPlatformContext:
         """记录 system prompt section 注册，不执行 renderer。"""
 
         self.system_prompt_sections.append(kwargs)
+
+    def register_tool(self, **kwargs: Any) -> None:
+        """记录旧平台入口转交的固定工具注册。"""
+
+        self.tools.append(kwargs)
 
 
 def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) -> None:
@@ -145,6 +161,12 @@ def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) ->
         assert callable(section["content"])
         assert section["content"]({}) == ""
         assert entry.PLATFORM_GUIDANCE not in hint
+        guidance_snapshot = (
+            (PROJECT_ROOT / "tests" / "fixtures" / "prompts" / "milky_platform_guidance.txt")
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+        assert entry.PLATFORM_GUIDANCE.strip() == guidance_snapshot
         assert "NO_REPLY" not in entry.PLATFORM_GUIDANCE
         assert "[SILENT]" in entry.PLATFORM_GUIDANCE
         assert "[SPLIT]" in entry.PLATFORM_GUIDANCE
@@ -168,36 +190,134 @@ def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) ->
                 sys.modules.pop(name, None)
 
 
-def test_milky_prompt_section_shares_registration_identity_snapshot(monkeypatch) -> None:
-    """section renderer 只读同一注册实例的身份快照，忽略 session metadata。"""
+def test_milky_prompt_section_isolates_identity_snapshots_by_profile(monkeypatch) -> None:
+    """提示 section 只读取对应 profile 的 adapter 身份快照。"""
 
     set_valid_environment(monkeypatch)
     entry, module_name = load_plugin_entry()
+    guidance_snapshot = (
+        (PROJECT_ROOT / "tests" / "fixtures" / "prompts" / "milky_platform_guidance.txt")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
     try:
         context = SkillAndPlatformContext()
         entry.register(context)
         registration = context.platforms[0]
+
+        monkeypatch.setenv("MILKY_TEST_PROFILE", "a")
         adapter = registration["adapter_factory"](object())
-        snapshot = adapter.identity_snapshot
+        adapter_a = adapter
+        snapshot_a = adapter_a.identity_snapshot
 
-        assert snapshot.read() is None
+        monkeypatch.setenv("MILKY_TEST_PROFILE", "b")
+        adapter_b = registration["adapter_factory"](object())
+        snapshot_b = adapter_b.identity_snapshot
+
+        assert snapshot_a is not snapshot_b
+        assert snapshot_a.read() is None
         callback = context.system_prompt_sections[0]["content"]
-        assert callback({"self_id": 101, "nickname": "session metadata"}) == ""
+        assert callback({"profile_name": "a"}) == ""
 
-        assert snapshot.publish(900000001, "合成机器人") is True
-        rendered = callback({"self_id": 101, "nickname": "session metadata"})
-        assert rendered.startswith("- Your QQ uid is 900000001, and your nickname is 合成机器人.\n")
-        assert rendered.split("\n", 1)[1] == entry.PLATFORM_GUIDANCE
-        assert rendered.count(entry.PLATFORM_GUIDANCE) == 1
-        assert callback({"self_id": 999, "nickname": "changed metadata"}) == rendered
+        assert snapshot_a.publish(900000001, "合成机器人 A") is True
+        assert snapshot_b.publish(900000002, "合成机器人 B") is True
+        rendered_a = callback({"profile_name": "a"})
+        rendered_b = callback({"profile_name": "b"})
+        assert rendered_a.startswith(
+            "- Your QQ uid is 900000001, and your nickname is 合成机器人 A.\n"
+        )
+        assert rendered_b.startswith(
+            "- Your QQ uid is 900000002, and your nickname is 合成机器人 B.\n"
+        )
+        assert rendered_a.split("\n", 1)[1] == entry.PLATFORM_GUIDANCE
+        assert rendered_b.split("\n", 1)[1] == entry.PLATFORM_GUIDANCE
+        assert rendered_a.strip() == (
+            "- Your QQ uid is 900000001, and your nickname is 合成机器人 A.\n"
+            + "\n"
+            + guidance_snapshot
+        )
+        assert "合成机器人 B" not in rendered_a
+        assert "合成机器人 A" not in rendered_b
+        assert callback({}) == ""
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
                 sys.modules.pop(name, None)
 
 
-def test_milky_session_section_shares_adapter_snapshot_without_network(monkeypatch) -> None:
-    """会话 section 与 adapter 共享注册级 store，callback 不读取 session_info。"""
+def test_platform_factory_resolves_settings_for_each_active_profile(monkeypatch) -> None:
+    """adapter factory 每次都在当前 profile 中重新解析普通设置。"""
+
+    set_valid_environment(monkeypatch)
+    entry, module_name = load_plugin_entry()
+    try:
+        config_module = importlib.import_module(f"{module_name}.config")
+        adapter_module = importlib.import_module(f"{module_name}.adapter")
+        resolve = config_module.load_config
+        profiles = {
+            "a": {
+                "settings": {
+                    "base_url": "https://profile-a.invalid/milky",
+                    "session_buffer_size": 11,
+                    "home_channel": "group:700000011",
+                },
+                "environment": {"MILKY_ACCESS_TOKEN": "synthetic-token-a"},
+            },
+            "b": {
+                "settings": {
+                    "base_url": "https://profile-b.invalid/milky",
+                    "session_buffer_size": 22,
+                    "home_channel": "group:700000022",
+                },
+                "environment": {"MILKY_ACCESS_TOKEN": "synthetic-token-b"},
+            },
+        }
+        active_profile: dict[str, str] = {}
+
+        def load_active_profile_config():
+            """模拟 Gateway 在各 profile 作用域内调用 adapter factory。"""
+
+            profile = profiles[active_profile["name"]]
+            return resolve(**profile)
+
+        class CapturedAdapter:
+            """捕获 factory 解析结果，不创建连接资源。"""
+
+            def __init__(self, platform_config, **kwargs):
+                self.platform_config = platform_config
+                self.milky_config = kwargs["milky_config"]
+
+        monkeypatch.setattr(config_module, "load_config", load_active_profile_config)
+        monkeypatch.setattr(adapter_module, "MilkyAdapter", CapturedAdapter)
+
+        context = SkillAndPlatformContext()
+        entry.register(context)
+        factory = context.platforms[0]["adapter_factory"]
+
+        active_profile["name"] = "a"
+        monkeypatch.setenv("MILKY_TEST_PROFILE", "a")
+        adapter_a = factory(object())
+        active_profile["name"] = "b"
+        monkeypatch.setenv("MILKY_TEST_PROFILE", "b")
+        adapter_b = factory(object())
+
+        assert adapter_a.milky_config.base_url == "https://profile-a.invalid/milky"
+        assert adapter_a.milky_config.session_buffer_size == 11
+        assert adapter_a.milky_config.home_channel == "group:700000011"
+        assert adapter_b.milky_config.base_url == "https://profile-b.invalid/milky"
+        assert adapter_b.milky_config.session_buffer_size == 22
+        assert adapter_b.milky_config.home_channel == "group:700000022"
+        assert context.platforms[0]["env_enablement_fn"]() == {
+            "home_channel": {"chat_id": "group:700000022", "name": "Milky Home"}
+        }
+    finally:
+        for name in list(sys.modules):
+            if name == module_name or name.startswith(f"{module_name}."):
+                sys.modules.pop(name, None)
+
+
+def test_milky_session_section_isolates_adapter_snapshots_by_profile(monkeypatch) -> None:
+    """会话 section 从当前 profile 的 adapter store 读取资料。"""
 
     set_valid_environment(monkeypatch)
     gateway = ModuleType("gateway")
@@ -212,18 +332,31 @@ def test_milky_session_section_shares_adapter_snapshot_without_network(monkeypat
     try:
         context = SkillAndPlatformContext()
         entry.register(context)
-        adapter = context.platforms[0]["adapter_factory"](object())
-        adapter.session_context_store.put(
+        factory = context.platforms[0]["adapter_factory"]
+        monkeypatch.setenv("MILKY_TEST_PROFILE", "a")
+        adapter_a = factory(object())
+        monkeypatch.setenv("MILKY_TEST_PROFILE", "b")
+        adapter_b = factory(object())
+        assert adapter_a.session_context_store is not adapter_b.session_context_store
+        adapter_a.session_context_store.put(
             "group:700000001",
-            GroupSessionMetadata(700000001, "合成群组", 3, "描述", "公告"),
+            GroupSessionMetadata(700000001, "合成群组 A", 3, "描述 A", "公告 A"),
+        )
+        adapter_b.session_context_store.put(
+            "group:700000001",
+            GroupSessionMetadata(700000001, "合成群组 B", 4, "描述 B", "公告 B"),
         )
 
         callback = context.system_prompt_sections[1]["content"]
-        rendered = callback({"chat_id": "dm:untrusted"})
+        rendered_a = callback({"profile_name": "a", "chat_id": "dm:untrusted"})
+        rendered_b = callback({"profile_name": "b", "chat_id": "dm:untrusted"})
 
-        assert "group_id: 700000001" in rendered
-        assert "group_name: 合成群组" in rendered
-        assert "dm:untrusted" not in rendered
+        assert "group_id: 700000001" in rendered_a
+        assert "group_name: 合成群组 A" in rendered_a
+        assert "group_name: 合成群组 B" not in rendered_a
+        assert "group_name: 合成群组 B" in rendered_b
+        assert "group_name: 合成群组 A" not in rendered_b
+        assert "dm:untrusted" not in rendered_a + rendered_b
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
@@ -236,33 +369,36 @@ def test_milky_prompt_renderer_sanitizes_abnormal_nickname(monkeypatch) -> None:
     set_valid_environment(monkeypatch)
     entry, module_name = load_plugin_entry()
     try:
-        snapshot = entry.BotIdentitySnapshot()
-        assert snapshot.publish(900000001, "  合成\n机器人\t  ") is True
-        rendered = entry._render_platform_guidance(snapshot, {"nickname": "untrusted"})
+        profile_snapshots = entry._ProfileSnapshots()
+        stored_identity, _session_store = profile_snapshots.for_active_profile()
+        assert stored_identity.publish(900000001, "  合成\n机器人\t  ") is True
+        rendered = entry._render_platform_guidance(
+            profile_snapshots, {"profile_name": "default", "nickname": "untrusted"}
+        )
         assert (
             rendered.splitlines()[0]
             == "- Your QQ uid is 900000001, and your nickname is 合成 机器人."
         )
         assert "\n" not in rendered.splitlines()[0]
 
-        assert snapshot.publish(900000001, "\x00") is False
-        assert snapshot.publish(900000001, "   ") is False
-        assert snapshot.read().nickname == "合成 机器人"
+        assert stored_identity.publish(900000001, "\x00") is False
+        assert stored_identity.publish(900000001, "   ") is False
+        assert stored_identity.read().nickname == "合成 机器人"
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
                 sys.modules.pop(name, None)
 
 
-def test_legacy_host_keeps_only_static_platform_hint(monkeypatch) -> None:
-    """旧宿主缺少 section API 时仍完成只含首句的平台注册。"""
+def test_missing_prompt_api_fails_before_platform_registration(monkeypatch) -> None:
+    """缺少必需 section API 时明确失败，不留下部分平台注册。"""
 
     set_valid_environment(monkeypatch)
     entry, module_name = load_plugin_entry()
     try:
 
-        class LegacyContext:
-            """只提供旧宿主平台注册接口。"""
+        class MissingPromptContext:
+            """只提供平台注册接口的旧上下文。"""
 
             def __init__(self) -> None:
                 self.platforms: list[dict[str, Any]] = []
@@ -270,11 +406,10 @@ def test_legacy_host_keeps_only_static_platform_hint(monkeypatch) -> None:
             def register_platform(self, **kwargs: Any) -> None:
                 self.platforms.append(kwargs)
 
-        context = LegacyContext()
-        entry.register(context)
-        assert len(context.platforms) == 1
-        assert context.platforms[0]["platform_hint"] == entry.PLATFORM_HINT
-        assert entry.PLATFORM_GUIDANCE not in context.platforms[0]["platform_hint"]
+        context = MissingPromptContext()
+        with pytest.raises(RuntimeError, match="register_system_prompt_section"):
+            entry.register(context)
+        assert context.platforms == []
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
@@ -481,21 +616,21 @@ def test_qq_skills_are_split_and_do_not_add_tools() -> None:
         assert tool_name in tools_skill
 
 
-def test_register_forwards_context_to_tools_without_implicit_actions(monkeypatch) -> None:
-    """根入口应把同一个上下文交给内建的显式工具发现边界。"""
+def test_register_forwards_context_to_tool_registration(monkeypatch) -> None:
+    """根 platform entry 将同一个 context 转交给固定工具注册入口。"""
 
     set_valid_environment(monkeypatch)
     entry, module_name = load_plugin_entry()
     try:
-        entry.register(object())
-        context = object()
-        received = []
+        context = SkillAndPlatformContext()
+        received: list[object] = []
 
-        def capture_context(value) -> None:
+        def capture_context(value: object) -> None:
             received.append(value)
 
         monkeypatch.setattr(entry, "register_tools", capture_context)
         assert entry.register(context) is None
+        assert context.platforms
         assert received == [context]
         assert entry.__all__ == ["register"]
     finally:
@@ -504,23 +639,26 @@ def test_register_forwards_context_to_tools_without_implicit_actions(monkeypatch
                 sys.modules.pop(name, None)
 
 
-def test_root_register_rejects_missing_startup_configuration(monkeypatch) -> None:
-    """根注册入口应在启动阶段报告缺失配置。"""
+def test_root_register_defers_missing_configuration_until_adapter_creation(monkeypatch) -> None:
+    """普通配置在创建 adapter 时校验，不绑定注册时的默认 profile。"""
 
+    set_valid_environment(monkeypatch)
     monkeypatch.delenv("MILKY_BASE_URL", raising=False)
     monkeypatch.delenv("MILKY_ACCESS_TOKEN", raising=False)
     entry, module_name = load_plugin_entry()
     try:
+        context = SkillAndPlatformContext()
+        entry.register(context)
         with pytest.raises(ValueError, match="MILKY_BASE_URL"):
-            entry.register(object())
+            context.platforms[0]["adapter_factory"](object())
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
                 sys.modules.pop(name, None)
 
 
-def test_root_rejects_removed_routing_before_network_access(monkeypatch) -> None:
-    """旧 routing 字段应在注册创建 client 前被拒绝。"""
+def test_adapter_creation_rejects_removed_routing_before_network_access(monkeypatch) -> None:
+    """旧 routing 字段应在 adapter 创建网络资源前被拒绝。"""
 
     def fail_network(*args, **kwargs):
         raise AssertionError("配置拒绝前不应创建网络 socket")
@@ -533,8 +671,10 @@ def test_root_rejects_removed_routing_before_network_access(monkeypatch) -> None
     )
     entry, module_name = load_plugin_entry()
     try:
+        context = SkillAndPlatformContext()
+        entry.register(context)
         with pytest.raises(ValueError, match="unsupported fields"):
-            entry.register(object())
+            context.platforms[0]["adapter_factory"](object())
     finally:
         for name in list(sys.modules):
             if name == module_name or name.startswith(f"{module_name}."):
@@ -561,7 +701,7 @@ def test_target_source_package_layout_is_present() -> None:
 
 
 def test_directory_plugin_uses_root_entry_only() -> None:
-    """目录插件只使用根入口，不保留独立的工具发现模块。"""
+    """当前目录插件使用根入口登记平台和固定工具。"""
 
     manifest = (PROJECT_ROOT / "plugin.yaml").read_text(encoding="utf-8")
     assert (PROJECT_ROOT / "__init__.py").is_file()
@@ -588,7 +728,8 @@ assert spec is not None and spec.loader is not None
 module = importlib.util.module_from_spec(spec)
 sys.modules[module_name] = module
 spec.loader.exec_module(module)
-module.register(object())
+assert callable(module.register)
+importlib.import_module(f"{module_name}.config")
 """
     environment = os.environ.copy()
     environment.pop("PYTHONPATH", None)
@@ -606,7 +747,7 @@ module.register(object())
 
 
 def test_yaml_startup_keeps_one_snapshot_without_web_dependencies(monkeypatch):
-    """无旧地址环境时注册仍使用同一设置快照，Gateway 不导入 Web。"""
+    """Gateway 注册不捕获设置快照，adapter 创建时读取 profile 配置且不导入 Web。"""
     import builtins
 
     monkeypatch.delenv("MILKY_BASE_URL", raising=False)
@@ -615,10 +756,24 @@ def test_yaml_startup_keeps_one_snapshot_without_web_dependencies(monkeypatch):
     core.load_config_readonly = lambda: {
         "plugins": {"entries": {"hermes-plugin-milky": {"settings": selected}}}
     }
-    secrets = ModuleType("agent.secret_scope")
-    secrets.get_secret = lambda key: "synthetic-secret" if key == "MILKY_ACCESS_TOKEN" else None
+    hermes_cli = ModuleType("hermes_cli")
+    hermes_cli.__path__ = []  # type: ignore[attr-defined]
+    profiles = ModuleType("hermes_cli.profiles")
+    profiles.get_active_profile_name = lambda: "default"  # type: ignore[attr-defined]
+    gateway = ModuleType("gateway")
+    gateway.__path__ = []  # type: ignore[attr-defined]
+    platforms = ModuleType("gateway.platforms")
+    platforms.__path__ = []  # type: ignore[attr-defined]
+    shared = ModuleType("gateway.platforms._shared")
+    shared.get_scoped_secret = (  # type: ignore[attr-defined]
+        lambda key, default=None: "synthetic-secret" if key == "MILKY_ACCESS_TOKEN" else default
+    )
+    monkeypatch.setitem(sys.modules, "hermes_cli", hermes_cli)
     monkeypatch.setitem(sys.modules, "hermes_cli.config", core)
-    monkeypatch.setitem(sys.modules, "agent.secret_scope", secrets)
+    monkeypatch.setitem(sys.modules, "hermes_cli.profiles", profiles)
+    monkeypatch.setitem(sys.modules, "gateway", gateway)
+    monkeypatch.setitem(sys.modules, "gateway.platforms", platforms)
+    monkeypatch.setitem(sys.modules, "gateway.platforms._shared", shared)
     imported = builtins.__import__
 
     def require_no_web(name, *args, **kwargs):
@@ -629,7 +784,7 @@ def test_yaml_startup_keeps_one_snapshot_without_web_dependencies(monkeypatch):
     captured = []
     monkeypatch.setattr(
         "outbound.standalone.make_standalone_sender",
-        lambda config: captured.append(config) or object(),
+        lambda config=None: captured.append(config) or object(),
     )
     entry, module_name = load_plugin_entry()
     try:
@@ -638,8 +793,9 @@ def test_yaml_startup_keeps_one_snapshot_without_web_dependencies(monkeypatch):
         registration = context.platforms[0]
         selected["base_url"] = "http://127.0.0.1:5000"
         adapter = registration["adapter_factory"](object())
-        assert adapter._config is captured[0]
-        assert adapter._config.base_url == "http://127.0.0.1:4000"
+        assert captured == [None]
+        assert adapter._config.base_url == "http://127.0.0.1:5000"
+        assert adapter._config.home_channel == "group:123"
         assert registration["required_env"] == []
     finally:
         for name in list(sys.modules):

@@ -234,11 +234,21 @@ def test_system_events_render_only_confirmed_fields() -> None:
     assert friend_nudge.value.chat_key == "dm:800000001"
     assert friend_nudge.value.body == "uid 800000001 poked once"
     assert increase.value is not None
+    assert increase.value.origin == {
+        "platform": "milky",
+        "chat_id": "group:700000001",
+        "chat_type": "group",
+    }
     assert increase.value.body == (
         "uid 800000004 joined the group. Details: "
         '{"group_id": 700000001, "user_id": 800000004, "operator_id": 900000001, "invitor_id": 800000002}'
     )
     assert minimal.value is not None
+    assert minimal.value.origin == {
+        "platform": "milky",
+        "chat_id": "group:700000001",
+        "chat_type": "group",
+    }
     assert minimal.value.body == (
         'uid 800000005 joined the group. Details: {"group_id": 700000001, "user_id": 800000005}'
     )

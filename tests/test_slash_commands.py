@@ -64,6 +64,7 @@ class FakeEvent:
     metadata: dict[str, object] = field(default_factory=dict)
     timestamp: object | None = None
     allow_gateway_control: bool = True
+    reply_expected: bool | None = None
 
 
 class FakeHermes:
@@ -287,6 +288,7 @@ def test_pipeline_routes_command_after_gate_before_will_and_resources() -> None:
     assert event.text == "/milky"
     assert event.message_type == FakeMessageType.COMMAND
     assert event.allow_gateway_control is True
+    assert event.reply_expected is True
     assert event.source.chat_id == "group:700000001"
     assert event.source.platform == "milky"
     assert event.message_id == "1102"
@@ -634,8 +636,36 @@ def test_root_registers_one_command_and_injects_same_service(
         def register_platform(self, **kwargs: object) -> None:
             self.platforms.append(kwargs)
 
+        def register_system_prompt_section(self, **_kwargs: object) -> None:
+            """满足当前根插件入口的必需 prompt 注册契约。"""
+
     context = Context()
     import sys
+    from types import ModuleType
+
+    hermes_cli = ModuleType("hermes_cli")
+    hermes_cli.__path__ = []  # type: ignore[attr-defined]
+    profiles = ModuleType("hermes_cli.profiles")
+    profiles.get_active_profile_name = lambda: "default"  # type: ignore[attr-defined]
+    core_config = ModuleType("hermes_cli.config")
+    core_config.load_config_readonly = dict  # type: ignore[attr-defined]
+    gateway = ModuleType("gateway")
+    gateway.__path__ = []  # type: ignore[attr-defined]
+    platforms = ModuleType("gateway.platforms")
+    platforms.__path__ = []  # type: ignore[attr-defined]
+    shared = ModuleType("gateway.platforms._shared")
+    shared.get_scoped_secret = (  # type: ignore[attr-defined]
+        lambda key, default=None: {
+            "MILKY_BASE_URL": "https://localhost:5500/milky",
+            "MILKY_ACCESS_TOKEN": "fixture-token",
+        }.get(key, default)
+    )
+    monkeypatch.setitem(sys.modules, "hermes_cli", hermes_cli)
+    monkeypatch.setitem(sys.modules, "hermes_cli.profiles", profiles)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", core_config)
+    monkeypatch.setitem(sys.modules, "gateway", gateway)
+    monkeypatch.setitem(sys.modules, "gateway.platforms", platforms)
+    monkeypatch.setitem(sys.modules, "gateway.platforms._shared", shared)
 
     sys.modules[module_name] = module
     try:

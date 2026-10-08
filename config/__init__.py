@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import json
 import math
-import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -218,17 +217,21 @@ def load_config(
     """解析同一 profile 的设置、旧配置、环境和独立凭证启动快照。"""
     if environment is None:
         try:
-            from agent.secret_scope import get_secret
+            from gateway.platforms._shared import get_scoped_secret
             from hermes_cli.config import load_config_readonly
         except ImportError:
-            environment = os.environ
-        else:
+            raise ConfigError("Hermes profile-scoped configuration APIs are unavailable") from None
+        try:
             host = load_config_readonly()
             entry = host.get("plugins", {}).get("entries", {}).get("hermes-plugin-milky", {})
             settings = entry.get("settings", {}) if settings is None else settings
             legacy = entry.get("config", {}) if legacy is None else legacy
             names = ["MILKY_" + key.upper() for key in SETTING_DEFAULTS] + ["MILKY_ACCESS_TOKEN"]
-            environment = {name: value for name in names if (value := get_secret(name)) is not None}
+            environment = {
+                name: value for name in names if (value := get_scoped_secret(name)) is not None
+            }
+        except Exception:  # noqa: BLE001 - 不向插件日志或用户错误转发宿主异常正文
+            raise ConfigError("Hermes profile-scoped configuration is unavailable") from None
     resolved = resolve_settings(settings=settings, legacy=legacy, environment=environment)
     token = _required_text(environment.get("MILKY_ACCESS_TOKEN"), "MILKY_ACCESS_TOKEN")
     values = resolved["effective"]
