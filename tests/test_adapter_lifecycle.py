@@ -14,6 +14,7 @@ import pytest
 import adapter as adapter_module
 from adapter import MilkyAdapter
 from config import load_config
+from outbound.tools import TOOL_SPECS
 from session.identity import BotIdentity, BotIdentitySnapshot
 from slash_commands import SlashCommandService
 
@@ -866,7 +867,9 @@ def test_root_register_assembles_platform_without_network_or_background_task(
         registration = context.platforms[0]
         assert registration["name"] == "milky"
         assert registration["adapter_factory"]
-        assert context.tools == []
+        assert [item["name"] for item in context.tools] == [
+            spec["name"] for spec in TOOL_SPECS
+        ]
         adapter = registration["adapter_factory"](SimpleNamespace())
         assert adapter.__class__.__name__ == "MilkyAdapter"
     finally:
