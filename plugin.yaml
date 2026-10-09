@@ -43,6 +43,8 @@ provides_tools:
   - set_group_member_special_title
   - sticker_send
   - sticker_search
+provides_hooks:
+  - post_tool_call
 requires_env:
   - name: MILKY_ACCESS_TOKEN
     description: "Milky access token"

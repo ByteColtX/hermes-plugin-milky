@@ -87,7 +87,7 @@ MilkyAdapter -> InboundPipeline -> Hermes Gateway -> Agent session/turn -> Outbo
 
 ### 3.1 注册入口和生命周期
 
-`register(ctx)` 注册 Milky platform、bundled skills、`/milky`、prompt sections、固定工具和可选的
+`register(ctx)` 注册 Milky platform、bundled skills、`/milky`、prompt sections、固定工具、调用观察 hook 和可选的
 home-channel cron 元数据。当前 `main` 在该函数中调用 `outbound.tools::register_tools(ctx)`；官方独立
 `tools.py::register_tools(ctx)` 只在 `codex/milky-tools-entry` 分支保留，等目标 Hermes 修复
 user-installed loader 后再合并。两种入口都只登记 `plugin.yaml::provides_tools` 声明的 26 个 Milky
@@ -95,7 +95,7 @@ Action ToolSpec、`sticker_search` 和 `sticker_send`，注册阶段不联网。
 `0e37a439bda15ef3c28a4d20593964d7c6a527a6` 的运行验证显示其 user-installed loader 没有触发独立
 入口；该目标的 toolset 结论只适用于新版分支，不能用 fake host 测试替代宿主验证。
 
-平台 adapter factory 在 Hermes 当前 profile 中创建 adapter 时解析普通设置和凭证；注册阶段不捕获另一个 profile 的配置。两个 `after_memory` prompt section 分别提供平台使用指导和当前 QQ 会话资料快照。各注册入口均不创建 HTTP client 请求、SSE、长期 task 或贴纸数据库访问。
+平台 adapter factory 在 Hermes 当前 profile 中创建 adapter 时解析普通设置和凭证；注册阶段不捕获另一个 profile 的配置。两个 `after_memory` prompt section 分别提供平台使用指导和当前 QQ 会话资料快照。`post_tool_call` 只读观察回调按固定工具名过滤；各注册入口均不解析 profile、不创建 HTTP client 请求、SSE、长期 task 或任何历史数据库。
 
 `adapter.py::MilkyAdapter` 通过构造参数拥有 `MilkyClient`、`SseEventStream`、`MuteTracker`、`ResourceResolver`、`InboundPipeline`、`MilkyOutboundSender`、`WaitBuffer`、`ChatAdmissionCoordinator`、Hermes `MessageDeduplicator`、Will engine 和 profile-local session snapshot store。依赖可注入，因此 fake host/transport 可以覆盖生命周期而不连接真实 Milky。
 
@@ -295,6 +295,7 @@ Tool 流程是固定 schema/handler → 参数和 client 状态校验 → 一次
 | `stickers.db` | SQLite | `stickers/` | plugin-data 下持久化，命令结束关闭连接 |
 | sticker image library | 本地文件 | `stickers/` | 受控目录、校验后保留 |
 | `dashboard-jobs.db` | SQLite | Dashboard 任务执行层 | 按 profile 持久化，显式维护请求创建，终态有界保留 |
+| `tool-call-history.db` | SQLite | `tool_call_history.py` | 每 profile 懒创建，按观察时间、工具和状态索引；30 天或 10,000 条先到即清理 |
 | Dashboard web uploads | 本地文件和 JSON metadata | Dashboard 上传层 | 按 profile 独立于 inbox，未引用暂存内容按期限回收 |
 
 仓库没有 ORM、消息队列、迁移服务或远程缓存的证据。贴纸 SQLite schema 在 `stickers/storage.py` 中创建和迁移，Dashboard 任务库由 `dashboard/jobs.py` 按需创建；贴纸与 Dashboard 的跨进程目录协调由 `stickers/coordination.py` 提供。备份、生产保留策略和多实例路由仍为 `Not evident from the repository`。
@@ -503,6 +504,11 @@ Dashboard 任务协调 module 拥有请求签发、提交、查询、取消、�
 每 profile 一个运行批次、最多 10 个排队，终态最多 1000 条/7 天。取消和关闭阻止后续提交，
 失去执行者的记录标 interrupted，不自动重放。同步视觉保留固定名额直到实际返回，迟到结果不能写库。
 正常路由关闭只关闭 Web 任务；adapter 断开只释放 QQ 资源。
+
+工具调用历史是 Dashboard 下的只读观察页。查询只打开所选 profile 已有的
+`tool-call-history.db`，不为浏览创建文件，也不接受客户端路径；列表与统计共享时间、工具、状态筛选，按观察时间和内部记录 ID 稳定倒序分页。
+记录只含 UTC 观察时间、耗时、工具名、固定观察状态/错误类型和逐工具白名单摘要；原始参数、结果、错误正文、middleware trace、凭证、URL、路径和媒体内容不写入历史。
+`ok`/`error` 等状态只表示 Hermes 观察结果，不证明 QQ 业务成功；hook 未触发或写入失败时历史可能漏记。
 
 更新必须交付整个目录及预构建资源；回滚前关闭 Web 执行层并保留数据，按需手动导出 settings
 为旧环境格式，不删除凭证。主维护规范 Purpose 的同步由本 change 的 delta 承载，尚未归档同步。

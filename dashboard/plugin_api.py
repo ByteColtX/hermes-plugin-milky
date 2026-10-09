@@ -8,7 +8,7 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 _PLUGIN_ROOT = str(Path(__file__).resolve().parents[1])
@@ -20,6 +20,7 @@ from dashboard.jobs import JobManager
 from dashboard.uploads import UploadStore
 from stickers.errors import StickerError
 from stickers.management import StickerManagementService
+from tool_call_history import HistoryInputError, ToolCallHistoryStore
 
 _MANAGERS = {}
 _MANAGER_LOCK = threading.Lock()
@@ -47,11 +48,17 @@ async def scoped(profile, action):
 
     try:
         return await asyncio.to_thread(execute)
+    except HistoryInputError:
+        return JSONResponse({"status": "invalid_input"}, status_code=400)
     except (ManagementError, StickerError) as error:
         status = error.status if isinstance(error, ManagementError) else error.classification
-        code = {"not_found": 404, "disabled": 404, "conflict": 409, "unsupported": 501}.get(
-            status, 400
-        )
+        code = {
+            "not_found": 404,
+            "disabled": 404,
+            "invalid_profile": 404,
+            "conflict": 409,
+            "unsupported": 501,
+        }.get(status, 400)
         return JSONResponse(
             {
                 "status": status,
@@ -74,6 +81,36 @@ async def profile_list():
         return await asyncio.to_thread(profiles)
     except Exception:  # noqa: BLE001 - 作用域无法确认时关闭入口
         return JSONResponse({"status": "unsupported"}, status_code=501)
+
+
+@router.get("/tool-call-history")
+@router.get("/tool-calls")
+async def tool_call_history(
+    profile: str,
+    page: int = 1,
+    limit: int = 20,
+    from_: str | None = Query(default=None, alias="from"),
+    to_: str | None = Query(default=None, alias="to"),
+    start: str | None = None,
+    end: str | None = None,
+    tool: str | None = None,
+    tool_name: str | None = None,
+    status: str | None = None,
+):
+    """在宿主认证的 profile 内只读查询工具调用观察历史。"""
+
+    return await scoped(
+        profile,
+        lambda confirmed: ToolCallHistoryStore(storage_root(confirmed)).query(
+            page=page,
+            limit=limit,
+            start=start or (from_ if isinstance(from_, str) else None),
+            end=end or (to_ if isinstance(to_, str) else None),
+            tool_name=tool_name or tool,
+            status=status,
+            profile_name=profile,
+        ),
+    )
 
 
 @router.get("/gallery")
