@@ -237,9 +237,7 @@ def test_register_exposes_profile_home_metadata_and_cron_hooks_without_network(m
         assert registration["cron_deliver_env_var"] == "MILKY_HOME_CHANNEL"
         assert callable(registration["env_enablement_fn"])
         assert callable(registration["standalone_sender_fn"])
-        assert [item["name"] for item in context.tools] == [
-            spec["name"] for spec in TOOL_SPECS
-        ]
+        assert [item["name"] for item in context.tools] == [spec["name"] for spec in TOOL_SPECS]
         enablement = registration["env_enablement_fn"]
         assert enablement() == {
             "home_channel": {"chat_id": "group:700000001", "name": "Milky Home"}

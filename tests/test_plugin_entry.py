@@ -118,6 +118,7 @@ class SkillAndPlatformContext:
         self.platforms: list[dict[str, Any]] = []
         self.system_prompt_sections: list[dict[str, Any]] = []
         self.tools: list[dict[str, Any]] = []
+        self.hooks: list[tuple[str, Any]] = []
 
     def register_skill(self, name: str, path: Path) -> None:
         self.skills.append((name, path))
@@ -135,6 +136,11 @@ class SkillAndPlatformContext:
 
         self.tools.append(kwargs)
 
+    def register_hook(self, name: str, callback: Any) -> None:
+        """记录根入口登记的观察 hook。"""
+
+        self.hooks.append((name, callback))
+
 
 def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) -> None:
     """根入口应拆分静态首句和连接后渲染的 Milky 指引。"""
@@ -144,6 +150,9 @@ def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) ->
     try:
         context = SkillAndPlatformContext()
         entry.register(context)
+
+        assert [name for name, _callback in context.hooks] == ["post_tool_call"]
+        assert callable(context.hooks[0][1])
 
         assert dict(context.skills) == {
             "milky-qq-cq-reference": PROJECT_ROOT / "skills" / "milky-qq-cq-reference" / "SKILL.md",

@@ -72,6 +72,7 @@ if (sdk && window.__HERMES_PLUGINS__) {
         "not_found",
         "too_large",
         "quota_exceeded",
+        "invalid_profile",
       ];
       const category = allowed.includes(result.status)
         ? result.status
@@ -263,6 +264,28 @@ if (sdk && window.__HERMES_PLUGINS__) {
     const [gallery, setGallery] = useState({ items: [], total: 0 }),
       [page, setPage] = useState(1),
       [selected, setSelected] = useState([]);
+    const [history, setHistory] = useState({
+        items: [],
+        total: 0,
+        page: 1,
+        limit: 20,
+        summary: {
+          count: 0,
+          total_duration_ms: 0,
+          average_duration_ms: 0,
+          min_duration_ms: 0,
+          max_duration_ms: 0,
+          by_tool: {},
+          by_status: {},
+        },
+      }),
+      [historyPage, setHistoryPage] = useState(1),
+      [historyFilter, setHistoryFilter] = useState({
+        from: "",
+        to: "",
+        tool: "",
+        status: "",
+      });
     const [filter, setFilter] = useState({
         emotion: "",
         tag: "",
@@ -279,6 +302,7 @@ if (sdk && window.__HERMES_PLUGINS__) {
       clear: "",
     });
     const epoch = useRef(0),
+      historyRequest = useRef(0),
       submission = useRef(false),
       original = useRef({});
     const dirty = Object.keys(changedKeys(original.current, form)).length > 0;
@@ -316,6 +340,21 @@ if (sdk && window.__HERMES_PLUGINS__) {
       if (current === epoch.current) {
         setGallery(result);
         setSelected([]);
+      }
+    }
+    async function loadHistory() {
+      const current = epoch.current;
+      const request = ++historyRequest.current;
+      const query = new URLSearchParams({
+        page: String(historyPage),
+        limit: "20",
+        ...Object.fromEntries(
+          Object.entries(historyFilter).filter(([, value]) => value),
+        ),
+      });
+      const result = await api("/tool-call-history?" + query, profile);
+      if (current === epoch.current && request === historyRequest.current) {
+        setHistory(result);
       }
     }
     async function loadUploads() {
@@ -366,6 +405,22 @@ if (sdk && window.__HERMES_PLUGINS__) {
       setSelected([]);
       setJobs([]);
       setGallery({ items: [], total: 0 });
+      setHistory({
+        items: [],
+        total: 0,
+        page: 1,
+        limit: 20,
+        summary: {
+          count: 0,
+          total_duration_ms: 0,
+          average_duration_ms: 0,
+          min_duration_ms: 0,
+          max_duration_ms: 0,
+          by_tool: {},
+          by_status: {},
+        },
+      });
+      setHistoryPage(1);
       setBatch(null);
       setBatches([]);
       setPlan(null);
@@ -382,6 +437,9 @@ if (sdk && window.__HERMES_PLUGINS__) {
     useEffect(() => {
       if (profile && tab === "gallery") guarded(loadGallery);
     }, [profile, tab, page, filter]);
+    useEffect(() => {
+      if (profile && tab === "history") guarded(loadHistory);
+    }, [profile, tab, historyPage, historyFilter]);
     useEffect(() => {
       if (!profile) return;
       const timer = setInterval(() => loadJobs().catch(() => {}), 3000);
@@ -400,8 +458,10 @@ if (sdk && window.__HERMES_PLUGINS__) {
     function switchProfile(next) {
       if (!dirty || window.confirm("放弃当前 profile 未保存的配置？")) {
         epoch.current++;
+        historyRequest.current++;
         setProfile(next);
         setPage(1);
+        setHistoryPage(1);
       }
     }
     async function submit(operation, payload) {
@@ -509,6 +569,7 @@ if (sdk && window.__HERMES_PLUGINS__) {
           {[
             ["config", "配置"],
             ["gallery", "图库"],
+            ["history", "工具历史"],
             ["jobs", "维护任务"],
           ].map(([key, label]) => (
             <Button
@@ -871,6 +932,128 @@ if (sdk && window.__HERMES_PLUGINS__) {
               </div>
             )}
           </>
+        ) : tab === "history" ? (
+          <section>
+            <h2>工具调用历史 · {profile}</h2>
+            <p className="milky-meta">
+              这里只显示 Hermes 观察到的 Milky/QQ 工具调用。观察状态不代表 QQ 业务成功；hook
+              未触发或写入失败时记录可能缺少。
+            </p>
+            <div className="milky-toolbar">
+              <label>
+                起始时间
+                <input
+                  aria-label="历史起始时间"
+                  type="datetime-local"
+                  value={historyFilter.from}
+                  onChange={(event) => {
+                    setHistoryPage(1);
+                    setHistoryFilter({
+                      ...historyFilter,
+                      from: event.target.value,
+                    });
+                  }}
+                />
+              </label>
+              <label>
+                结束时间
+                <input
+                  aria-label="历史结束时间"
+                  type="datetime-local"
+                  value={historyFilter.to}
+                  onChange={(event) => {
+                    setHistoryPage(1);
+                    setHistoryFilter({
+                      ...historyFilter,
+                      to: event.target.value,
+                    });
+                  }}
+                />
+              </label>
+              <label>
+                工具
+                <select
+                  aria-label="历史工具筛选"
+                  value={historyFilter.tool}
+                  onChange={(event) => {
+                    setHistoryPage(1);
+                    setHistoryFilter({
+                      ...historyFilter,
+                      tool: event.target.value,
+                    });
+                  }}
+                >
+                  <option value="">全部工具</option>
+                  {Object.keys(history.summary?.by_tool || {}).map((name) => (
+                    <option key={name}>{name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                观察状态
+                <select
+                  aria-label="历史状态筛选"
+                  value={historyFilter.status}
+                  onChange={(event) => {
+                    setHistoryPage(1);
+                    setHistoryFilter({
+                      ...historyFilter,
+                      status: event.target.value,
+                    });
+                  }}
+                >
+                  <option value="">全部状态</option>
+                  {["ok", "error", "blocked", "cancelled", "unknown"].map(
+                    (status) => <option key={status}>{status}</option>,
+                  )}
+                </select>
+              </label>
+            </div>
+            <div className="milky-toolbar">
+              <Badge>匹配 {history.total || 0} 条</Badge>
+              <span>
+                总耗时 {history.summary?.total_duration_ms || 0} ms · 平均耗时 {Number(
+                  history.summary?.average_duration_ms || 0,
+                ).toFixed(1)} ms
+              </span>
+            </div>
+            <div className="milky-history-list">
+              {(history.items || []).map((item) => (
+                <Card key={item.record_id}>
+                  <CardContent>
+                    <h3>
+                      {item.tool_name} · {item.status}
+                    </h3>
+                    <p className="milky-meta">
+                      {item.observed_at_utc} · {item.duration_ms} ms
+                      {item.error_type ? " · " + item.error_type : ""}
+                    </p>
+                    <pre className="milky-results">
+                      {JSON.stringify(item.args_summary || {}, null, 2)}
+                    </pre>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            {!history.items?.length && <p>当前筛选范围没有观察记录。</p>}
+            <div className="milky-toolbar">
+              <Button
+                disabled={historyPage <= 1}
+                onClick={() => setHistoryPage(historyPage - 1)}
+              >
+                上一页
+              </Button>
+              <span>
+                第 {historyPage} 页 · 共 {history.total || 0} 条
+              </span>
+              <Button
+                disabled={historyPage * (history.limit || 20) >= (history.total || 0)}
+                onClick={() => setHistoryPage(historyPage + 1)}
+              >
+                下一页
+              </Button>
+            </div>
+          </section>
         ) : (
           <section>
             <h2>维护任务</h2>

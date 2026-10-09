@@ -70,6 +70,8 @@ change 和已归档 change 的测试证据见 [openspec/](openspec/)。
   关键词、Will 和 Agent 输出不会自动收集贴纸。
 - **Agent 贴纸能力：** 插件运行时依赖 `jieba` 且库中存在可用条目时，`sticker_search` 可严格搜索、显式放宽意图或浏览有界候选，
   `sticker_send` 可按同样的查询或已知贴纸 ID 向当前 Milky 会话发送一张贴纸；目标、路径和 URL 仍由工具边界管理。
+- **工具调用历史：** `post_tool_call` 只观察 manifest 声明的 Milky/QQ 工具，并在每个 profile 的
+  `plugin-data/hermes-plugin-milky/tool-call-history.db` 中保留 UTC 时间、耗时、观察状态和逐工具白名单参数摘要。
 
 运行环境：Python 3.13+、Hermes Gateway 0.21.4 或更新版本、Milky v1.3 服务，以及插件声明的
 `httpx`、`python-multipart`、Pillow 和 `jieba`。`requires_hermes: ">=0.21.4"` 是 Hermes 版本下限，
@@ -182,7 +184,7 @@ hermes gateway restart
 
 贴纸数据库和图片库、Dashboard 维护任务、上传批次都保存在所属 profile 的
 `plugin-data/hermes-plugin-milky/` 下。切换 Dashboard profile 会切换对应设置、凭证、图库、任务和暂存目录；
-profile A 与 profile B 不共享这些文件。
+工具调用历史也按 profile 单独保存；profile A 与 profile B 不共享这些文件。
 
 ### Dashboard 管理
 
@@ -231,6 +233,12 @@ fake host 与 fixture 测试只证明插件边界和本地行为，不等价于�
 使用持久任务，每 profile 一个执行批次、最多 10 个排队。任务区分 `queued`、`running`、
 `succeeded`、`partial`、`failed`、`cancelled`、`interrupted`，历史保留 7 天且最多 1000 条。
 取消不撤销已提交条目，关闭和恢复不自动重放；过期请求返回 `expired`。
+
+工具历史页是只读的，使用宿主认证和明确 profile，支持时间、工具、观察状态筛选、稳定分页及同范围统计。
+摘要只按各 Tool schema 的白名单保留数值 QQ ID、序号、数量、布尔选项和贴纸 ID；其他参数只显示是否提供。
+原始参数、完整结果、错误正文、middleware trace、凭证、URL、路径、媒体引用和文件内容不会进入数据库。
+`ok`、`error` 等值表示 Hermes 观察到的 Tool 状态，不表示 QQ 远端业务成功；观察 hook 未触发、超时或写入失败时可能漏记。
+每个 profile 的历史最多保留 30 天或 10,000 条，超限时清理最早记录；没有数据库的空 profile 浏览不会创建文件。
 
 回滚前停止新维护请求并关闭 Dashboard，保留图库、上传和任务记录。旧插件只读环境配置，
 需手动把要保留的普通 settings 转成原 `MILKY_*` 格式后再回滚，不删除宿主凭证。

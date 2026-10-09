@@ -164,11 +164,13 @@ def register(ctx: Any) -> None:
     from .config import load_config
     from .slash_commands import SlashCommandService
     from .stickers import StickerMaintenanceService
+    from .tool_call_history import register_tool_call_history
 
     profile_settings = ProfileSettings()
     command_service = SlashCommandService(StickerMaintenanceService(plugin_context=ctx))
     _register_bundled_skill(ctx)
     register_tools(ctx)
+    register_tool_call_history(ctx)
     register_command = getattr(ctx, "register_command", None)
     if callable(register_command):
         register_command(
