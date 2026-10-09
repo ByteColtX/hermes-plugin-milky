@@ -455,10 +455,11 @@ smoke 默认只读；发送或上传必须显式 `--allow-write`，目标还必�
 | 协议 | Milky v1.3 HTTP Action + SSE |
 | 平台入口 | `__init__.py::register(ctx)` |
 | client tool 入口 | 当前 `main` 为 `__init__.py::register(ctx)` 调用 `outbound.tools::register_tools(ctx)`；独立 `tools.py::register_tools(ctx)` 在 `codex/milky-tools-entry` 分支 |
+| 目标 Hermes 工具可用性 | 指定 SHA 的 user-installed plugin Agent toolset 实测未加载 manifest 声明的 28 个工具（26 个 Action、2 个贴纸工具）；目标集成尚未通过，见 [migration evidence](openspec/changes/migrate-hermes-main-platform-contract/evidence.md) |
 | Dashboard API | `dashboard/plugin_api.py`，由宿主扩展加载 |
 | manifest/package version | manifest 2；package 2.0.2 |
 | 维护者 | `ByteColtX`（manifest 和 pyproject author） |
-| 架构复核日期 | 2026-09-30 |
+| 架构复核日期 | 2026-10-09 |
 | 部署目标 | Hermes Gateway；具体 hosting 为 `Not evident from the repository` |
 
 | 术语 | 含义 |
@@ -479,6 +480,7 @@ dashboard/plugin_api.py 由宿主已启用用户插件的 Dashboard 扩展加载
 FastAPI、上传解析器或创建 Web worker。
 Dashboard 不创建 Milky client，不通过普通消息、Will、SSE 自动触发维护。
 管理请求经宿主认证，并按每个请求由 Hermes 确认的 profile 解析启用状态、配置、凭证与数据根；图库、上传、任务均从该 profile 的固定 plugin-data 根计算，不回退到启动 profile。Hermes host proxy 为非流式 HTTP API 缓冲响应；它不支持 API streaming/websocket，也不改变 Milky platform adapter 必须使用 `in_process` 的要求。
+指定 Hermes `0e37a439bda15ef3c28a4d20593964d7c6a527a6` 的 Dashboard scanner 只发现根级 `plugins/<name>/dashboard/manifest.json`，不会发现第三方 platform 原生安装位置 `plugins/platforms/<name>/dashboard/manifest.json`；因此当前原生安装路径上的 Milky host proxy API 返回 404，profile proxy 集成仍为 `unknown`。临时 flat alias 探针不代表原生部署路径通过。
 缺少宿主能力返回 unsupported，不修补 core。实际验收状态见
 `openspec/changes/migrate-hermes-main-platform-contract/evidence.md`；历史 Dashboard 证据仍见
 `openspec/changes/archive/2026-09-24-add-milky-web-dashboard/evidence.md`。

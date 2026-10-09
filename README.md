@@ -68,8 +68,11 @@ change 和已归档 change 的测试证据见 [openspec/](openspec/)。
   session prompt 可看到当前会话的最小资料；介绍来自入站消息快照，不实时查询 Milky。
 - **人工贴纸维护：** 通过显式 `/milky sticker` 命令维护插件持久目录中的图片库；普通消息、入站图片、
   关键词、Will 和 Agent 输出不会自动收集贴纸。
-- **Agent 贴纸能力：** 插件运行时依赖 `jieba` 且库中存在可用条目时，`sticker_search` 可严格搜索、显式放宽意图或浏览有界候选，
-  `sticker_send` 可按同样的查询或已知贴纸 ID 向当前 Milky 会话发送一张贴纸；目标、路径和 URL 仍由工具边界管理。
+- **Agent 贴纸工具：** 插件代码和 manifest 声明 `sticker_search` 与 `sticker_send`。在宿主将工具加载进
+  Agent toolset、运行时依赖 `jieba` 且库中存在可用条目时，前者可严格搜索、显式放宽意图或浏览有界候选，
+  后者可按同样的查询或已知贴纸 ID 向当前 Milky 会话发送一张贴纸；目标、路径和 URL 仍由工具边界管理。
+  指定 Hermes `0e37a439bda15ef3c28a4d20593964d7c6a527a6` 未将这两个工具或其余 manifest 工具加载进
+  user-installed plugin 的 Agent toolset，因此该宿主中不能由 Agent 调用。
 
 运行环境：Python 3.13+、Hermes Gateway 0.21.4 或更新版本、Milky v1.3 服务，以及插件声明的
 `httpx`、`python-multipart`、Pillow 和 `jieba`。`requires_hermes: ">=0.21.4"` 是 Hermes 版本下限，
