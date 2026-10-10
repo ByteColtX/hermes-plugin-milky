@@ -28,6 +28,7 @@ _CQ_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 _CQ_KEY_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _CQ_PREFIX = "[CQ:"
 _CQ_PREFIX_PATTERN = re.compile(re.escape(_CQ_PREFIX), re.IGNORECASE)
+_CQ_COLON_COMPAT_TYPES = frozenset({"reply", "at", "face"})
 _CQ_TYPES = (
     "text",
     "face",
@@ -112,15 +113,29 @@ def parse_cq_code(raw: object) -> tuple[str, dict[str, str]] | None:
     if not parameter_text:
         return None
 
+    normalized_name = name.lower()
+    allow_colon = normalized_name in _CQ_COLON_COMPAT_TYPES
     parameters: dict[str, str] = {}
     for field in parameter_text.split(","):
-        key, equals, value = field.partition("=")
-        if not equals or _CQ_KEY_PATTERN.fullmatch(key) is None or key in parameters:
+        if allow_colon:
+            separators = [
+                position for position in (field.find("="), field.find(":")) if position >= 0
+            ]
+            separator_position = min(separators, default=-1)
+            if separator_position < 0:
+                return None
+            key = field[:separator_position]
+            value = field[separator_position + 1 :]
+        else:
+            key, equals, value = field.partition("=")
+            if not equals:
+                return None
+        if _CQ_KEY_PATTERN.fullmatch(key) is None or key in parameters:
             return None
         if "[" in value or "]" in value:
             return None
         parameters[key] = _decode_cq_value(value)
-    return name.lower(), parameters
+    return normalized_name, parameters
 
 
 def format_cq_message(content: str) -> list[dict[str, Any]]:

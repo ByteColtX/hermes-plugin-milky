@@ -228,6 +228,40 @@ def test_sender_splits_after_valid_unknown_cq_candidate() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("raw", "native"),
+    [
+        (
+            "[CQ:face,id:14]",
+            {"type": "face", "data": {"face_id": "14"}},
+        ),
+        (
+            "[CQ:at,qq:10001]",
+            {"type": "mention", "data": {"user_id": 10001}},
+        ),
+        (
+            "[CQ:reply,id:9001]",
+            {"type": "reply", "data": {"message_seq": 9001}},
+        ),
+    ],
+)
+def test_sender_splits_after_colon_compatible_cq_candidate(
+    raw: str, native: dict[str, object]
+) -> None:
+    """三类冒号 CQ 闭合后紧邻的分段标记仍按候选边界处理。"""
+
+    client = SplitClient()
+    sender = MilkyOutboundSender(client)
+
+    result = asyncio.run(sender.send("dm:800000001", f"前{raw}[SPLIT]后"))
+
+    assert result.success is True
+    assert [body["message"] for _, body in client.calls] == [
+        [{"type": "text", "data": {"text": "前"}}, native],
+        [{"type": "text", "data": {"text": "后"}}],
+    ]
+
+
 @pytest.mark.parametrize("prefix", ["cq", "Cq", "cQ"])
 def test_sender_splits_after_case_variant_unknown_cq_candidate(prefix: str) -> None:
     """大小写变体的完整 unknown CQ 仍保护候选并识别后续标记。"""

@@ -86,6 +86,109 @@ def test_confirmed_cq_types_convert_to_native_segments(
     assert format_message(content) == expected
 
 
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        (
+            "[CQ:face,id:14,large=1]",
+            [{"type": "face", "data": {"face_id": "14", "is_large": True}}],
+        ),
+        (
+            "[CQ:at,qq:10001]",
+            [{"type": "mention", "data": {"user_id": 10001}}],
+        ),
+        (
+            "[CQ:reply,id:9001]",
+            [{"type": "reply", "data": {"message_seq": 9001}}],
+        ),
+    ],
+)
+def test_colon_parameters_convert_confirmed_cq_types(
+    content: str, expected: list[dict[str, object]]
+) -> None:
+    """三类兼容 CQ 的冒号参数应复用既有 native converter。"""
+
+    assert format_message(content) == expected
+
+
+def test_colon_parameters_can_mix_with_equals_and_keep_control_order() -> None:
+    """兼容 CQ 可混用两种分隔符并保持控制码顺序。"""
+
+    assert format_message("[CQ:reply,id:9001][CQ:face,id=14,large:1][CQ:at,qq=10001]正文") == [
+        {"type": "reply", "data": {"message_seq": 9001}},
+        {"type": "face", "data": {"face_id": "14", "is_large": True}},
+        {"type": "mention", "data": {"user_id": 10001}},
+        {"type": "text", "data": {"text": "正文"}},
+    ]
+
+
+def test_colon_parameter_values_keep_later_separators_for_existing_validation() -> None:
+    """兼容字段只取首个分隔符，后续符号仍属于字段值。"""
+
+    assert parse_cq_code("[CQ:reply,id:12=tail]") == ("reply", {"id": "12=tail"})
+    assert format_message("前[CQ:reply,id:12=tail]后") == [
+        {"type": "text", "data": {"text": "前"}},
+        {"type": "text", "data": {"text": "[CQ:reply,id:12=tail]"}},
+        {"type": "text", "data": {"text": "后"}},
+    ]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "[CQ:text,text:你好]",
+        "[CQ:image,file:https://media.example/image]",
+        "[CQ:record,file:https://media.example/record]",
+        "[CQ:video,file:https://media.example/video]",
+        "[CQ:future,key:value]",
+    ],
+)
+def test_colon_parameters_for_other_cq_types_keep_raw_fallback(raw: str) -> None:
+    """其他 CQ 类型的冒号字段继续保持完整原文 fallback。"""
+
+    assert format_message(f"前{raw}后") == [
+        {"type": "text", "data": {"text": "前"}},
+        {"type": "text", "data": {"text": raw}},
+        {"type": "text", "data": {"text": "后"}},
+    ]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "[CQ:at,qq:]",
+        "[CQ:reply,id:]",
+        "[CQ:face,id:]",
+        "[CQ:at,uid:10001]",
+        "[CQ:reply,id:9001,id:9002]",
+        "[CQ:face,id:14,emoji:1]",
+        "[CQ:face,id:14,large:2]",
+        "[CQ:at,qq:010001]",
+        "[CQ:at,qq:10000]",
+        "[CQ:at,qq:4294967296]",
+        "[CQ:at,qq:not-a-number]",
+        "[CQ:reply,id:00]",
+        "[CQ:reply,id:9007199254740992]",
+        "[CQ:reply,id:not-a-number]",
+        "[CQ:face,id:00]",
+        "[CQ:face,id:9007199254740992]",
+        "[CQ:face,id:not-a-number]",
+        "[CQ:at,qq:10001,broken]",
+        "[CQ:at,qq:10001",
+    ],
+)
+def test_invalid_colon_parameters_keep_raw_text(raw: str) -> None:
+    """非法冒号兼容写法只能回退当前原文并保留相邻正文。"""
+
+    expected = [{"type": "text", "data": {"text": "前"}}]
+    expected.append({"type": "text", "data": {"text": raw}})
+    if raw.endswith("]"):
+        expected.append({"type": "text", "data": {"text": "后"}})
+    else:
+        expected[-1] = {"type": "text", "data": {"text": f"{raw}后"}}
+    assert format_message(f"前{raw}后") == expected
+
+
 @pytest.mark.parametrize("prefix", ["CQ", "cq", "Cq", "cQ"])
 @pytest.mark.parametrize(
     ("suffix", "expected"),

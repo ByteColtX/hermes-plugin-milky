@@ -183,6 +183,9 @@ def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) ->
         assert "between text sections" in entry.PLATFORM_GUIDANCE
         assert "up to 3 messages" in entry.PLATFORM_GUIDANCE
         assert "markers are removed before sending" in entry.PLATFORM_GUIDANCE
+        assert "[CQ:at,qq=<uid>]" in entry.PLATFORM_GUIDANCE
+        assert "[CQ:reply,id=<msg_seq>]" in entry.PLATFORM_GUIDANCE
+        assert "Use `id=`, never `id:`." not in entry.PLATFORM_GUIDANCE
         assert "Use real `uid` and `msg_seq` values" in entry.PLATFORM_GUIDANCE
         assert "101" not in hint
         assert "9001" not in hint

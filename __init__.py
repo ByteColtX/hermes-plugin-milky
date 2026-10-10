@@ -22,7 +22,7 @@ PLATFORM_GUIDANCE = """
 * If no final reply is needed, return only `[SILENT]` with no extra content.
 * To send a reply as separate chat messages, place `[SPLIT]` between text sections, inline or on its own line. Use at most 2 markers for up to 3 messages; the markers are removed before sending.
 * Mention a user with `[CQ:at,qq=<uid>]`. Literal `@sender_name` is not parsed as a valid mention.
-* Quote a message with `[CQ:reply,id=<msg_seq>]`. Use `id=`, never `id:`.
+* Quote a message with `[CQ:reply,id=<msg_seq>]`.
 * Use real `uid` and `msg_seq` values from the conversation for mentions and quotes; omit the tag if the required ID is unavailable.
 * Incoming message headers are metadata; do not copy them into replies.
 * For CQ syntax details, view skill `hermes-plugin-milky:milky-qq-cq-reference`.
