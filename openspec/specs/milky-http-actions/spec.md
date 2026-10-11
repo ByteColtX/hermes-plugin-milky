@@ -27,17 +27,25 @@
 ### Requirement: HTTP 和协议 envelope 错误必须分类
 
 非 Tool Action 调用 MUST 区分连接建立、请求写入、响应读取或超时、非 JSON、HTTP 状态错误、协议
-`status`/`retcode` 错误、字段缺失和明确不支持的能力；HTTP 200 SHALL NOT 单独代表成功。已经进入
+`status`/`retcode` 错误、字段缺失和明确不支持的能力；HTTP 200 SHALL NOT 单独代表成功。发送 Action
+另按可验证的远端 `message_seq` 证据归一化，不能只依据 HTTP 或单一状态字段。已经进入
 HTTP 请求边界但尚未收到可确认响应的非 Tool Action MUST 返回 `transport_unknown`，不得暗示远端未
 执行；持续事件流的读取空闲不得被误用为有副作用 Action 的成功或失败结果。已注册 Tool 遵循独立
 的原样交付契约：只要取得响应体，HTTP 或协议状态不再转换为插件错误分类。
 
 #### Scenario: HTTP 200 协议失败
 
-- **WHEN** 登录、状态同步、消息发送或上传等非 Tool Action 服务返回 HTTP 200 但 envelope 的 `status`
-  不是 `ok` 或 `retcode` 非零
+- **WHEN** 登录、状态同步、上传等非 Tool Action 服务，或没有可验证发送序号的消息发送服务，返回 HTTP 200
+  但 envelope 的 `status` 不是 `ok` 或 `retcode` 非零
 - **THEN** 调用 SHALL 返回 `rejected` 错误
 - **AND** SHALL NOT 交付成功数据给状态、发送或入站调用方
+
+#### Scenario: 发送异常 envelope 含可验证序号
+
+- **WHEN** 消息发送 Action 返回 HTTP 200 且 envelope 状态异常，但 `data.message_seq` 是符合发送契约的非负整数
+- **THEN** 调用 SHALL 归一化为已确认发送结果
+- **AND** SHALL 使用该远端序号作为稳定消息 ID
+- **AND** SHALL NOT 仅因 HTTP 200 或单一状态字段报告成功
 
 #### Scenario: 响应不是 JSON
 

@@ -202,6 +202,7 @@ chat key 只接受 `dm:<十进制 QQ 号>` 和 `group:<十进制群号>`。`temp
 - `materialization.py` 和 `file_upload.py` 只读一次出站本地资源，并受启动时大小上限约束。
 - 图片、语音、视频和 document 可走 native media/file upload；插件不把本地路径直接交给 Milky。
 - `MILKY_LONG_TEXT_FORWARD_THRESHOLD` 大于 0 时，超长文本可与有序 native media 合成一个 forward。
+- 发送 Action 的异常 envelope 只有在包含可验证的远端 `message_seq` 时才归一化为 `confirmed_send`；没有该证据时保持明确失败或未知分类，多段发送按各段结果聚合。
 - 26 个 Milky Action ToolSpec 通过固定执行 module 在取得响应体后原样交付字符串；Tool 不执行 envelope/DTO 解析、最小
   `data` 校验、敏感键过滤、容器冻结、状态码包装或结果重建。非 Tool Action 保持既有校验与错误分类。
 

@@ -1060,8 +1060,8 @@ Tool 结果进入 Hermes core 后，宿主可能运行 `transform_tool_result`�
 消息入口。断开时会取消 event、pipeline、TTL 任务，解除 sender/command 绑定，并关闭
 HTTP/SSE 资源。
 
-非 Tool 出站成功在插件侧使用远端 `data.message_seq` 的稳定字符串作为 `message_seq`，交给 Hermes 时映射为宿主要求的 `message_id`；协议拒绝、传输未知、
-malformed 和 unsupported 会保持明确失败分类。缺少消息序号时不会伪造稳定去重 ID。
+非 Tool 出站成功在插件侧使用远端 `data.message_seq` 的稳定字符串作为 `message_seq`，交给 Hermes 时映射为宿主要求的 `message_id`；发送响应即使协议状态异常，
+只要仍含可验证的远端 `message_seq`，就归一化为已确认发送并保留该序号。没有该证据的协议拒绝、传输未知、malformed 和 unsupported 会保持明确失败分类；缺少消息序号时不会伪造稳定去重 ID。
 
 ### QQ 热白名单管理
 
