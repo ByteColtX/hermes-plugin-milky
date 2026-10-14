@@ -9,7 +9,9 @@
 它不是独立 QQ 服务、Web 服务或 Agent runtime。Hermes 拥有 Agent turn、session/transcript、入站资源 helper 和最终消息交接；本插件拥有 Milky 协议适配、入站策略、出站格式化、有限的进程内状态，以及独立的贴纸库。
 
 平台 adapter 的平台注册入口是 `__init__.py::register(ctx)`；当前 `main` 仍从该入口调用
-`outbound.tools::register_tools(ctx)` 登记 manifest `provides_tools` 声明的固定 client tools。
+`outbound.tools::register_tools(ctx)` 尝试登记 manifest `provides_tools` 声明的固定 client tools。
+该函数要求宿主 context 提供 `register_tool`；指定目标 Hermes 的实际验证中插件工具注册表和 Milky Agent
+toolset 仍为空。
 官方独立入口 `tools.py::register_tools(ctx)` 已放在 `codex/milky-tools-entry` 分支，待目标 Hermes
 修复 user-installed platform loader 后再合并。目标 Hermes `0e37a439bda15ef3c28a4d20593964d7c6a527a6`
 的集成验证发现该 loader 没有触发独立入口；本地定义和 fake host 测试不证明宿主已加载。Dashboard
@@ -87,13 +89,15 @@ MilkyAdapter -> InboundPipeline -> Hermes Gateway -> Agent session/turn -> Outbo
 
 ### 3.1 注册入口和生命周期
 
-`register(ctx)` 注册 Milky platform、bundled skills、`/milky`、prompt sections、固定工具、调用观察 hook 和可选的
-home-channel cron 元数据。当前 `main` 在该函数中调用 `outbound.tools::register_tools(ctx)`；官方独立
+`register(ctx)` 注册 Milky platform、bundled skills、`/milky`、prompt sections、调用观察 hook 和可选的
+home-channel cron 元数据，并调用固定工具注册函数尝试登记工具。当前 `main` 在该函数中调用
+`outbound.tools::register_tools(ctx)`；如果宿主 context
+没有 `register_tool`，该兼容调用不会登记工具，目标 SHA 的实测 tool registry 与 Milky Agent toolset 均为空。官方独立
 `tools.py::register_tools(ctx)` 只在 `codex/milky-tools-entry` 分支保留，等目标 Hermes 修复
-user-installed loader 后再合并。两种入口都只登记 `plugin.yaml::provides_tools` 声明的 26 个 Milky
-Action ToolSpec、`sticker_search` 和 `sticker_send`，注册阶段不联网。目标 Hermes
+user-installed loader 后再合并。两个入口的工具登记范围都限于 `plugin.yaml::provides_tools` 声明的 26 个 Milky
+Action ToolSpec、`sticker_search` 和 `sticker_send`；是否实际登记取决于对应宿主 loader 与 context API。指定目标 Hermes
 `0e37a439bda15ef3c28a4d20593964d7c6a527a6` 的运行验证显示其 user-installed loader 没有触发独立
-入口；该目标的 toolset 结论只适用于新版分支，不能用 fake host 测试替代宿主验证。
+入口，工具注册表和 Agent toolset 均为空；不能用 fake host 测试替代宿主验证。
 
 平台 adapter factory 在 Hermes 当前 profile 中创建 adapter 时解析普通设置和凭证；注册阶段不捕获另一个 profile 的配置。两个 `after_memory` prompt section 分别提供平台使用指导和当前 QQ 会话资料快照。`post_tool_call` 只读观察回调按固定工具名过滤；各注册入口均不解析 profile、不创建 HTTP client 请求、SSE、长期 task 或任何历史数据库。
 
@@ -210,8 +214,8 @@ Tool 字符串交给 Hermes core 后，core 可能运行 `transform_tool_result`
 或将超长结果落盘并以预览替换上下文内容。这些后置处理由宿主所有，不在插件契约内；插件不注册、
 规避或还原它们。
 
-manifest 声明、`outbound.tools` 定义以下 26 个 Milky Action ToolSpec；当前 `main` 由根入口登记，
-新版独立入口的目标 Hermes loader 验证仍待完成：
+manifest 声明、`outbound.tools` 定义以下 26 个 Milky Action ToolSpec；当前 `main` 的根入口会尝试登记，
+但指定目标 Hermes 的工具注册表和 Agent toolset 实测仍为空；新版独立入口的目标 loader 验证仍待完成：
 
 ```text
 send_profile_like, send_friend_nudge, send_group_nudge, recall_group_message, get_group_info, get_group_member_list, get_group_member_info,

@@ -122,8 +122,9 @@ hermes gateway restart
 更新会按当前 `pyproject.toml` 重新准备运行依赖；准备或发布失败时会保留现有插件版本。更新插件代码
 或配置后都需要重启 Gateway，运行中的进程不会自动加载新的插件代码。
 
-本版本包含 Hermes 迁移的其余改动；为保证当前 user-installed Hermes 仍能加载 QQ 工具，`main` 暂由根
-`register(ctx)` 调用 `outbound.tools::register_tools(ctx)`。按官方 [第三方平台插件指南](https://hermes-agent.nousresearch.com/docs/developer-guide/adding-platform-adapters)
+本版本包含 Hermes 迁移的其余改动；当前 `main` 暂由根 `register(ctx)` 调用
+`outbound.tools::register_tools(ctx)`，作为兼容尝试。该函数只在宿主 context 提供 `register_tool` 时登记工具；
+指定目标 Hermes 的实际验证仍发现插件工具注册表和 Milky Agent toolset 为空。按官方 [第三方平台插件指南](https://hermes-agent.nousresearch.com/docs/developer-guide/adding-platform-adapters)
 拆出的独立 `tools.py::register_tools(ctx)` 已提交到 `codex/milky-tools-entry`，待 Hermes core 修复
 user-installed platform loader 后再合并到 `main`。社区平台仍以第三方插件分发，不需要改动或并入 Hermes core。
 
@@ -363,7 +364,7 @@ plugins:
     hermes-plugin-milky:
       allow_gateway_injection: true
 
-# 关闭后台自动复盘、自动写入记忆/Skill
+# 启用后台自动复盘和内置记忆更新
 auxiliary:
   background_review:
     enabled: true
@@ -373,7 +374,7 @@ memory:
   user_profile_enabled: true
   nudge_interval: 20    # 每累计 20 个对话回合，触发一次自动记忆复盘，写入 MEMORY.md / USER.md
 
-# 关闭自动建议创建 Skill
+# 关闭 Skill 创建建议
 skills:
   creation_nudge_interval: 0
 
@@ -1130,7 +1131,7 @@ list 保留 settings、legacy、environment、default 来源名称；一致时�
 
 | 对象 | 作用 |
 | --- | --- |
-| `__init__.py::register(ctx)` | 当前 `main` 注册 platform、`/milky`、skills、standalone sender、QQ 指引 section、QQ 会话介绍 section，并调用 `outbound.tools::register_tools(ctx)` 登记固定 Agent tools。 |
+| `__init__.py::register(ctx)` | 当前 `main` 注册 platform、`/milky`、skills、standalone sender、QQ 指引 section、QQ 会话介绍 section，并调用 `outbound.tools::register_tools(ctx)` 尝试登记固定 Agent tools；目标 Hermes 实际验证中 toolset 仍为空。 |
 | `tools.py::register_tools(ctx)` | 新版分支中的官方独立入口；委托 `outbound.tools` 注册 manifest 声明的固定 ToolSpec，注册阶段不联网。 |
 | `dashboard/plugin_api.py` | 由宿主 Dashboard 扩展加载的管理 API；请求按宿主确认的 profile 处理。 |
 | `MilkyAdapter` | 管理连接、停止、入站交接和出站委托。 |

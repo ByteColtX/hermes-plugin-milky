@@ -6,7 +6,7 @@
 
 平台 client tools 的设计遵循 Hermes 官方社区/第三方平台插件指南：manifest 声明 `kind: platform` 与 `provides_tools`，固定工具放在 `tools.py::register_tools(ctx)`，不要求把 Milky 并入 Hermes bundled plugins。指定目标 SHA 的 PluginManager 与 Gateway 实测确认，用户安装来源的平台注册成功，但 `tools.py` 没有进入工具注册表，Agent tool registry 和 `resolve_toolset("milky")` 都为空。
 
-当前 `main` 暂保留旧的根入口调用 `outbound.tools::register_tools(ctx)`，确保目标 user-installed loader 不支持独立入口时仍能登记固定工具；官方独立入口和不重复注册的平台入口保存在 `codex/milky-tools-entry` 分支，待 Hermes core 修复后再合并。这个过渡不改变第三方插件的 manifest 合同，也不修改 Hermes core。
+当前 `main` 暂保留旧的根入口调用 `outbound.tools::register_tools(ctx)`，作为宿主 context 提供 `register_tool` 时的兼容尝试；指定目标 Hermes 的实际验证仍发现插件工具注册表和 Milky Agent toolset 为空，因此该调用不能证明目标宿主已加载固定工具。官方独立入口和不重复注册的平台入口保存在 `codex/milky-tools-entry` 分支，待 Hermes core 修复后再合并。这个过渡不改变第三方插件的 manifest 合同，也不修改 Hermes core。
 
 目标 SHA 的 loader 源码解释了差异：`gate_manifest()` 只对 `manifest.source == "bundled"` 的 platform 返回 deferred；user 来源 platform 进入普通 eager `register()` 路径。`_register_deferred_platform_tools()` 只从 deferred bundled loader 调用，因此目标 SHA 没有履行官方文档对第三方 platform `provides_tools` 的承诺。这不是 Milky 应安装成 bundled plugin 的理由，也不是插件目录布局问题；本项目继续保持第三方插件结构，不修改 Hermes core。目标 host 的 Agent toolset 集成仍未通过，见 `evidence.md` 与未完成任务 2.3、11.2。
 
@@ -36,7 +36,7 @@
 
 ### 平台注册与 client tool 注册分开
 
-目标形态保留根 `__init__.py::register(ctx)` 作为第三方 native platform 注册路径，并由根 `tools.py::register_tools(ctx)` 仅登记 `outbound.tools` 已定义的固定 ToolSpec；`plugin.yaml::provides_tools` 继续列出它们。这与 Hermes 官方平台插件指南一致。当前 `main` 暂由根 `register(ctx)` 调用同一固定工具注册函数，独立入口在 `codex/milky-tools-entry` 分支，待 loader 修复后合并。根包导入和工具导入都不得创建 client、登录、连接 SSE、读媒体或启动后台任务。不得为通过目标验证而将第三方插件伪装为 bundled plugin，或修改/monkey patch Hermes core。
+目标形态保留根 `__init__.py::register(ctx)` 作为第三方 native platform 注册路径，并由根 `tools.py::register_tools(ctx)` 仅登记 `outbound.tools` 已定义的固定 ToolSpec；`plugin.yaml::provides_tools` 继续列出它们。这与 Hermes 官方平台插件指南一致。当前 `main` 暂由根 `register(ctx)` 调用同一固定工具注册函数，作为兼容尝试；指定目标 Hermes 实测的插件工具注册表和 Milky Agent toolset 均为空。独立入口在 `codex/milky-tools-entry` 分支，待 loader 修复后合并。根包导入和工具导入都不得创建 client、登录、连接 SSE、读媒体或启动后台任务。不得为通过目标验证而将第三方插件伪装为 bundled plugin，或修改/monkey patch Hermes core。
 
 用目标 `PluginManager` 和 Gateway 从隔离 Hermes home 加载插件，验证 manifest 声明的固定工具进入 Milky Agent session toolset 且各注册一次，并验证平台 adapter 注册独立完成；仅调用项目 fake context 不足以证明目标 loader 合同。若注册失败，目标验证需识别缺少或未注册的 manifest tool，不把 warning 当作能力已经存在。
 
