@@ -82,7 +82,7 @@ MilkyAdapter -> InboundPipeline -> Hermes Gateway -> Agent session/turn -> Outbo
 - Hermes 是宿主边界，提供 platform registry、Agent session、消息队列和资源 helper。
 - Milky 是外部 QQ 协议边界；插件只通过 HTTP Action 和 SSE 与它通信。
 - SSE 不直接创建 Agent turn；普通消息必须经过 `InboundPipeline`。
-- ToolSpec 先经过固定 schema/handler，再调用 `outbound/fixed_actions.py` 的窄执行 interface；该 interface 复用已绑定 client 的固定 Action 目录和 raw 响应交付，不重试、不创建连接，没有通用 Action catalog。
+- ToolSpec 先经过固定 schema/handler，再调用 `outbound/fixed_actions.py` 的窄执行 interface；该 interface 使用固定 Action 目录和 raw 响应交付，不重试，没有通用 Action catalog。执行优先复用网关进程内已绑定的 live client；没有 live client 时（例如 cron 独立 worker）按调用时 profile 配置创建一次性 client 和 sender，执行后在 `finally` 中关闭，不缓存连接。
 - 贴纸数据库和文件目录只由显式贴纸维护、`sticker_search` 或 `sticker_send` 使用。
 
 ## 3. 核心组件

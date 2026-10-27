@@ -118,7 +118,7 @@ metadata:
 
 - 取得响应体，Tool 调用方收到原始响应内容；HTTP 状态、协议状态、JSON 形状和未知字段不在插件侧改写。
 - `invalid_input`，参数本地就不合法，且不会发网络请求。
-- `unsupported`，工具未注册、client 未绑定或已关闭。
+- `unsupported`，工具未注册，或调用时 profile 配置不可读而无法创建一次性 client。
 - `transport_unknown`，请求进入 HTTP 边界但客户端没有拿到响应体，副作用是否发生未知；插件不自动重试。
 - 已取得响应体的协议拒绝、HTTP 错误、非 JSON 或未知结构均按原始结果交付；`rejected`、`http_error` 和 `malformed` 不再是这些 Tool 的插件结果分类。
 - 贴纸搜索无匹配返回 `no_match`；精确 ID 不存在或不可见返回 `not_found`，文件缺失返回 `missing_file`，存储边界失败返回

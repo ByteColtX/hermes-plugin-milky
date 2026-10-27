@@ -1522,21 +1522,6 @@ def test_reject_reason_is_not_logged_and_full_reason_is_not_required_for_result(
     assert "duration_ms=" in record.getMessage()
 
 
-def test_unbound_sender_returns_unsupported_without_network() -> None:
-    """未绑定 sender 时新增工具不得自行建立 client 或连接。"""
-
-    context = ToolContext()
-    register_tools(context)
-    handlers = {item["name"]: item["handler"] for item in context.registered}
-    unbind_sender()
-
-    result = json.loads(
-        asyncio.run(handlers["get_resource_temp_url"]({"resource_id": "fixture-id"}))
-    )
-
-    assert result["classification"] == "unsupported"
-
-
 def test_resource_tool_rejects_client_without_raw_tool_entry() -> None:
     """资源 Tool 不得把内部查询的解析 envelope 当作 raw body 交付。"""
 

@@ -12,6 +12,7 @@ from milky.models import MilkyEnvelope
 
 from .chunking import chunk_text
 from .formatter import OutboundFormatError, format_message
+from .lifecycle import close_quietly
 from .sender import (
     MilkyOutboundSender,
     OutboundSendResult,
@@ -123,8 +124,8 @@ async def standalone_send(
     except Exception:  # noqa: BLE001 - standalone 边界不得泄露异常正文
         return _failure("malformed")
     finally:
-        await _close_quietly(sender)
-        await _close_quietly(client)
+        await close_quietly(sender)
+        await close_quietly(client)
 
 
 def _validate_standalone_inputs(
@@ -194,20 +195,6 @@ def _exception_classification() -> str:
     """为未携带安全分类的 standalone 异常选择固定错误类别。"""
 
     return "malformed"
-
-
-async def _close_quietly(resource: object) -> None:
-    """尽力关闭资源且不让清理异常覆盖原始投递结果。"""
-
-    close = getattr(resource, "close", None)
-    if not callable(close):
-        return
-    try:
-        result = close()
-        if inspect.isawaitable(result):
-            await result
-    except Exception:  # noqa: BLE001 - 清理错误只能留在本地生命周期边界
-        return
 
 
 async def _load_standalone_identity(client: object) -> object:

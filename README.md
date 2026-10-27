@@ -1034,10 +1034,12 @@ manifest 和 `outbound.tools` 固定声明 26 个与 Milky operationId 对齐的
 - 好友请求、入群请求和群邀请的接受/拒绝。
 
 上述工具需要由 Hermes 宿主加载当前根入口或新版独立 `tools.py`；当前新版独立 loader 仍受目标宿主问题阻塞。工具可用时，请求/邀请的接受和拒绝不会由通知、普通正文、关键词或 Will 自动触发，必须由 Agent 显式提供
-完整参数。26 个 Action Tool 只要取得响应体就把 UTF-8 解码后的字符串原样交给 Hermes core：
+完整参数。工具执行优先复用网关进程内已绑定的 live client；在没有 live adapter 的进程（例如
+Hermes cron 的独立 worker）中，工具按调用时 profile 配置创建一次性 client 和 sender，执行本次
+Action 后立即关闭，不复用连接、不重试。26 个 Action Tool 只要取得响应体就把 UTF-8 解码后的字符串原样交给 Hermes core：
 不校验 HTTP 状态、`status`/`retcode`、`data` 结构，不重建 envelope，不附加状态码，也不脱敏
 `access_token`、`authorization`、`cookie`、`password`、`token`（任意大小写）字段。无法按 UTF-8
-解码的字节使用替换字符。参数非法、Tool 不支持或未取得响应体时分别返回 `invalid_input`、
+解码的字节使用替换字符。参数非法、运行时配置不可读或未取得响应体时分别返回 `invalid_input`、
 `unsupported` 或 `transport_unknown`；有副作用的调用最多提交一次且不自动重试。
 
 `get_resource_temp_url` 只接受非空 `resource_id`，仅在 Agent 显式调用时请求对应 Action。工具结果只交付给该

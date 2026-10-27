@@ -11,7 +11,8 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from milky.client import ActionError
+from config import load_config
+from milky.client import ActionError, MilkyClient
 from milky.logging import render_event
 from stickers.sending import (
     StickerSendService,
@@ -21,6 +22,7 @@ from stickers.sending import (
     validate_sticker_chat_key,
 )
 
+from .lifecycle import close_quietly
 from .sender import (
     MilkyOutboundSender,
     OutboundSendResult,
@@ -960,17 +962,14 @@ async def _handle_send_profile_like(args: object, **kwargs: Any) -> str:
         values["count"], minimum=0, maximum=9007199254740991
     ):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     if "count" in values:
         return await _execute_action(
             "send_profile_like",
             values,
-            lambda: sender.profile_like(values["user_id"], values["count"]),
+            lambda sender: sender.profile_like(values["user_id"], values["count"]),
         )
     return await _execute_action(
-        "send_profile_like", values, lambda: sender.profile_like(values["user_id"])
+        "send_profile_like", values, lambda sender: sender.profile_like(values["user_id"])
     )
 
 
@@ -985,13 +984,10 @@ async def _handle_send_friend_nudge(args: object, **kwargs: Any) -> str:
         return _tool_error("invalid_input")
     if "is_self" in values and not _tool_optional_bool(values["is_self"]):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "send_friend_nudge",
         values,
-        lambda: sender.nudge(
+        lambda sender: sender.nudge(
             f"dm:{values['user_id']}",
             is_self=values.get("is_self"),
         ),
@@ -1009,13 +1005,10 @@ async def _handle_send_group_nudge(args: object, **kwargs: Any) -> str:
         return _tool_error("invalid_input")
     if not _tool_integer(values.get("user_id"), minimum=10001, maximum=4294967295):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "send_group_nudge",
         values,
-        lambda: sender.nudge(
+        lambda sender: sender.nudge(
             f"group:{values['group_id']}",
             user_id=values["user_id"],
         ),
@@ -1033,13 +1026,12 @@ async def _handle_recall_group_message(args: object, **kwargs: Any) -> str:
         return _tool_error("invalid_input")
     if not _tool_integer(values.get("message_seq"), minimum=0, maximum=9007199254740991):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "recall_group_message",
         values,
-        lambda: sender.recall_group_message(f"group:{values['group_id']}", values["message_seq"]),
+        lambda sender: sender.recall_group_message(
+            f"group:{values['group_id']}", values["message_seq"]
+        ),
     )
 
 
@@ -1054,13 +1046,12 @@ async def _handle_get_group_info(args: object, **kwargs: Any) -> str:
         return _tool_error("invalid_input")
     if "no_cache" in values and not _tool_optional_bool(values["no_cache"]):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "get_group_info",
         values,
-        lambda: sender.get_group_info(values["group_id"], no_cache=values.get("no_cache", False)),
+        lambda sender: sender.get_group_info(
+            values["group_id"], no_cache=values.get("no_cache", False)
+        ),
     )
 
 
@@ -1075,13 +1066,10 @@ async def _handle_get_group_member_list(args: object, **kwargs: Any) -> str:
         return _tool_error("invalid_input")
     if "no_cache" in values and not _tool_optional_bool(values["no_cache"]):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "get_group_member_list",
         values,
-        lambda: sender.get_group_member_list(
+        lambda sender: sender.get_group_member_list(
             values["group_id"], no_cache=values.get("no_cache", False)
         ),
     )
@@ -1100,13 +1088,10 @@ async def _handle_get_group_member_info(args: object, **kwargs: Any) -> str:
         return _tool_error("invalid_input")
     if "no_cache" in values and not _tool_optional_bool(values["no_cache"]):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "get_group_member_info",
         values,
-        lambda: sender.get_group_member_info(
+        lambda sender: sender.get_group_member_info(
             values["group_id"],
             values["user_id"],
             no_cache=values.get("no_cache", False),
@@ -1129,21 +1114,18 @@ async def _handle_set_group_member_mute(args: object, **kwargs: Any) -> str:
         values["duration"], minimum=0, maximum=9007199254740991
     ):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     if "duration" in values:
         return await _execute_action(
             "set_group_member_mute",
             values,
-            lambda: sender.set_group_member_mute(
+            lambda sender: sender.set_group_member_mute(
                 values["group_id"], values["user_id"], values["duration"]
             ),
         )
     return await _execute_action(
         "set_group_member_mute",
         values,
-        lambda: sender.set_group_member_mute(values["group_id"], values["user_id"]),
+        lambda sender: sender.set_group_member_mute(values["group_id"], values["user_id"]),
     )
 
 
@@ -1158,17 +1140,16 @@ async def _handle_set_group_whole_mute(args: object, **kwargs: Any) -> str:
         return _tool_error("invalid_input")
     if "is_mute" in values and not _tool_optional_bool(values["is_mute"]):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     if "is_mute" in values:
         return await _execute_action(
             "set_group_whole_mute",
             values,
-            lambda: sender.set_group_whole_mute(values["group_id"], values["is_mute"]),
+            lambda sender: sender.set_group_whole_mute(values["group_id"], values["is_mute"]),
         )
     return await _execute_action(
-        "set_group_whole_mute", values, lambda: sender.set_group_whole_mute(values["group_id"])
+        "set_group_whole_mute",
+        values,
+        lambda sender: sender.set_group_whole_mute(values["group_id"]),
     )
 
 
@@ -1181,13 +1162,10 @@ async def _handle_get_forwarded_messages(args: object, **kwargs: Any) -> str:
     values = args
     if not _tool_string(values["forward_id"]):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "get_forwarded_messages",
         values,
-        lambda: sender.get_forwarded_messages(values["forward_id"]),
+        lambda sender: sender.get_forwarded_messages(values["forward_id"]),
     )
 
 
@@ -1200,13 +1178,10 @@ async def _handle_get_resource_temp_url(args: object, **kwargs: Any) -> str:
     values = args
     if not _tool_string(values["resource_id"]):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "get_resource_temp_url",
         values,
-        lambda: sender.get_resource_temp_url(values["resource_id"]),
+        lambda sender: sender.get_resource_temp_url(values["resource_id"]),
     )
 
 
@@ -1225,15 +1200,12 @@ async def _handle_get_private_file_download_url(args: object, **kwargs: Any) -> 
         return _tool_error("invalid_input")
     if "is_self_send" in values and not _tool_optional_bool(values["is_self_send"]):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     if "is_self_send" not in values:
-        action = lambda: sender.get_private_file_download_url(
+        action = lambda sender: sender.get_private_file_download_url(
             values["user_id"], values["file_id"], values["file_hash"]
         )
     else:
-        action = lambda: sender.get_private_file_download_url(
+        action = lambda sender: sender.get_private_file_download_url(
             values["user_id"],
             values["file_id"],
             values["file_hash"],
@@ -1261,13 +1233,10 @@ async def _handle_kick_group_member(args: object, **kwargs: Any) -> str:
         return _tool_error("invalid_input")
     if "reject_add_request" in values and not _tool_optional_bool(values["reject_add_request"]):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     if "reject_add_request" not in values:
-        action = lambda: sender.kick_group_member(values["group_id"], values["user_id"])
+        action = lambda sender: sender.kick_group_member(values["group_id"], values["user_id"])
     else:
-        action = lambda: sender.kick_group_member(
+        action = lambda sender: sender.kick_group_member(
             values["group_id"],
             values["user_id"],
             reject_add_request=values["reject_add_request"],
@@ -1288,11 +1257,8 @@ async def _handle_quit_group(args: object, **kwargs: Any) -> str:
     values = args
     if not _tool_integer(values["group_id"], minimum=10001, maximum=4294967295):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
-        "quit_group", values, lambda: sender.quit_group(values["group_id"])
+        "quit_group", values, lambda sender: sender.quit_group(values["group_id"])
     )
 
 
@@ -1305,11 +1271,8 @@ async def _handle_delete_friend(args: object, **kwargs: Any) -> str:
     values = args
     if not _tool_integer(values["user_id"], minimum=10001, maximum=4294967295):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
-        "delete_friend", values, lambda: sender.delete_friend(values["user_id"])
+        "delete_friend", values, lambda sender: sender.delete_friend(values["user_id"])
     )
 
 
@@ -1327,13 +1290,10 @@ async def _handle_get_friend_requests(args: object, **kwargs: Any) -> str:
         return _tool_error("invalid_input")
     if "is_filtered" in values and not _tool_optional_bool(values["is_filtered"]):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "get_friend_requests",
         values,
-        lambda: sender.get_friend_requests(
+        lambda sender: sender.get_friend_requests(
             **{key: values[key] for key in ("limit", "is_filtered") if key in values}
         ),
     )
@@ -1351,13 +1311,10 @@ async def _handle_accept_friend_request(args: object, **kwargs: Any) -> str:
         return _tool_error("invalid_input")
     if "is_filtered" in values and not _tool_optional_bool(values["is_filtered"]):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "accept_friend_request",
         values,
-        lambda: sender.accept_friend_request(
+        lambda sender: sender.accept_friend_request(
             values["initiator_uid"],
             **({"is_filtered": values["is_filtered"]} if "is_filtered" in values else {}),
         ),
@@ -1378,13 +1335,10 @@ async def _handle_reject_friend_request(args: object, **kwargs: Any) -> str:
         return _tool_error("invalid_input")
     if "reason" in values and not _tool_optional_string(values["reason"]):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "reject_friend_request",
         values,
-        lambda: sender.reject_friend_request(
+        lambda sender: sender.reject_friend_request(
             values["initiator_uid"],
             **{key: values[key] for key in ("is_filtered", "reason") if key in values},
         ),
@@ -1403,13 +1357,10 @@ async def _handle_get_group_file_download_url(args: object, **kwargs: Any) -> st
         return _tool_error("invalid_input")
     if not _tool_string(values["file_id"]):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "get_group_file_download_url",
         values,
-        lambda: sender.get_group_file_download_url(values["group_id"], values["file_id"]),
+        lambda sender: sender.get_group_file_download_url(values["group_id"], values["file_id"]),
     )
 
 
@@ -1424,13 +1375,10 @@ async def _handle_accept_group_request(args: object, **kwargs: Any) -> str:
     values = args
     if not _valid_group_request_values(values, allow_reason=False):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "accept_group_request",
         values,
-        lambda: sender.accept_group_request(
+        lambda sender: sender.accept_group_request(
             values["notification_seq"],
             values["notification_type"],
             values["group_id"],
@@ -1450,13 +1398,10 @@ async def _handle_reject_group_request(args: object, **kwargs: Any) -> str:
     values = args
     if not _valid_group_request_values(values, allow_reason=True):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "reject_group_request",
         values,
-        lambda: sender.reject_group_request(
+        lambda sender: sender.reject_group_request(
             values["notification_seq"],
             values["notification_type"],
             values["group_id"],
@@ -1477,13 +1422,10 @@ async def _handle_accept_group_invitation(args: object, **kwargs: Any) -> str:
         return _tool_error("invalid_input")
     if not _tool_integer(values["invitation_seq"], minimum=0, maximum=9007199254740991):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "accept_group_invitation",
         values,
-        lambda: sender.accept_group_invitation(values["group_id"], values["invitation_seq"]),
+        lambda sender: sender.accept_group_invitation(values["group_id"], values["invitation_seq"]),
     )
 
 
@@ -1499,13 +1441,10 @@ async def _handle_reject_group_invitation(args: object, **kwargs: Any) -> str:
         return _tool_error("invalid_input")
     if not _tool_integer(values["invitation_seq"], minimum=0, maximum=9007199254740991):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "reject_group_invitation",
         values,
-        lambda: sender.reject_group_invitation(values["group_id"], values["invitation_seq"]),
+        lambda sender: sender.reject_group_invitation(values["group_id"], values["invitation_seq"]),
     )
 
 
@@ -1523,13 +1462,10 @@ async def _handle_get_group_files(args: object, **kwargs: Any) -> str:
         values["parent_folder_id"]
     ):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "get_group_files",
         values,
-        lambda: sender.get_group_files(
+        lambda sender: sender.get_group_files(
             values["group_id"],
             **(
                 {"parent_folder_id": values["parent_folder_id"]}
@@ -1549,13 +1485,10 @@ async def _handle_get_friend_info(args: object, **kwargs: Any) -> str:
     values = args
     if not _tool_integer(values["user_id"], minimum=10001, maximum=4294967295):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "get_friend_info",
         values,
-        lambda: sender.get_friend_info(values["user_id"]),
+        lambda sender: sender.get_friend_info(values["user_id"]),
     )
 
 
@@ -1573,13 +1506,10 @@ async def _handle_set_group_member_special_title(args: object, **kwargs: Any) ->
         return _tool_error("invalid_input")
     if not isinstance(values["special_title"], str):
         return _tool_error("invalid_input")
-    sender = _ACTIVE_SENDER
-    if sender is None:
-        return _tool_error("unsupported")
     return await _execute_action(
         "set_group_member_special_title",
         values,
-        lambda: sender.set_group_member_special_title(
+        lambda sender: sender.set_group_member_special_title(
             values["group_id"],
             values["user_id"],
             values["special_title"],
@@ -1840,14 +1770,18 @@ def _tool_optional_bool(value: object) -> bool:
 
 
 async def _execute_action(
-    tool_name: str, arguments: Mapping[str, object], action: Callable[[], Any]
+    tool_name: str, arguments: Mapping[str, object], action: Callable[[MilkyOutboundSender], Any]
 ) -> str:
     """执行固定 Tool，并只记录结果分类和耗时。"""
 
     del arguments
     started = time.perf_counter()
     try:
-        result = await action()
+        sender = _ACTIVE_SENDER
+        if sender is not None:
+            result = await action(sender)
+        else:
+            result = await _execute_standalone_action(action)
         serialized = _serialize_result(result)
         _log_tool_call(
             tool_name,
@@ -1867,6 +1801,26 @@ async def _execute_action(
         serialized = _tool_error("transport_unknown", log=False)
         _log_tool_call(tool_name, "transport_unknown", started)
         return serialized
+
+
+async def _execute_standalone_action(
+    action: Callable[[MilkyOutboundSender], Any],
+) -> object:
+    """无 live adapter 时按调用时配置创建一次性 client 与 sender 执行一次 Action。"""
+
+    client: object | None = None
+    sender: MilkyOutboundSender | None = None
+    try:
+        try:
+            config = load_config()
+            client = MilkyClient(config)
+            sender = MilkyOutboundSender(client, max_local_media_bytes=config.max_local_media_bytes)
+        except (TypeError, ValueError):
+            raise ActionError("unsupported", "tool", "Milky configuration is unavailable") from None
+        return await action(sender)
+    finally:
+        await close_quietly(sender)
+        await close_quietly(client)
 
 
 def _serialize_result(result: object) -> str:

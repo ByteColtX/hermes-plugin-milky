@@ -155,13 +155,15 @@ MUST 只在对应 ToolSpec 被显式调用时执行。它们 MUST 分别调用�
 ### Requirement: 工具必须统一处理生命周期、无响应分类和安全日志
 
 本工具组中的所有工具 MUST 复用 Milky Action 的 Bearer 认证、`POST` JSON、path prefix 和显式操作映射。
-工具 MUST 在网络前区分 `invalid_input` 与未绑定或已关闭的 `unsupported`，并在进入 HTTP 边界后
-未取得远端响应体时返回 `transport_unknown`；只要取得响应体，插件 MUST 将其作为不透明结果原样
-交付，不得根据 HTTP 状态、Milky envelope、`data` 结构或 JSON 可解析性返回 `rejected`、
-`http_error`、`malformed` 或成功摘要。工具完成调用或得到本地/传输分类时，插件 SHALL 使用标准
-logger 记录一个低基数的 `event=milky.tool` 结果事件，至少包含工具名称、已取得响应或固定失败
-分类、已知 HTTP 状态码和 `duration_ms`；该日志不是 Tool 响应体的副本，其分类也不反映远端
-成功与否。
+工具 MUST 优先复用当前进程已绑定的 live client；当进程内没有 live adapter 绑定的 client（例如
+Hermes cron 的独立进程）时，工具 MUST 按调用时 profile 配置创建一次性的 Milky client 和 sender，
+执行本次 Action 后在 `finally` 中关闭这些资源，且 MUST NOT 缓存、复用或重试该连接。工具 MUST 在
+网络前区分 `invalid_input` 与配置不可读的 `unsupported`，并在进入 HTTP 边界后未取得远端响应体时
+返回 `transport_unknown`；只要取得响应体，插件 MUST 将其作为不透明结果原样交付，不得根据 HTTP
+状态、Milky envelope、`data` 结构或 JSON 可解析性返回 `rejected`、`http_error`、`malformed` 或成功
+摘要。工具完成调用或得到本地/传输分类时，插件 SHALL 使用标准 logger 记录一个低基数的
+`event=milky.tool` 结果事件，至少包含工具名称、已取得响应或固定失败分类、已知 HTTP 状态码和
+`duration_ms`；该日志不是 Tool 响应体的副本，其分类也不反映远端成功与否。
 
 日志和异常 MUST 不包含 token、Authorization header、原始响应 body、私聊文件下载 URL、媒体
 URL、本地媒体路径、Tool 原始参数、自由文本理由或 traceback；响应体中的业务字段只交付给
@@ -188,11 +190,18 @@ Tool 调用方，不得被写入普通消息上下文或日志。
 - **AND** SHALL 不返回 `malformed` 替代结果或报告假成功
 - **AND** SHALL 不记录响应 body 或缺失字段的原始内容
 
-#### Scenario: 未连接或已关闭
+#### Scenario: 进程内没有 live adapter
 
-- **WHEN** Agent 在工具 client 未绑定或已关闭时调用本工具组中任一工具
+- **WHEN** Agent 在网关进程外（例如 Hermes cron 的独立 worker）调用本工具组中任一工具
+- **THEN** 工具 SHALL 按调用时 profile 配置创建一次性 client 与 sender，并且只发起一次 HTTP 请求
+- **AND** SHALL 在成功、协议拒绝、传输失败或取消后关闭该次 client 与 sender
+- **AND** SHALL NOT 复用该连接、发起额外重试或把连接保存在进程级状态中
+
+#### Scenario: 一次性 client 的配置不可读
+
+- **WHEN** 进程内没有 live client，且运行时 profile 配置无法解析
 - **THEN** 工具 SHALL 在网络访问前返回 `unsupported`
-- **AND** SHALL 不建立新连接、不发起 HTTP 请求
+- **AND** SHALL 不创建 client、不发起 HTTP 请求
 - **AND** 日志 MAY 记录工具名称和固定分类，但不得伪造远端状态码或结果
 
 #### Scenario: 安全记录工具调用

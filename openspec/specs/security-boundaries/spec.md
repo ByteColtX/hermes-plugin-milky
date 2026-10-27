@@ -74,7 +74,7 @@ Tool 原始入参或为生成日志而复制的业务对象。Tool 的日志分�
 
 #### Scenario: Tool 没有远端结果
 
-- **WHEN** Tool 参数校验失败、Action 未注册、client 未绑定或已关闭，或传输未取得远端响应体
+- **WHEN** Tool 参数校验失败、Action 未注册、一次性 client 的运行时配置不可读，或传输未取得远端响应体
 - **THEN** Tool SHALL 返回既有固定错误分类
 - **AND** SHALL 不伪造远端成功结果
 - **AND** 日志 MAY 记录 Tool 名称和固定失败分类，但不得记录未确认的原始结果
@@ -127,7 +127,7 @@ MUST NOT 尝试规避或还原这些变换，也 MUST NOT 宣称最终进入模�
 
 #### Scenario: Tool 没有远端结果
 
-- **WHEN** 参数校验失败、Action 未注册、client 未绑定或已关闭，或传输没有取得远端响应体
+- **WHEN** 参数校验失败、Action 未注册、一次性 client 的运行时配置不可读，或传输没有取得远端响应体
 - **THEN** Tool SHALL 返回既有固定错误分类
 - **AND** SHALL 不伪造远端成功结果
 - **AND** 日志是否存在 SHALL 不改变该结果
