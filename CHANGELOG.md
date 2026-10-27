@@ -4,15 +4,17 @@
 
 ### 修复与可靠性
 
+- 入站历史中的图片现在带来源消息序号：含 image placeholder 且有稳定 `message_seq` 的历史记录会追加 `[images_from_msg_seq=<message_seq>]`，使一次 trigger 内来自不同消息的内联图片可以归属到来源消息。图片占位符语法、`media_urls` 顺序与去重语义不变。
 - 修复固定 Action Tool 在网关进程外不可用的问题：进程内没有 live adapter 绑定的 client 时（例如 Hermes cron 独立 worker），工具改为按调用时 profile 配置创建一次性 Milky client 和 sender，执行本次 Action 后在 `finally` 中关闭，不再直接返回 `unsupported`（`tool is unavailable`）。live 进程仍复用已绑定 client；一次性路径不缓存连接、不重试，副作用 Action 仍最多提交一次。
 - 运行时 profile 配置不可读时，固定 Action Tool 在网络访问前返回 `unsupported`，不创建 client 或发起请求。
 
 ### 验证与边界
 
-- 全量测试：`1488 passed, 6 skipped`；跳过项需要 Hermes host 或显式启用真实集成。
+- 全量测试：`1490 passed, 6 skipped`；跳过项需要 Hermes host 或显式启用真实集成。
 - 新增 `tests/test_tools_without_adapter.py` 覆盖一次性 client 的成功、传输失败、配置不可读和 live 优先四条路径。
 - 用本地 fake HTTP server 走真实 HTTPX 路径验证 `send_profile_like` 在无 sender 时只发一次请求、携带 Bearer 并原样返回响应体。
 - 线上实测确认 cron 发起的 QQ 名片赞可用，不再返回 `tool is unavailable`。
+- 新增图片出处标记的正向与反向用例。
 
 ## [2.0.2] - 2026-10-07
 

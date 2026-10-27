@@ -51,6 +51,24 @@ basename 一致。helper 不可用、下载失败或返回无效本地路径时�
 `[img:file_name=NOT SUPPORTED]`；hash 不可用时不得用 summary、resource_id、URL、文件名或
 其他协议字段推断图片相同。
 
+历史上下文正文含 image placeholder 且该消息有稳定 `message_seq` 时，renderer SHALL 在该条
+历史记录正文之后追加独立的 `[images_from_msg_seq=<message_seq>]` 行，使同一次 trigger 中来自
+不同消息的内联图片可以归属到来源消息。该行 MUST 只使用消息自身的 `message_seq`，不得使用
+sender、文件名或猜测值；没有 image placeholder 或 `message_seq` 缺失时 MUST NOT 追加。该标记
+不改变 image placeholder 语法，也不改变 `media_urls` 的既有顺序与去重语义。
+
+#### Scenario: 历史图片带来源序号
+
+- **WHEN** 一条历史消息含 image placeholder 且具有稳定 `message_seq`
+- **THEN** 该历史记录正文之后 SHALL 追加 `[images_from_msg_seq=<message_seq>]`
+- **AND** 正文中既有的 `[img:file_name=...]` placeholder 语法 SHALL 保持不变
+
+#### Scenario: 无图片来源标记
+
+- **WHEN** 历史消息不含 image placeholder，或该消息没有稳定 `message_seq`
+- **THEN** 正文 SHALL NOT 追加 `images_from_msg_seq` 标记
+- **AND** SHALL 不因此伪造消息序号
+
 `file` 只属于入站消息，不属于 outgoing message segment。除架构明确允许主消息
 `message_seq` 缺失并进入 `no_stable_message_seq` 降级外，规范化 SHALL 不补造 OpenAPI 必填
 字段；reply 的 `message_seq`、`sender_id`、`time` 和 `segments` 缺失时 SHALL 保持 malformed

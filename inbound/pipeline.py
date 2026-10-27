@@ -778,7 +778,7 @@ def _render_resolved_history(batch: object, resolved_batch: ResolvedTriggerBatch
                     chat_key=canonical.chat_key,
                     sender_name=canonical.sender_name,
                     sender_id=canonical.sender_id,
-                    body=resolved.body,
+                    body=_with_image_origin(resolved.body, canonical),
                     message_seq=canonical.message_seq,
                     quote_message_seq=canonical.quote_message_seq,
                     quote_target_is_self=canonical.quote_target_is_self,
@@ -793,6 +793,21 @@ def _render_resolved_history(batch: object, resolved_batch: ResolvedTriggerBatch
         for event in getattr(batch, "system_context", ())
     )
     return render_ordered_context(records, chat_key=batch.chat_key)
+
+
+def _with_image_origin(body: str, canonical: object) -> str:
+    """为带图片占位符的正文追加来源消息序号，避免多条消息的内联图片无法归属。
+
+    占位符语法由 message-segments 规范固定，不能扩展；来源信息以独立行追加，正文与
+    ``media_urls`` 的顺序语义保持不变。
+    """
+
+    if "[img:file_name=" not in body:
+        return body
+    message_seq = getattr(canonical, "message_seq", None)
+    if not isinstance(message_seq, str) or not message_seq:
+        return body
+    return f"{body}\n[images_from_msg_seq={message_seq}]"
 
 
 def _context_image_materializations(

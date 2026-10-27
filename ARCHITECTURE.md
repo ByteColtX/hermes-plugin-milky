@@ -180,6 +180,11 @@ receive loop 不等待慢 handler；handler 在停止时统一取消并等待，
 `temp_url`。资源 resolver 将视频作为上下文引用保留，不自动查询临时 URL 或调用媒体 materializer；只有 Agent
 显式调用 `get_resource_temp_url` 才取得临时链接。该工具不下载或分析视频，插件不提供解码、抽帧、转录或内容理解能力。
 
+图片占位符 `[img:file_name=<basename>]` 的语法由 `message-segments` 规范固定，必须与交给 Hermes
+`media_urls` 的路径 basename 一致。由于 `media_urls` 是扁平列表、不携带来源，历史渲染会在含图片
+占位符且有稳定 `message_seq` 的记录后追加独立的 `[images_from_msg_seq=<message_seq>]` 行，使一次
+trigger 内来自不同消息的内联图片可以归属到来源消息；该标记不改变占位符语法、附件顺序或去重语义。
+
 chat key 只接受 `dm:<十进制 QQ 号>` 和 `group:<十进制群号>`。`temp` 或非法目标不创建 key、dedup、buffer、Will 或 turn。Admission 只保证插件 ingress 顺序，不复制 Hermes 的 busy、follow-up、interrupt 或 Agent queue；不同 chat 可以并行。
 
 `will/routing.py` 根据 direct、mention、mentionAll、quote、poke、allMessage 和关键词选择 `wait`/`trigger`。`will/willingness.py` 使用分数衰减、增益、阈值和 force 规则。两种 engine 互斥，均不授予工具权限。

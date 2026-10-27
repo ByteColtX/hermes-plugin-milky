@@ -733,3 +733,82 @@ def test_history_bot_reply_uses_same_label_and_excludes_current_message() -> Non
     )
     assert event.text == "<合成名片 uid 800000002 msg_seq 6102> @合成机器人触发消息"
     assert "触发消息" not in event.channel_context
+
+
+def test_history_image_body_carries_origin_message_seq() -> None:
+    """历史消息带图片占位符时追加来源序号，便于与内联附件对齐。"""
+
+    from tests.test_hermes_pipeline import FakeHermes, make_pipeline
+    from tests.test_resources import FakeHermesMedia, make_client
+    from will import RoutingConfig
+
+    async def scenario():
+        hermes = FakeHermes()
+        resolver = ResourceResolver(make_client(), FakeHermesMedia())
+        pipeline = make_pipeline(
+            hermes,
+            resolver,
+            routing=RoutingConfig(direct="trigger", mention="trigger", all_message="wait"),
+        )
+        history = load_fixture("events/message_receive.group.all_segments.json")
+        history["data"]["message_seq"] = 6201
+        history["data"]["segments"] = [
+            {
+                "type": "image",
+                "data": {
+                    "resource_id": "history-image",
+                    "temp_url": "https://example.invalid/h.jpg",
+                },
+            }
+        ]
+        current = load_fixture("events/message_receive.group.all_segments.json")
+        current["data"]["message_seq"] = 6202
+        current["data"]["segments"] = [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "text", "data": {"text": "触发消息"}},
+        ]
+        assert (await pipeline.handle_event(history)).classification == "wait"
+        assert (await pipeline.handle_event(current)).classification == "trigger"
+        await pipeline.wait_idle()
+        return hermes.events[0]
+
+    event = asyncio.run(scenario())
+
+    assert "[images_from_msg_seq=6201]" in event.channel_context
+    assert event.channel_context.index("[images_from_msg_seq=6201]") > event.channel_context.index(
+        "[img:file_name="
+    )
+
+
+def test_history_without_images_has_no_origin_marker() -> None:
+    """没有图片占位符的历史消息不追加来源标记。"""
+
+    from tests.test_hermes_pipeline import FakeHermes, make_pipeline
+    from tests.test_resources import FakeHermesMedia, make_client
+    from will import RoutingConfig
+
+    async def scenario():
+        hermes = FakeHermes()
+        resolver = ResourceResolver(make_client(), FakeHermesMedia())
+        pipeline = make_pipeline(
+            hermes,
+            resolver,
+            routing=RoutingConfig(direct="trigger", mention="trigger", all_message="wait"),
+        )
+        history = load_fixture("events/message_receive.group.all_segments.json")
+        history["data"]["message_seq"] = 6301
+        history["data"]["segments"] = [{"type": "text", "data": {"text": "纯文本历史"}}]
+        current = load_fixture("events/message_receive.group.all_segments.json")
+        current["data"]["message_seq"] = 6302
+        current["data"]["segments"] = [
+            {"type": "mention", "data": {"user_id": 900000001, "name": "合成机器人"}},
+            {"type": "text", "data": {"text": "触发消息"}},
+        ]
+        assert (await pipeline.handle_event(history)).classification == "wait"
+        assert (await pipeline.handle_event(current)).classification == "trigger"
+        await pipeline.wait_idle()
+        return hermes.events[0]
+
+    event = asyncio.run(scenario())
+
+    assert "images_from_msg_seq" not in event.channel_context
