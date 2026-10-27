@@ -14,7 +14,7 @@
 - 新增 `tests/test_tools_without_adapter.py` 覆盖一次性 client 的成功、传输失败、配置不可读和 live 优先四条路径。
 - 用本地 fake HTTP server 走真实 HTTPX 路径验证 `send_profile_like` 在无 sender 时只发一次请求、携带 Bearer 并原样返回响应体。
 - 线上实测确认 cron 发起的 QQ 名片赞可用，不再返回 `tool is unavailable`。
-- 新增图片出处标记的正向与反向用例。
+- 真实群聊已验证：多条历史消息各带一张图时各追加一条来源标记，模型据此正确指认图片来源；同一张图被多人转发去重时，多个占位符共享单个附件仍可归属到各自来源消息。
 
 ## [2.0.2] - 2026-10-07
 
