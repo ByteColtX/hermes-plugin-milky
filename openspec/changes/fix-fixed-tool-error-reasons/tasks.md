@@ -24,4 +24,4 @@
 - [x] 5.1 运行聚焦测试与全量 `uv run pytest -q`。
 - [x] 5.2 运行 `uv run ruff check .`、`uv run ruff format --check .`、`git diff --check`。
 - [x] 5.3 运行 `openspec validate --changes --strict`。
-- [ ] 5.4 在 `hermes-dev` 实测配置不可读、客户端已关闭、远端每日上限三种结果可被模型区分；在此之前不宣称线上已验证。
+- [x] 5.4 在 `hermes-dev` 实测配置不可读、客户端已关闭、远端业务拒绝和 `count` 越界四种结果可区分；确认真实宿主 skill registry 中的两个 bundled skill 已带 frontmatter 描述。

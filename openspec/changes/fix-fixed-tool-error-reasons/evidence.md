@@ -39,7 +39,25 @@ classification=delivered    (远端)  -> {"status":"failed","retcode":-500,"mess
 
 ## 真实环境
 
-- 未在 `hermes-dev` 实测三种结果的可区分性；任务 5.4 保持未完成，不宣称线上已验证。
+插件代码 `e607427` 已部署到 `hermes-dev` 并重启网关，Milky 重新连接成功。用插件依赖环境执行
+四种输入，结果互不相同：
+
+```text
+A config   -> {"ok":false,"classification":"unsupported","reason":"configuration_unavailable","error":"tool is unavailable","retryable":false}
+B closed   -> {"ok":false,"classification":"unsupported","reason":"client_closed","error":"tool is unavailable","retryable":true}
+C remote   -> {"status": "failed", "retcode": -500, "message": "quota reached"}
+D count=51 -> {"ok":false,"classification":"invalid_input","reason":"input_invalid","error":"tool input is invalid","retryable":false}
+```
+
+真实宿主 `PluginManager.list_plugin_skill_metadata()` 已返回带描述的条目：
+
+```text
+hermes-plugin-milky:milky-qq-action-tools | Reference for Milky QQ Agent's 25 fixed Action ToolSpecs ...
+hermes-plugin-milky:milky-qq-cq-reference  | Reference for Milky QQ Agent's CQ-compatible at, reply, face ...
+```
+
+仍未观察到的：真实 QQ 账号触发「今日同一好友点赞数已达上限」后的模型响应措辞。该样本依赖
+配额耗尽，不作为已验证项。
 
 ## Retained boundaries
 

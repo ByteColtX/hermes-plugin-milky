@@ -14,11 +14,13 @@
 
 ### 验证与边界
 
-- 全量测试：`1490 passed, 6 skipped`；跳过项需要 Hermes host 或显式启用真实集成。
+- 全量测试：`1495 passed, 6 skipped`；跳过项需要 Hermes host 或显式启用真实集成。
 - 新增 `tests/test_tools_without_adapter.py` 覆盖一次性 client 的成功、传输失败、配置不可读和 live 优先四条路径。
 - 用本地 fake HTTP server 走真实 HTTPX 路径验证 `send_profile_like` 在无 sender 时只发一次请求、携带 Bearer 并原样返回响应体。
 - 线上实测确认 cron 发起的 QQ 名片赞可用，不再返回 `tool is unavailable`。
 - 真实群聊已验证：多条历史消息各带一张图时各追加一条来源标记，模型据此正确指认图片来源；同一张图被多人转发去重时，多个占位符共享单个附件仍可归属到各自来源消息。
+- 新增 `reason`/`retryable` 的四种结果用例（配置不可读、client 已关闭、传输未知、`count` 越界与边界值），以及 skill 登记携带描述与宿主兼容回退用例。
+- `hermes-dev` 实测四种工具结果互不相同；真实宿主 skill registry 已返回带 frontmatter 描述的条目。
 
 ## [2.0.2] - 2026-10-07
 
