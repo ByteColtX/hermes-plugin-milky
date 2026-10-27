@@ -112,9 +112,11 @@ def validate_tool_params(action: str, params: Mapping[str, Any] | None) -> None:
         raise _error("invalid_input", action, "parameters are invalid")
     for field in {"user_id", "group_id"} & set(values):
         _integer(values[field], field, action, minimum=_MIN_QQ_ID, maximum=_MAX_QQ_ID)
-    for field in ("message_seq", "count", "duration", "limit"):
+    for field in ("message_seq", "duration", "limit"):
         if field in values and values[field] is not None:
             _integer(values[field], field, action)
+    if "count" in values and values["count"] is not None:
+        _integer(values["count"], "count", action, minimum=1, maximum=50)
     for field in ("notification_seq", "invitation_seq"):
         if field in values:
             _integer(values[field], field, action)

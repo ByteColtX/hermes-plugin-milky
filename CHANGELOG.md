@@ -4,6 +4,10 @@
 
 ### 修复与可靠性
 
+- 固定 Action Tool 的本地失败结果新增固定 `reason` 原因码和 `retryable`：配置不可读为 `configuration_unavailable`、客户端已关闭为 `client_closed`（唯一可单次重试的原因）、Action 未注册为 `action_not_registered`、传输未知为 `outcome_unknown`。远端响应体仍按原样交付契约原样返回，不附加本地字段。
+- `send_profile_like` 的 `count` 在 handler、client 和参数校验层统一为 schema 声明的 `1..50`；越界值在网络访问前返回 `invalid_input`。
+- 平台指引说明本地失败与远端原样响应的区别，并禁止盲目重试有副作用的 Action。
+- bundled skill 登记时携带 SKILL.md frontmatter 的 `description`，`register_skill` 缺失或文件缺失时记录固定告警，不再静默跳过。
 - 入站历史中的图片现在带来源消息序号：含 image placeholder 且有稳定 `message_seq` 的历史记录会追加 `[images_from_msg_seq=<message_seq>]`，使一次 trigger 内来自不同消息的内联图片可以归属到来源消息。图片占位符语法、`media_urls` 顺序与去重语义不变。
 - 修复固定 Action Tool 在网关进程外不可用的问题：进程内没有 live adapter 绑定的 client 时（例如 Hermes cron 独立 worker），工具改为按调用时 profile 配置创建一次性 Milky client 和 sender，执行本次 Action 后在 `finally` 中关闭，不再直接返回 `unsupported`（`tool is unavailable`）。live 进程仍复用已绑定 client；一次性路径不缓存连接、不重试，副作用 Action 仍最多提交一次。
 - 运行时 profile 配置不可读时，固定 Action Tool 在网络访问前返回 `unsupported`，不创建 client 或发起请求。

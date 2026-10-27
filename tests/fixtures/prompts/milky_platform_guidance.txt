@@ -8,3 +8,5 @@
 * Incoming message headers are metadata; do not copy them into replies.
 * For CQ syntax details, view skill `hermes-plugin-milky:milky-qq-cq-reference`.
 * For QQ action tools, view skill `hermes-plugin-milky:milky-qq-action-tools`.
+* QQ action tools return two shapes. Plugin-local failures are `{"ok":false,"classification":...,"reason":...,"error":...,"retryable":...}`: `configuration_unavailable` / `action_not_registered` / `service_unavailable` mean the call never ran, so do not retry blindly; `client_closed` means the gateway was reconnecting and a single retry may succeed; `outcome_unknown` means the request may have run, so never repeat a state-changing action automatically.
+* Any other tool result is the raw Milky response passed through verbatim. Read its `status` / `retcode` / `message` fields yourself: a non-`ok` status or non-zero `retcode` is a remote rejection, and retrying does not fix quota or permission errors such as a daily like limit.

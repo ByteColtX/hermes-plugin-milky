@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import re
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -12,7 +14,10 @@ _PLUGIN_ROOT = str(Path(__file__).resolve().parent)
 if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 
+from milky.logging import render_event
 from session import BotIdentitySnapshot, ChatMetadataSnapshotStore, render_current_session_context
+
+logger = logging.getLogger("hermes_plugins.milky")
 
 PLATFORM_HINT = "You are chatting on QQ through Hermes's Milky platform."
 
@@ -27,6 +32,8 @@ PLATFORM_GUIDANCE = """
 * Incoming message headers are metadata; do not copy them into replies.
 * For CQ syntax details, view skill `hermes-plugin-milky:milky-qq-cq-reference`.
 * For QQ action tools, view skill `hermes-plugin-milky:milky-qq-action-tools`.
+* QQ action tools return two shapes. Plugin-local failures are `{"ok":false,"classification":...,"reason":...,"error":...,"retryable":...}`: `configuration_unavailable` / `action_not_registered` / `service_unavailable` mean the call never ran, so do not retry blindly; `client_closed` means the gateway was reconnecting and a single retry may succeed; `outcome_unknown` means the request may have run, so never repeat a state-changing action automatically.
+* Any other tool result is the raw Milky response passed through verbatim. Read its `status` / `retcode` / `message` fields yourself: a non-`ok` status or non-zero `retcode` is a remote rejection, and retrying does not fix quota or permission errors such as a daily like limit.
 """
 
 MILKY_PROMPT_SECTION_ID = "hermes-plugin-milky.qq-platform-guidance"
@@ -118,17 +125,76 @@ class _ProfileSnapshots:
             return self._stores.get(profile_name, (None, None))
 
 
+_SKILL_DESCRIPTION_RE = re.compile(r"^description:\s*(?P<value>.+)$")
+
+
+def _read_skill_description(skill_path: Path) -> str:
+    """读取 SKILL.md frontmatter 中的单行 description，不引入 YAML 依赖。
+
+    Hermes 渲染 ``<available_skills>`` 时只读注册时传入的 description 或 frontmatter，
+    不回读 SKILL.md；缺失描述会让索引行退化为裸名称，降低模型主动加载的概率。
+    """
+
+    try:
+        text = skill_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return ""
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        match = _SKILL_DESCRIPTION_RE.match(line)
+        if match is not None:
+            return match.group("value").strip().strip("\"'")
+    return ""
+
+
 def _register_bundled_skill(ctx: Any) -> None:
     """登记存在的插件自带只读 skill，不写入用户全局目录。"""
 
     register_skill = getattr(ctx, "register_skill", None)
     if not callable(register_skill):
+        logger.warning(
+            render_event(
+                "milky.register",
+                {
+                    "stage": "skill",
+                    "classification": "unsupported",
+                    "reason": "register_skill_missing",
+                },
+            )
+        )
         return
 
     for skill_name in ("milky-qq-cq-reference", "milky-qq-action-tools"):
         skill_path = Path(_PLUGIN_ROOT) / "skills" / skill_name / "SKILL.md"
-        if skill_path.is_file():
-            register_skill(skill_name, skill_path)
+        if not skill_path.is_file():
+            logger.warning(
+                render_event(
+                    "milky.register",
+                    {"stage": "skill", "skill": skill_name, "classification": "unsupported"},
+                )
+            )
+            continue
+        description = _read_skill_description(skill_path)
+        try:
+            if description:
+                register_skill(skill_name, skill_path, description)
+            else:
+                register_skill(skill_name, skill_path)
+        except (TypeError, ValueError, FileNotFoundError):
+            # 老宿主可能不接受 description 位置参数；失败时退回仅登记路径。
+            try:
+                register_skill(skill_name, skill_path)
+            except (TypeError, ValueError, FileNotFoundError):
+                logger.warning(
+                    render_event(
+                        "milky.register",
+                        {"stage": "skill", "skill": skill_name, "classification": "unsupported"},
+                    )
+                )
 
 
 def register_tools(ctx: Any) -> None:

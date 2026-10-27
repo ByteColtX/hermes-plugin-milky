@@ -45,6 +45,20 @@ _NON_NEGATIVE_INTEGER_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
 _MIN_QQ_ID = 10001
 _MAX_QQ_ID = 4294967295
 _MAX_SAFE_INTEGER = 9007199254740991
+# 与 send_profile_like schema 声明的单次点赞范围保持一致。
+_MIN_PROFILE_LIKE_COUNT = 1
+_MAX_PROFILE_LIKE_COUNT = 50
+# 固定的本地失败原因码，供 Tool 调用方区分「配置不可读」「客户端已关闭」等不同情形。
+ACTION_REASON_CODES = frozenset(
+    {
+        "configuration_unavailable",
+        "client_closed",
+        "action_not_registered",
+        "input_invalid",
+        "outcome_unknown",
+        "service_unavailable",
+    }
+)
 # 保留旧的公开名称，表示未显式传入上限时使用的默认值。
 MAX_LOCAL_MEDIA_BYTES = DEFAULT_MAX_LOCAL_MEDIA_BYTES
 _TRANSPORT_PHASES = frozenset({"connect", "write", "read", "pool", "unknown"})
@@ -225,11 +239,13 @@ class ActionError(Exception):
         reason: str,
         *,
         phase: str | None = None,
+        reason_code: str | None = None,
     ) -> None:
         self.classification = classification
         self.action = action
         self.reason = reason
         self.phase = _safe_transport_phase(phase) if phase is not None else None
+        self.reason_code = reason_code if reason_code in ACTION_REASON_CODES else None
         super().__init__(f"{classification}: {action}: {reason}")
 
 
@@ -504,9 +520,16 @@ class MilkyClient:
         """调用已注册 Tool，并只返回 transport 解码后的响应字符串。"""
 
         if not isinstance(action, str) or action not in _TOOL_ACTIONS:
-            raise ActionError("unsupported", action, "Action is not registered as a Tool")
+            raise ActionError(
+                "unsupported",
+                action,
+                "Action is not registered as a Tool",
+                reason_code="action_not_registered",
+            )
         if self._closed:
-            raise ActionError("unsupported", action, "client is closed")
+            raise ActionError(
+                "unsupported", action, "client is closed", reason_code="client_closed"
+            )
         validate_tool_params(action, params)
         return await self._call_tool_raw(action, params)
 
@@ -779,11 +802,12 @@ class MilkyClient:
             params["count"] = (
                 None
                 if count is None
-                else _validate_id(
+                else _validate_tool_integer(
                     count,
                     "count",
                     "send_profile_like",
-                    maximum=_MAX_SAFE_INTEGER,
+                    minimum=_MIN_PROFILE_LIKE_COUNT,
+                    maximum=_MAX_PROFILE_LIKE_COUNT,
                 )
             )
         return await self.call_tool("send_profile_like", params)

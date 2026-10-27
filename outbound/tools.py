@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from config import load_config
-from milky.client import ActionError, MilkyClient
+from milky.client import ACTION_REASON_CODES, ActionError, MilkyClient
 from milky.logging import render_event
 from stickers.sending import (
     StickerSendService,
@@ -958,9 +958,7 @@ async def _handle_send_profile_like(args: object, **kwargs: Any) -> str:
     values = args
     if not _tool_integer(values.get("user_id"), minimum=10001, maximum=4294967295):
         return _tool_error("invalid_input")
-    if "count" in values and not _tool_optional_integer(
-        values["count"], minimum=0, maximum=9007199254740991
-    ):
+    if "count" in values and not _tool_optional_integer(values["count"], minimum=1, maximum=50):
         return _tool_error("invalid_input")
     if "count" in values:
         return await _execute_action(
@@ -1794,7 +1792,7 @@ async def _execute_action(
         raise
     except (ActionError, TypeError, ValueError) as error:
         classification = _action_classification(error)
-        serialized = _tool_error(classification, log=False)
+        serialized = _tool_error(classification, reason=_tool_reason_code(error), log=False)
         _log_tool_call(tool_name, classification, started)
         return serialized
     except Exception:  # noqa: BLE001 - 工具边界不回显底层异常
@@ -1816,7 +1814,12 @@ async def _execute_standalone_action(
             client = MilkyClient(config)
             sender = MilkyOutboundSender(client, max_local_media_bytes=config.max_local_media_bytes)
         except (TypeError, ValueError):
-            raise ActionError("unsupported", "tool", "Milky configuration is unavailable") from None
+            raise ActionError(
+                "unsupported",
+                "tool",
+                "Milky configuration is unavailable",
+                reason_code="configuration_unavailable",
+            ) from None
         return await action(sender)
     finally:
         await close_quietly(sender)
@@ -1838,14 +1841,15 @@ def _serialize_result(result: object) -> str:
             payload["message_id"] = str(message_id)
     else:
         classification = getattr(result, "error_kind", None)
-        if classification not in {"invalid_input", "unsupported", "transport_unknown"}:
+        if classification not in _TOOL_ERROR_TEXT:
             classification = "transport_unknown"
+        reason = getattr(result, "reason_code", None)
+        if not isinstance(reason, str) or reason not in ACTION_REASON_CODES:
+            reason = _TOOL_REASON_DEFAULT[classification]
         payload["classification"] = classification
-        payload["error"] = {
-            "invalid_input": "tool input is invalid",
-            "unsupported": "tool is unavailable",
-            "transport_unknown": "tool result is unknown",
-        }[classification]
+        payload["reason"] = reason
+        payload["error"] = _TOOL_ERROR_TEXT[classification]
+        payload["retryable"] = reason in _TOOL_RETRYABLE_REASONS
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -1899,21 +1903,44 @@ def _action_classification(error: BaseException) -> str:
     return classification if classification in allowed else "transport_unknown"
 
 
+_TOOL_ERROR_TEXT = {
+    "invalid_input": "tool input is invalid",
+    "unsupported": "tool is unavailable",
+    "transport_unknown": "tool result is unknown",
+}
+_TOOL_REASON_DEFAULT = {
+    "invalid_input": "input_invalid",
+    "unsupported": "service_unavailable",
+    "transport_unknown": "outcome_unknown",
+}
+# 这些原因码下请求未进入网络，重试不会重复副作用。
+_TOOL_RETRYABLE_REASONS = frozenset({"client_closed"})
+
+
+def _tool_reason_code(error: BaseException) -> str | None:
+    """读取 ActionError 上已校验的固定原因码。"""
+
+    reason_code = getattr(error, "reason_code", None)
+    return reason_code if reason_code in ACTION_REASON_CODES else None
+
+
 def _tool_error(
     classification: str,
     *,
+    reason: str | None = None,
     tool_name: str | None = None,
     log: bool = True,
 ) -> str:
-    """创建工具本地错误，不回显任何输入值。"""
+    """创建工具本地错误，不回显任何输入值。
 
-    if classification not in {"invalid_input", "unsupported", "transport_unknown"}:
+    ``reason`` 是固定原因码，供调用方区分「配置不可读」「客户端已关闭」等不同本地失败；
+    ``retryable`` 只在请求未进入网络时为 true。
+    """
+
+    if classification not in _TOOL_ERROR_TEXT:
         classification = "transport_unknown"
-    error = {
-        "invalid_input": "tool input is invalid",
-        "unsupported": "tool is unavailable",
-        "transport_unknown": "tool result is unknown",
-    }[classification]
+    if not isinstance(reason, str) or reason not in ACTION_REASON_CODES:
+        reason = _TOOL_REASON_DEFAULT[classification]
     if log:
         if tool_name is None:
             caller = inspect.currentframe()
@@ -1926,7 +1953,13 @@ def _tool_error(
             )
         _log_tool_call(tool_name, classification, time.perf_counter())
     return json.dumps(
-        {"ok": False, "classification": classification, "error": error},
+        {
+            "ok": False,
+            "classification": classification,
+            "reason": reason,
+            "error": _TOOL_ERROR_TEXT[classification],
+            "retryable": reason in _TOOL_RETRYABLE_REASONS,
+        },
         ensure_ascii=False,
         separators=(",", ":"),
     )

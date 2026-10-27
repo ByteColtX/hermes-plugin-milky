@@ -950,7 +950,9 @@ def test_tool_parameter_error_does_not_call_action_or_log_remote_result(caplog) 
     assert result == {
         "ok": False,
         "classification": "invalid_input",
+        "reason": "input_invalid",
         "error": "tool input is invalid",
+        "retryable": False,
     }
     assert client.calls == []
     records = [

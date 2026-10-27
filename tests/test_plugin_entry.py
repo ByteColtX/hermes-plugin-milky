@@ -115,13 +115,15 @@ class SkillAndPlatformContext:
 
     def __init__(self) -> None:
         self.skills: list[tuple[str, Path]] = []
+        self.skill_descriptions: list[str] = []
         self.platforms: list[dict[str, Any]] = []
         self.system_prompt_sections: list[dict[str, Any]] = []
         self.tools: list[dict[str, Any]] = []
         self.hooks: list[tuple[str, Any]] = []
 
-    def register_skill(self, name: str, path: Path) -> None:
+    def register_skill(self, name: str, path: Path, description: str = "") -> None:
         self.skills.append((name, path))
+        self.skill_descriptions.append(description)
 
     def register_platform(self, **kwargs: Any) -> None:
         self.platforms.append(kwargs)
@@ -159,6 +161,19 @@ def test_root_registers_split_qq_skills_and_milky_prompt_section(monkeypatch) ->
             "milky-qq-action-tools": PROJECT_ROOT / "skills" / "milky-qq-action-tools" / "SKILL.md",
         }
         assert all(skill_path.is_file() for _, skill_path in context.skills)
+        assert len(context.skill_descriptions) == 2
+        for (skill_name, _skill_path), description in zip(
+            context.skills, context.skill_descriptions, strict=True
+        ):
+            frontmatter_line = next(
+                line
+                for line in (PROJECT_ROOT / "skills" / skill_name / "SKILL.md")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.startswith("description:")
+            )
+            assert description == frontmatter_line.partition(":")[2].strip()
+        assert all(context.skill_descriptions)
 
         hint = context.platforms[0]["platform_hint"]
         assert hint == "You are chatting on QQ through Hermes's Milky platform."
@@ -496,7 +511,7 @@ def test_bundled_skill_uses_host_namespace_and_does_not_overwrite_siblings() -> 
             self.plugin_skills: dict[str, Path] = {}
             self.user_skills: dict[str, Path] = {}
 
-        def register_skill(self, name: str, path: Path) -> None:
+        def register_skill(self, name: str, path: Path, description: str = "") -> None:
             qualified_name = f"{self.namespace}:{name}"
             self.plugin_skills.setdefault(qualified_name, path)
 

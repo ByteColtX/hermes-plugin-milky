@@ -162,7 +162,9 @@ def test_fixed_tool_without_sender_reports_transport_unknown_without_retry(
     assert result == {
         "ok": False,
         "classification": "transport_unknown",
+        "reason": "outcome_unknown",
         "error": "tool result is unknown",
+        "retryable": False,
     }
     assert len(transport.requests) == 1
     assert client.closed is True
@@ -192,7 +194,9 @@ def test_fixed_tool_without_sender_classifies_unreadable_config_as_unsupported(
     assert result == {
         "ok": False,
         "classification": "unsupported",
+        "reason": "configuration_unavailable",
         "error": "tool is unavailable",
+        "retryable": False,
     }
 
 
@@ -215,3 +219,64 @@ def test_fixed_tool_prefers_live_sender_over_standalone_client(
 
     assert result["data"] == {"group_id": 700000001}
     assert live_client.calls == [("get_group_info", {"group_id": 700000001})]
+
+
+def test_fixed_tool_reports_closed_client_as_retryable() -> None:
+    """live client 已关闭时返回可重试的本地原因码，不进入网络。"""
+
+    transport = RecordingTransport([])
+    client = MilkyClient(load_config(DEFAULT_ENV), transport=transport)
+    bind_sender(MilkyOutboundSender(client))
+    try:
+        asyncio.run(client.close())
+        result = json.loads(asyncio.run(handlers()["get_group_info"]({"group_id": 700000001})))
+    finally:
+        unbind_sender()
+
+    assert result == {
+        "ok": False,
+        "classification": "unsupported",
+        "reason": "client_closed",
+        "error": "tool is unavailable",
+        "retryable": True,
+    }
+    assert transport.requests == []
+
+
+@pytest.mark.parametrize("count", [0, 51, -1])
+def test_profile_like_count_outside_schema_range_fails_before_network(
+    count: int,
+) -> None:
+    """count 超出 schema 声明的 1..50 时在网络前返回 invalid_input。"""
+
+    client = LiveToolClient()
+    bind_sender(MilkyOutboundSender(client))
+    try:
+        result = json.loads(
+            asyncio.run(handlers()["send_profile_like"]({"user_id": 700000001, "count": count}))
+        )
+    finally:
+        unbind_sender()
+
+    assert result == {
+        "ok": False,
+        "classification": "invalid_input",
+        "reason": "input_invalid",
+        "error": "tool input is invalid",
+        "retryable": False,
+    }
+    assert client.calls == []
+
+
+def test_profile_like_accepts_schema_bounds() -> None:
+    """count 的边界值 1 和 50 仍按一次 Action 发出。"""
+
+    client = LiveToolClient()
+    bind_sender(MilkyOutboundSender(client))
+    try:
+        for count in (1, 50):
+            asyncio.run(handlers()["send_profile_like"]({"user_id": 700000001, "count": count}))
+    finally:
+        unbind_sender()
+
+    assert [params["count"] for _action, params in client.calls] == [1, 50]

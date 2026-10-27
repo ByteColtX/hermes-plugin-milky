@@ -291,6 +291,10 @@ sequenceDiagram
 普通文本出站先精确检查已登记的完整拦截文案；命中时终止处理，不调用 Milky Action，也不返回远端 message ID。其余 `Hermes response / MEDIA:/local/path` 继续 split/format/校验目标 → 一次 materialize 或 upload → 一次 Action → `success`、`rejected` 或 `transport_unknown`。过滤结果可能被 Gateway 按 `SendResult.success` 记为 delivered。
 Tool 流程是固定 schema/handler → 参数和 client 状态校验 → 一次 Action → 已取得的响应字符串，或
 `invalid_input`、`unsupported`、`transport_unknown`；Tool 不把远端拒绝或 HTTP 错误改写为插件结果。
+本地失败结果额外带固定 `reason` 与 `retryable`：`configuration_unavailable`、`client_closed`、
+`action_not_registered`、`input_invalid`、`service_unavailable`、`outcome_unknown`。只有
+`client_closed` 标记 `retryable=true`，因为它的请求尚未进入网络；其余本地失败和远端拒绝都不应盲目
+重试，`transport_unknown` 仍表示结果未知且禁止自动重复有副作用的 Action。
 
 `transport_unknown` 表示请求失败但无法确认远端是否已执行。插件不为了“修复”未知结果而自动重试可能有副作用的 Action。
 

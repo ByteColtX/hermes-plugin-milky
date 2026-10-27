@@ -67,6 +67,7 @@ class OutboundSendResult:
     continuation_message_ids: tuple[str, ...] = ()
     error_kind: str | None = None
     result_classification: str | None = None
+    reason_code: str | None = None
 
     @property
     def classification(self) -> str | None:
@@ -170,7 +171,7 @@ class MilkyOutboundSender:
                 parts = self._message_parts(content, None)
                 parts = await self._materialize_message_parts(parts)
         except (ActionError, OutboundFormatError, ValueError) as error:
-            result = _failure(_error_classification(error), _safe_reason(error))
+            result = _failure_from_error(error)
             logger.warning(
                 render_event(
                     "milky.outbound",
@@ -314,7 +315,7 @@ class MilkyOutboundSender:
             target = parse_outbound_target(chat_id)
             media = image_segment(uri, sub_type="sticker")
         except (OutboundFormatError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
         return await self._send_segments(target, [media])
 
     async def send_voice(
@@ -341,7 +342,7 @@ class MilkyOutboundSender:
             ).uri
             media = record_segment(uri)
         except (ActionError, OutboundFormatError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
         return await self._send_media(chat_id, media, caption=caption, reply_to=reply_to)
 
     async def send_video(
@@ -368,7 +369,7 @@ class MilkyOutboundSender:
             ).uri
             media = video_segment(uri)
         except (ActionError, OutboundFormatError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
         return await self._send_media(chat_id, media, caption=caption, reply_to=reply_to)
 
     async def send_document(
@@ -411,7 +412,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, OSError, TypeError, ValueError) as error:
-            result = _failure(_error_classification(error), _safe_reason(error))
+            result = _failure_from_error(error)
             if _is_remote_failure(error):
                 self._schedule_group_failure(target if "target" in locals() else None)
             _log_upload_result(target if "target" in locals() else None, result, started=started)
@@ -547,7 +548,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def get_group_files(
         self,
@@ -576,7 +577,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def accept_group_request(
         self,
@@ -610,7 +611,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def reject_group_request(
         self,
@@ -648,7 +649,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def accept_group_invitation(self, group_id: object, invitation_seq: object) -> object:
         """显式接受群邀请，最多提交一次远端 Action。"""
@@ -664,7 +665,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def reject_group_invitation(self, group_id: object, invitation_seq: object) -> object:
         """显式拒绝群邀请，最多提交一次远端 Action。"""
@@ -680,7 +681,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def profile_like(self, user_id: object, count: object = _MISSING) -> object:
         """执行已确认的名片点赞 Action。"""
@@ -713,7 +714,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
         except Exception:  # noqa: BLE001
             return _failure("transport_unknown", "profile like outcome is unknown")
 
@@ -760,7 +761,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            result = _failure(_error_classification(error), _safe_reason(error))
+            result = _failure_from_error(error)
             return result
         except Exception:  # noqa: BLE001
             return _failure("transport_unknown", "nudge outcome is unknown")
@@ -784,7 +785,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            result = _failure(_error_classification(error), _safe_reason(error))
+            result = _failure_from_error(error)
             return result
         except Exception:  # noqa: BLE001
             return _failure("transport_unknown", "recall outcome is unknown")
@@ -802,7 +803,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def get_resource_temp_url(self, resource_id: object) -> object:
         """显式查询资源临时链接并保留 Tool 原始响应体。"""
@@ -824,7 +825,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def get_private_file_download_url(
         self,
@@ -867,7 +868,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def kick_group_member(
         self,
@@ -901,7 +902,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def quit_group(self, group_id: object) -> object:
         """显式退出群聊，最多提交一次远端 Action。"""
@@ -916,7 +917,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def delete_friend(self, user_id: object) -> object:
         """显式删除好友关系，最多提交一次远端 Action。"""
@@ -931,7 +932,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def get_friend_requests(
         self,
@@ -967,7 +968,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def get_friend_info(self, user_id: object) -> object:
         """查询好友资料并保留完整的 opaque 成功 envelope。"""
@@ -982,7 +983,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def accept_friend_request(
         self,
@@ -1013,7 +1014,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def reject_friend_request(
         self,
@@ -1050,7 +1051,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def set_group_member_special_title(
         self,
@@ -1086,7 +1087,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     def _should_use_forward(self, content: object) -> bool:
         """按可见规范化文本长度决定是否选择合并转发。"""
@@ -1228,7 +1229,7 @@ class MilkyOutboundSender:
         except asyncio.CancelledError:
             raise
         except (ActionError, TypeError, ValueError) as error:
-            result = _failure(_error_classification(error), _safe_reason(error))
+            result = _failure_from_error(error)
             if _is_remote_failure(error):
                 self._schedule_group_failure(target)
             return result
@@ -1257,7 +1258,7 @@ class MilkyOutboundSender:
             content.append(media)
             return await self.send(chat_id, content)
         except (OutboundFormatError, ValueError) as error:
-            return _failure(_error_classification(error), _safe_reason(error))
+            return _failure_from_error(error)
 
     async def _upload_file(
         self,
@@ -1484,7 +1485,9 @@ def _success(
     return _make_result(**fields)
 
 
-def _failure(classification: str, reason: str) -> OutboundSendResult:
+def _failure(
+    classification: str, reason: str, *, reason_code: str | None = None
+) -> OutboundSendResult:
     """创建不回显目标、路径、凭证或远端正文的失败结果。"""
 
     return _make_result(
@@ -1492,6 +1495,18 @@ def _failure(classification: str, reason: str) -> OutboundSendResult:
         error=f"{classification}: {reason}",
         retryable=False,
         error_kind=classification,
+        reason_code=reason_code,
+    )
+
+
+def _failure_from_error(error: BaseException) -> OutboundSendResult:
+    """把异常收敛为失败结果，并保留可区分本地失败来源的原因码。"""
+
+    reason_code = getattr(error, "reason_code", None)
+    return _failure(
+        _error_classification(error),
+        _safe_reason(error),
+        reason_code=reason_code if isinstance(reason_code, str) else None,
     )
 
 
@@ -1518,11 +1533,14 @@ def _make_result(**kwargs: Any) -> OutboundSendResult:
     """在 Hermes 可用时生成宿主结果，否则使用兼容 fallback。"""
 
     result_classification = kwargs.pop("result_classification", None)
+    reason_code = kwargs.pop("reason_code", None)
 
     try:
         from gateway.platforms.base import SendResult as HermesSendResult
     except ImportError:
-        return OutboundSendResult(result_classification=result_classification, **kwargs)
+        return OutboundSendResult(
+            result_classification=result_classification, reason_code=reason_code, **kwargs
+        )
     try:
         result = HermesSendResult(**kwargs)
         if result_classification is not None:
@@ -1530,9 +1548,16 @@ def _make_result(**kwargs: Any) -> OutboundSendResult:
                 result.result_classification = result_classification
             except (AttributeError, TypeError):
                 result.raw_response = {"classification": result_classification}
+        if reason_code is not None:
+            try:
+                result.reason_code = reason_code
+            except (AttributeError, TypeError):
+                pass
         return result
     except (TypeError, ValueError):
-        return OutboundSendResult(result_classification=result_classification, **kwargs)
+        return OutboundSendResult(
+            result_classification=result_classification, reason_code=reason_code, **kwargs
+        )
 
 
 def _error_classification(error: BaseException) -> str:
