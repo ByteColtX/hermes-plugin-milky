@@ -339,7 +339,7 @@ Tool 流程是固定 schema/handler → 参数和 client 状态校验 → 一次
 | `MILKY_WILL_POLICY` | routing 默认策略 | `routing` 或 `willingness` 的 wait/trigger 规则 |
 | `MILKY_SESSION_BUFFER_SIZE` | `20` | 每 chat wait 历史上限；`0` 关闭 |
 | `MILKY_HOME_CHANNEL` | 未配置 | 系统/cron 默认目标，不参与入站白名单 |
-| `MILKY_MAX_LOCAL_MEDIA_BYTES` | `33554432` | 出站本地资源上限；合法范围 8–32 MiB |
+| `MILKY_MAX_LOCAL_MEDIA_BYTES` | `268435456` | 出站本地资源上限；合法范围 8–256 MiB |
 | `MILKY_LONG_TEXT_FORWARD_THRESHOLD` | `0` | 超长 forward 阈值；0 表示关闭 |
 | `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` | `false` | 是否注入成员加入/退出事件 |
 
@@ -382,7 +382,7 @@ Web Dashboard 的真实宿主证据与环境限制见[已归档 change 的 evide
 - SSE receive loop 不等待业务 handler，handler 和资源任务在停止时可取消。
 - dedup、wait buffer、context、session snapshot 和 diagnostics 都有容量上限。
 - MuteTracker 的稳态刷新有 per-group lock、冷却和并发上限。
-- 文本可分块；大本地媒体经过一次读取和 base64，成本受 8–32 MiB 启动限制影响。
+- 文本可分块；大本地媒体经过一次读取和 base64，成本受 8–256 MiB 启动限制影响。
 
 插件状态在进程内，未实现跨实例 dedup、buffer/Will 恢复、sticky routing 或故障转移一致性。透明水平扩展和生产容量上限为 `Not evident from the repository`；已知成本包括 base64 放大、Milky Action 延迟和 Hermes Agent 处理能力。
 

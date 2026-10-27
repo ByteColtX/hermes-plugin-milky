@@ -510,7 +510,7 @@ def test_manifest_declares_only_the_new_environment_contract_and_tools() -> None
     assert "MILKY_MAX_LOCAL_MEDIA_BYTES" in manifest
     assert "MILKY_LONG_TEXT_FORWARD_THRESHOLD" in manifest
     assert "MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS" in manifest
-    assert "33554432" in manifest
+    assert "268435456" in manifest
     assert "provides_tools:" in manifest
     for tool_name in (
         "send_profile_like",

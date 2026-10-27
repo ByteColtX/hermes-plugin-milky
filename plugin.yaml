@@ -73,7 +73,7 @@ optional_env:
     prompt: 系统和 cron 默认目标
     password: false
   - name: MILKY_MAX_LOCAL_MEDIA_BYTES
-    description: "Outbound local media limit in bytes; default 33554432, range 8388608..33554432"
+    description: "Outbound local media limit in bytes; default 268435456, range 8388608..268435456"
     prompt: 出站本地资源大小上限（字节）
     password: false
   - name: MILKY_LONG_TEXT_FORWARD_THRESHOLD
@@ -110,7 +110,7 @@ config_schema:
     default: ""
   max_local_media_bytes:
     type: integer
-    default: 33554432
+    default: 268435456
   long_text_forward_threshold:
     type: integer
     default: 0

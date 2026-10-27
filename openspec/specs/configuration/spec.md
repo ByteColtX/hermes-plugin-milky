@@ -92,7 +92,7 @@ manifest MUST NOT 声明该目录之外的 Milky Action 工具。另 SHALL 保�
 - **WHEN** Hermes 展示插件的配置项
 - **THEN** 它 SHALL 展示新配置契约、token 密码属性、可选的 Milky home channel 和本地出站
   资源大小上限
-- **AND** SHALL 展示 `MILKY_MAX_LOCAL_MEDIA_BYTES` 的默认值为 `33554432` 字节（`32 MiB`）
+- **AND** SHALL 展示 `MILKY_MAX_LOCAL_MEDIA_BYTES` 的默认值为 `268435456` 字节（`256 MiB`）
 - **AND** SHALL 展示 `MILKY_LONG_TEXT_FORWARD_THRESHOLD` 的默认值为 `0`
 - **AND** SHALL 展示 `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` 的默认值为 `false`
 - **AND** SHALL NOT 把任意未纳入显式 ToolSpec 的 Action catalog 展示为支持项
@@ -115,7 +115,7 @@ manifest MUST NOT 声明该目录之外的 Milky Action 工具。另 SHALL 保�
 `MILKY_ALLOWED_CHATS`、`MILKY_WILL_POLICY`、`MILKY_SESSION_BUFFER_SIZE`、`MILKY_HOME_CHANNEL`、
 `MILKY_MAX_LOCAL_MEDIA_BYTES`、`MILKY_LONG_TEXT_FORWARD_THRESHOLD` 和
 `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` SHALL 共同构成启动配置；`MILKY_MAX_LOCAL_MEDIA_BYTES` SHALL 是表示字节数的十进制整数，
-取值范围 SHALL 为 `8 MiB` 至 `32 MiB`（含边界），所有来源均省略该项时 SHALL 使用 `33554432`；缺失必需值、
+取值范围 SHALL 为 `8 MiB` 至 `256 MiB`（含边界），所有来源均省略该项时 SHALL 使用 `268435456`；缺失必需值、
 类型错误、范围错误或 home channel 目标格式错误 MUST 使启动失败。
 
 #### Scenario: 缺少必需配置
@@ -127,7 +127,7 @@ manifest MUST NOT 声明该目录之外的 Milky Action 工具。另 SHALL 保�
 #### Scenario: 使用默认出站资源上限
 
 - **WHEN** 所有普通配置来源均未提供本地出站资源上限
-- **THEN** 配置 SHALL 保存 `33554432` 字节作为本地出站资源上限
+- **THEN** 配置 SHALL 保存 `268435456` 字节作为本地出站资源上限
 - **AND** 该默认值 SHALL 供图片、语音、视频、文档和 CQ sticker 的本地出站路径使用
 
 #### Scenario: 使用自定义出站资源上限
@@ -139,7 +139,7 @@ manifest MUST NOT 声明该目录之外的 Milky Action 工具。另 SHALL 保�
 #### Scenario: 非法出站资源上限
 
 - **WHEN** 按优先级选中的本地出站资源上限为空、类型或十进制格式错误、低于
-`8 MiB` 或高于 `32 MiB`
+`8 MiB` 或高于 `256 MiB`
 - **THEN** 启动 SHALL 失败并指出安全的配置错误类别
 - **AND** SHALL 不建立 Milky 网络连接或读取本地资源
 

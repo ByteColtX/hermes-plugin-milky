@@ -260,7 +260,7 @@ MILKY_ACCESS_TOKEN=<从安全凭证存储注入>
 MILKY_ALLOWED_CHATS=group:123456789,dm:987654321
 MILKY_SESSION_BUFFER_SIZE=20
 MILKY_HOME_CHANNEL=group:123456789
-# MILKY_MAX_LOCAL_MEDIA_BYTES=33554432
+# MILKY_MAX_LOCAL_MEDIA_BYTES=268435456
 # MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS=false
 # MILKY_WILL_POLICY=<JSON 字符串，见下方 Will policy>
 ```
@@ -275,7 +275,7 @@ MILKY_HOME_CHANNEL=group:123456789
 | `MILKY_WILL_POLICY` | 否 | 决定消息等待（`wait`）或触发（`trigger`）的嵌套 JSON 配置。 |
 | `MILKY_SESSION_BUFFER_SIZE` | 否 | `wait` 历史消息上限，默认 `20`；设为 `0` 可关闭历史缓冲。 |
 | `MILKY_HOME_CHANNEL` | 否 | 系统消息和 cron 的默认目标；不参与入站白名单。 |
-| `MILKY_MAX_LOCAL_MEDIA_BYTES` | 否 | 出站本地资源原始字节数上限，默认 `33554432`（`32 MiB`），合法范围 `8388608`（`8 MiB`）至 `33554432`（`32 MiB`）。 |
+| `MILKY_MAX_LOCAL_MEDIA_BYTES` | 否 | 出站本地资源原始字节数上限，默认 `268435456`（`256 MiB`），合法范围 `8388608`（`8 MiB`）至 `268435456`（`256 MiB`）。 |
 | `MILKY_LONG_TEXT_FORWARD_THRESHOLD` | 否 | 超长文本合并转发阈值，默认 `0`（关闭）；只接受 `0..4096` 的十进制整数，只有可见规范化文本长度严格大于正值时才选择一个 `forward`。 |
 | `MILKY_GROUP_MEMBER_EVENT_NOTIFICATIONS` | 否 | 群成员入退群即时通知，默认 `false`；只接受大小写不敏感的 `true`/`false`，只在启动时读取，非法值会阻止启动。开启后追加固定英文 Tip，并通过 Hermes profile-scoped `inject_message(origin=...)` 提交群来源请求。同步返回 `true` 只表示已排队；上下文 drain 一次，但不代表 Gateway 已 admission 或 Agent turn 已完成，排队后的异步拒绝也无法由插件恢复。 |
 
@@ -803,8 +803,8 @@ malformed 或未闭合 CQ-like 内容中的标记按普通文本规则处理。�
 视频和文档；当前不支持文本段与附件交错，`[SPLIT]` 不改变 `MEDIA:` 的独立交接。
 
 > [!CAUTION]
-> `MEDIA:` 会读取本地文件并上传；默认只限制常规、非空且不超过 `33554432` 字节（`32 MiB`）
-> 的文件，可用 `MILKY_MAX_LOCAL_MEDIA_BYTES` 在 `8388608` 至 `33554432` 字节之间调整，
+> `MEDIA:` 会读取本地文件并上传；默认只限制常规、非空且不超过 `268435456` 字节（`256 MiB`）
+> 的文件，可用 `MILKY_MAX_LOCAL_MEDIA_BYTES` 在 `8388608` 至 `268435456` 字节之间调整，
 > 没有固定的安全目录隔离。Base64 编码会带来约 `4/3` 的请求体放大；内网连接不代表
 > Milky、代理或下游平台没有更低的服务端限制。
 

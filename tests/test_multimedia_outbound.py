@@ -412,16 +412,18 @@ def test_local_media_rejects_unknown_and_remote_file_schemes(
     assert value not in str(error_info.value)
 
 
-def test_local_media_accepts_exact_size_limit(tmp_path: Path) -> None:
-    """恰好达到默认 32 MiB 上限的常规文件仍可被完整读取。"""
+def test_local_media_default_limit_accepts_files_beyond_the_minimum(tmp_path: Path) -> None:
+    """默认上限应覆盖远高于最小允许值的文件；精确边界由显式上限用例覆盖。"""
 
-    media_path = tmp_path / "fixture-limit.bin"
-    media_path.write_bytes(b"x" * MAX_LOCAL_MEDIA_BYTES)
+    size = 48 * 1024 * 1024
+    media_path = tmp_path / "fixture-default-limit.bin"
+    with media_path.open("wb") as stream:
+        stream.truncate(size)
 
     uri = asyncio.run(materialize_media_uri(media_path, action="send_video"))
 
     assert uri.startswith("base64://")
-    assert len(uri) == len("base64://") + ((MAX_LOCAL_MEDIA_BYTES + 2) // 3) * 4
+    assert len(uri) == len("base64://") + ((size + 2) // 3) * 4
 
 
 def test_local_media_uses_explicit_custom_size_limit(tmp_path: Path) -> None:

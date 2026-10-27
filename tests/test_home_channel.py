@@ -264,7 +264,7 @@ def test_home_config_does_not_change_inbound_allowlist_or_require_readiness() ->
         "session_buffer_size": 20,
         "has_access_token": True,
         "has_home_channel": True,
-        "max_local_media_bytes": 33554432,
+        "max_local_media_bytes": 268435456,
         "long_text_forward_threshold": 0,
         "group_member_event_notifications": False,
     }
